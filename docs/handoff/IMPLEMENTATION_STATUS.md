@@ -13,8 +13,8 @@ Codex should update this file throughout the completion goal. Record exact comma
 ## Phase gates
 
 - [x] Phase 0 — baseline regression tests and engineering tooling
-- [ ] Phase 1 — SQLite, migrations, legacy import, package extraction (in progress; Core package and migration tests added)
-- [ ] Phase 2 — inventory domain and authenticated API foundation
+- [x] Phase 1 — SQLite, migrations, legacy import, package extraction
+- [ ] Phase 2 — inventory domain and authenticated API foundation (in progress; `/api/v1` bearer-token foundation added)
 - [ ] Phase 3 — web + Home Assistant one-source-of-truth proof
 - [ ] Phase 4 — recipes, use-soon, meal plan, idempotent shopping
 - [ ] Phase 5 — cooking, leftovers, waste, and location value
@@ -33,7 +33,8 @@ Codex should update this file throughout the completion goal. Record exact comma
 | 2026-08-25 | Phase 0 | Handoff controls installed into repo root; Git repository initialized for baseline checkpoint | `python scripts/run_tests.py` -> 11 tests passed; `python -m compileall -q app custom_components/pantryos scripts tests` -> passed; `node --check app/static/app.js` -> passed; `docker compose config` -> passed; baseline commit `98078e3` created | Formatter/lint/type/CI commands still need final v1 tooling; SQLite Core not started |
 | 2026-08-25 | Phase 0 | Deterministic baseline defect reproducer added for JSON lost update and additive shopping demand | `python scripts/reproduce_baseline_defects.py` -> P0/P1 baseline defects reproduced; surviving JSON item list was `['Eggs']`; repeated recipe demand quantity was `6` | Final invariant tests will replace this reproducer after SQLite/idempotent shopping implementation |
 | 2026-08-25 | Phase 1 | Added `src/pantryos` Core with SQLite migrations, unit registry, transaction wrapper, product/location/lot/event records, FEFO product consumption, legacy JSON import with backup/import marker, and backup/restore helpers | `python scripts/check.py` -> python compile: 18 files passed; 18 tests passed; javascript syntax passed | Web server still uses JSON repository; Home Assistant still uses HA Store until later phase |
-| 2026-08-25 | Phase 1 | Replaced web app JSON repository with SQLite-backed PantryOS Core; app startup imports legacy `data/pantryos.json` only when the Core database is empty; Docker image now copies `src/` and uses `/app/data/pantryos.sqlite3` | `python scripts/check.py` -> python compile: 18 files passed; 18 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 18 tests passed; `GET /api/v1/health/ready` -> `{"status":"ready"}`; `GET /api/v1/instance` -> schema_version 1, state_revision 12 | Home Assistant still uses HA Store and must be replaced in Phase 3; `/api/v1` is not yet authenticated |
+| 2026-08-25 | Phase 1 | Replaced web app JSON repository with SQLite-backed PantryOS Core; app startup imports legacy `data/pantryos.json` only when the Core database is empty; Docker image now copies `src/` and uses `/app/data/pantryos.sqlite3` | `python scripts/check.py` -> python compile: 18 files passed; 18 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 18 tests passed; `GET /api/v1/health/ready` -> `{"status":"ready"}`; `GET /api/v1/instance` -> schema_version 1, state_revision 12 | Home Assistant still uses HA Store and must be replaced in Phase 3 |
+| 2026-08-25 | Phase 2 | Added bearer-token enforcement for protected `/api/v1` routes, request IDs, stable problem responses, contract-compatible v1 inventory lot create/consume/move/discard routes, Docker token configuration, and API documentation | `python scripts/check.py` -> python compile: 18 files passed; 19 tests passed; javascript syntax passed; `docker compose config` with `PANTRYOS_API_TOKEN=local-dev-token` -> passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 19 tests passed; Docker smoke: container healthy, unauthenticated `GET /api/v1/dashboard` -> `401 unauthorized`, authenticated `POST /api/v1/inventory/lots` + `POST /api/v1/inventory/lots/{id}/consume` -> revision 14 | Browser compatibility routes remain unauthenticated until browser session/CSRF work; OpenAPI, CORS/origin policy, rate limits, and event subscription auth are still pending |
 ## Architectural decisions
 
 Record ADR paths here as they are created.
@@ -44,11 +45,12 @@ Record ADR paths here as they are created.
 
 ## Open blockers
 
-- Split web/HA data stores.
-- JSON concurrent lost updates.
-- No API authentication or migrations.
-- Product/lot/location/event model not implemented.
-- Completion acceptance criteria not yet evidenced.
+- Home Assistant still uses HA Store and must move to PantryOS Core API.
+- Browser compatibility routes remain unauthenticated until browser session, CSRF, CORS/origin, and UI token/session work are implemented.
+- OpenAPI generation/validation is not implemented yet.
+- Events are persisted but no authenticated SSE/WebSocket subscription exists yet.
+- Advanced product/location/recipe/shopping/cooking/barcode/receipt workflows are still incomplete.
+- Completion acceptance criteria are not fully evidenced.
 
 
 

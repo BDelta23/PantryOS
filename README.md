@@ -24,6 +24,7 @@ The local app covers the end-to-end loop that makes the product useful:
 Run it with the bundled or system Python:
 
 ```powershell
+$env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
 python app/server.py
 ```
 
@@ -38,9 +39,10 @@ The dashboard imports legacy JSON on first startup when available and can seed d
 
 ## Docker
 
-Build and run the v1 app with Docker Compose:
+Build and run the v1 app with Docker Compose. Set `PANTRYOS_API_TOKEN` in your shell or copy `.env.example` to `.env` and replace the placeholder first:
 
 ```powershell
+$env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
 docker compose up --build
 ```
 
@@ -60,6 +62,7 @@ docker compose up --build
 Run the dependency-free test runner in Docker:
 
 ```powershell
+$env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
 docker compose run --rm pantryos python scripts/run_tests.py
 ```
 ## Home Assistant Integration
@@ -114,7 +117,17 @@ data:
 
 ## API
 
-The local app exposes these JSON endpoints:
+The versioned API requires `Authorization: Bearer <PANTRYOS_API_TOKEN>` except for health checks. Errors use a stable problem shape with `type`, `title`, `status`, `code`, `detail`, `errors`, and `request_id`.
+
+Current versioned endpoints:
+
+- `GET /api/v1/health/live`
+- `GET /api/v1/health/ready`
+- `GET /api/v1/instance`
+- `GET /api/v1/dashboard`
+- `POST /api/v1/inventory/lots`
+
+The browser still uses these temporary compatibility routes while its session/auth flow is built:
 
 - `GET /api/state`
 - `POST /api/seed?reset=true`

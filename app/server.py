@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
+import secrets
 import sys
 import tempfile
+import uuid
 from contextlib import closing
 from decimal import Decimal
 from http import HTTPStatus
@@ -27,6 +30,9 @@ from pantryos.units import convert, decimal_text, require_non_negative, unit_cod
 STATIC_DIR = ROOT / "app" / "static"
 DEFAULT_DB_PATH = ROOT / "data" / "pantryos.sqlite3"
 LEGACY_JSON_PATH = ROOT / "data" / "pantryos.json"
+MAX_REQUEST_BODY_BYTES = 1_000_000
+PROBLEM_BASE_URL = "https://pantryos.local/problems"
+PUBLIC_V1_ENDPOINTS = {"/api/v1/health/live", "/api/v1/health/ready"}
 
 
 def demo_seed_document() -> dict[str, Any]:
@@ -392,9 +398,12 @@ def minimum_stock_suggestions(core: PantryCore) -> list[dict[str, Any]]:
 
 class PantryRequestHandler(BaseHTTPRequestHandler):
     core: PantryCore
+    api_token: str | None = None
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
         if parsed.path in ("/api/state", "/api/v1/dashboard"):
             self._send_json(public_state(self.core))
             return
@@ -412,12 +421,26 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
         try:
             body = self._read_json()
             if parsed.path in ("/api/items", "/api/v1/inventory/lots"):
                 result = self.core.add_inventory_lot(body)
                 self._send_json({"item": lot_to_item(result["lot"]), "revision": result["revision"]}, HTTPStatus.CREATED)
                 return
+            versioned_lot_action = versioned_lot_action_path(parsed.path)
+            if versioned_lot_action is not None:
+                lot_id, action = versioned_lot_action
+                if action == "consume":
+                    self._send_json(consume_lot_product(self.core, lot_id, str(body["quantity"]), body.get("reason")))
+                    return
+                if action == "move":
+                    self._send_json(move_lot(self.core, lot_id, body["location"]))
+                    return
+                if action == "discard":
+                    self._send_json(discard_lot(self.core, lot_id, str(body["reason"])))
+                    return
             if parsed.path.startswith("/api/items/") and parsed.path.endswith("/consume"):
                 lot_id = parsed.path.removeprefix("/api/items/").removesuffix("/consume")
                 result = consume_lot_product(self.core, lot_id, str(body.get("quantity", "1")))
@@ -444,22 +467,43 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/shopping/promote-suggestions":
                 self._send_json(promote_suggestions(self.core))
                 return
-        except (json.JSONDecodeError, KeyError, PantryOSError, ValueError) as exc:
-            self._send_json(problem(str(exc)), HTTPStatus.BAD_REQUEST)
+        except json.JSONDecodeError:
+            self._send_problem(
+                HTTPStatus.BAD_REQUEST,
+                "Request body must be valid JSON.",
+                code="invalid_json",
+                title="Invalid JSON",
+            )
             return
-        self._send_json(problem("Not found"), HTTPStatus.NOT_FOUND)
+        except KeyError as exc:
+            self._send_problem(
+                HTTPStatus.BAD_REQUEST,
+                f"Missing required field: {exc.args[0]}",
+                code="missing_field",
+                title="Missing field",
+            )
+            return
+        except PantryOSError as exc:
+            self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
+            return
+        except ValueError as exc:
+            self._send_problem(HTTPStatus.BAD_REQUEST, str(exc), code="invalid_request", title="Invalid request")
+            return
+        self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
         try:
             if parsed.path.startswith("/api/items/"):
                 lot_id = parsed.path.removeprefix("/api/items/")
                 self._send_json(discard_lot(self.core, lot_id))
                 return
         except PantryOSError as exc:
-            self._send_json(problem(str(exc)), HTTPStatus.BAD_REQUEST)
+            self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
             return
-        self._send_json(problem("Not found"), HTTPStatus.NOT_FOUND)
+        self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -468,15 +512,78 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", "0"))
         if length == 0:
             return {}
-        if length > 1_000_000:
+        if length > MAX_REQUEST_BODY_BYTES:
             raise ValueError("Request body too large")
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        return payload
 
-    def _send_json(self, data: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+    def _authorize(self, path: str) -> bool:
+        if not is_versioned_api(path) or path in PUBLIC_V1_ENDPOINTS:
+            return True
+        token = self.api_token
+        if not token:
+            self._send_problem(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "PANTRYOS_API_TOKEN is required before using /api/v1.",
+                code="auth_not_configured",
+                title="Authentication not configured",
+            )
+            return False
+        auth_header = self.headers.get("Authorization", "")
+        scheme, _, supplied_token = auth_header.partition(" ")
+        if scheme.casefold() != "bearer" or not secrets.compare_digest(supplied_token.strip(), token):
+            self._send_problem(
+                HTTPStatus.UNAUTHORIZED,
+                "A valid bearer token is required.",
+                code="unauthorized",
+                title="Unauthorized",
+                headers={"WWW-Authenticate": 'Bearer realm="PantryOS"'},
+            )
+            return False
+        return True
+
+    def _request_id(self) -> str:
+        request_id = getattr(self, "_pantryos_request_id", None)
+        if request_id is None:
+            supplied = self.headers.get("X-Request-ID", "").strip()
+            if supplied and len(supplied) <= 128 and all(char.isprintable() for char in supplied):
+                request_id = supplied
+            else:
+                request_id = uuid.uuid4().hex
+            self._pantryos_request_id = request_id
+        return request_id
+
+    def _send_problem(
+        self,
+        status: HTTPStatus,
+        detail: str,
+        *,
+        code: str,
+        title: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._send_json(
+            problem(detail, status=status, code=code, title=title, request_id=self._request_id()),
+            status,
+            headers=headers,
+        )
+
+    def _send_json(
+        self,
+        data: dict[str, Any],
+        status: HTTPStatus = HTTPStatus.OK,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         payload = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status.value)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Request-ID", self._request_id())
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -489,7 +596,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 raise FileNotFoundError
             content = resolved.read_bytes()
         except (FileNotFoundError, ValueError):
-            self._send_json(problem("Not found"), HTTPStatus.NOT_FOUND)
+            self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
             return
         content_type = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK.value)
@@ -499,23 +606,63 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 
-def problem(detail: str) -> dict[str, Any]:
+def is_versioned_api(path: str) -> bool:
+    return path == "/api/v1" or path.startswith("/api/v1/")
+
+
+def problem(
+    detail: str,
+    *,
+    status: HTTPStatus = HTTPStatus.BAD_REQUEST,
+    code: str = "request_failed",
+    title: str = "Request failed",
+    request_id: str | None = None,
+) -> dict[str, Any]:
     return {
-        "type": "https://pantryos.local/problems/request-failed",
-        "title": "Request failed",
-        "status": 400,
-        "code": "request_failed",
+        "type": f"{PROBLEM_BASE_URL}/{code.replace('_', '-')}",
+        "title": title,
+        "status": status.value,
+        "code": code,
         "detail": detail,
         "errors": [],
+        "request_id": request_id or uuid.uuid4().hex,
     }
 
 
-def consume_lot_product(core: PantryCore, lot_id: str, quantity: str) -> dict[str, Any]:
+def problem_code(exc: PantryOSError) -> str:
+    return getattr(exc, "code", None) or "domain_error"
+
+
+def problem_title(exc: PantryOSError) -> str:
+    words = problem_code(exc).replace("_", " ")
+    return words.capitalize()
+
+
+def domain_status(exc: PantryOSError) -> HTTPStatus:
+    name = exc.__class__.__name__
+    if name == "NotFoundError":
+        return HTTPStatus.NOT_FOUND
+    if name in {"ConflictError", "InsufficientInventoryError"}:
+        return HTTPStatus.CONFLICT
+    return HTTPStatus.BAD_REQUEST
+
+
+def versioned_lot_action_path(path: str) -> tuple[str, str] | None:
+    prefix = "/api/v1/inventory/lots/"
+    if not path.startswith(prefix):
+        return None
+    parts = path.removeprefix(prefix).split("/")
+    if len(parts) != 2 or not parts[0] or parts[1] not in {"consume", "move", "discard"}:
+        return None
+    return unquote(parts[0]), parts[1]
+
+
+def consume_lot_product(core: PantryCore, lot_id: str, quantity: str, reason: str | None = None) -> dict[str, Any]:
     with closing(core.connect()) as connection:
         lot = connection.execute("SELECT product_id, unit FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
     if lot is None:
         raise PantryOSError(f"Unknown inventory lot: {lot_id}")
-    return core.consume_product(product_id=lot["product_id"], quantity=quantity, unit=lot["unit"])
+    return core.consume_product(product_id=lot["product_id"], quantity=quantity, unit=lot["unit"], reason=reason)
 
 
 def move_lot(core: PantryCore, lot_id: str, location: str) -> dict[str, Any]:
@@ -543,7 +690,7 @@ def move_lot(core: PantryCore, lot_id: str, location: str) -> dict[str, Any]:
     return {"item": lot_to_item(updated), "revision": revision}
 
 
-def discard_lot(core: PantryCore, lot_id: str) -> dict[str, Any]:
+def discard_lot(core: PantryCore, lot_id: str, reason: str = "web delete action") -> dict[str, Any]:
     core.migrate()
     with core.transaction() as connection:
         lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
@@ -560,7 +707,7 @@ def discard_lot(core: PantryCore, lot_id: str) -> dict[str, Any]:
             lot_id=lot_id,
             quantity=lot["quantity"],
             unit=lot["unit"],
-            reason="web delete action",
+            reason=reason,
             source="api",
         )
     return {"ok": True, "revision": revision}
@@ -675,6 +822,7 @@ def datetime_now() -> str:
 def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
     handler.core = PantryCore(db_path)
+    handler.api_token = os.environ.get("PANTRYOS_API_TOKEN")
     handler.core.migrate()
     if LEGACY_JSON_PATH.exists() and handler.core.dashboard()["summary"]["product_count"] == 0:
         handler.core.import_legacy_json(LEGACY_JSON_PATH)

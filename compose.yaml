@@ -3,6 +3,8 @@ services:
     build:
       context: .
     container_name: pantryos
+    environment:
+      PANTRYOS_API_TOKEN: ${PANTRYOS_API_TOKEN:?Set PANTRYOS_API_TOKEN before starting PantryOS}
     ports:
       - "${PANTRYOS_PORT:-8765}:8765"
     volumes:
