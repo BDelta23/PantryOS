@@ -323,6 +323,60 @@ def test_shopping_items_can_be_removed_or_suppressed_without_deleting_history() 
         assert rows["Rice"]["status"] == "removed"
         assert rows["Beans"]["status"] == "suppressed"
         assert rows["Beans"]["accepted"] == 0
+def test_discard_records_monthly_waste_and_location_values() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        apples = core.add_inventory_lot(
+            {
+                "name": "Waste Apples",
+                "quantity": "10",
+                "unit": "count",
+                "location": "Kitchen/Refrigerator",
+                "estimated_cost": "5.00",
+            }
+        )["lot"]
+        core.add_inventory_lot(
+            {
+                "name": "Stored Rice",
+                "quantity": "2",
+                "unit": "count",
+                "location": "Kitchen/Pantry",
+                "estimated_cost": "2.00",
+            }
+        )
+        core.consume_product(product_name="Waste Apples", quantity="4", unit="count")
+
+        before_discard = core.dashboard()["summary"]
+        discarded = core.discard_lot(apples["id"], reason="spoiled")
+
+        with closing(core.connect()) as connection:
+            metadata_json = connection.execute(
+                "SELECT metadata_json FROM inventory_events WHERE event_type = 'DISCARD' ORDER BY revision DESC LIMIT 1"
+            ).fetchone()[0]
+            connection.execute("UPDATE inventory_lots SET total_cost = NULL WHERE id = ?", (apples["id"],))
+            connection.commit()
+        after_discard = core.dashboard()["summary"]
+        waste_metadata = json.loads(metadata_json)
+
+        assert before_discard["location_counts"]["Refrigerator"] == 1
+        assert before_discard["location_values"]["Refrigerator"] == "3.00"
+        assert before_discard["location_values"]["Pantry"] == "2.00"
+        assert discarded["discarded_value"] == "3.00"
+        assert waste_metadata["waste_value"] == "3.00"
+        assert after_discard["food_waste_this_month"] == "3.00"
+        assert after_discard["location_counts"]["Refrigerator"] == 0
+        assert after_discard["location_values"]["Refrigerator"] == "0.00"
+        assert after_discard["location_counts"]["Pantry"] == 1
+        assert after_discard["locations"] == [
+            {
+                "location_id": after_discard["locations"][0]["location_id"],
+                "path": "Kitchen/Pantry",
+                "active_lot_count": 1,
+                "inventory_value": "2.00",
+                "currency": "USD",
+            }
+        ]
+
 def test_cooking_session_start_complete_leftover_and_rollback() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 from contextlib import contextmanager
+from decimal import Decimal
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -156,6 +157,32 @@ def test_api_client_manages_shopping_lifecycle_and_purchase_completion() -> None
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+def test_api_client_reports_waste_and_location_values() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "test-token")
+        before = await client.async_refresh()
+        created = await client.async_add_item(
+            {
+                "name": "Client Waste Apples",
+                "quantity": "2",
+                "unit": "count",
+                "location": "Kitchen/Pantry",
+                "estimated_cost": "6.00",
+            }
+        )
+        with_value = await client.async_refresh()
+        discarded = await client.async_discard_item(created["item"]["id"], reason="spoiled")
+        after_discard = await client.async_refresh()
+
+        assert Decimal(with_value["summary"]["location_values"]["Kitchen"]) == Decimal(before["summary"]["location_values"]["Kitchen"]) + Decimal("6.00")
+        assert Decimal(with_value["summary"]["location_values"]["Pantry"]) == Decimal(before["summary"]["location_values"]["Pantry"]) + Decimal("6.00")
+        assert discarded["discarded_value"] == "6.00"
+        assert after_discard["summary"]["food_waste_this_month"] == "6.00"
+        assert Decimal(after_discard["summary"]["location_values"]["Pantry"]) == Decimal(before["summary"]["location_values"]["Pantry"])
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))
+
 def test_api_client_completes_cooking_session_with_leftover() -> None:
     async def scenario(base_url: str) -> None:
         client = PantryAPIClient(base_url, "test-token")

@@ -54,6 +54,30 @@ SENSORS: tuple[PantrySensorDescription, ...] = (
     PantrySensorDescription(key="refrigerator_items", translation_key="refrigerator_items", value_fn=lambda summary: summary["location_counts"]["Refrigerator"]),
     PantrySensorDescription(key="freezer_items", translation_key="freezer_items", value_fn=lambda summary: summary["location_counts"]["Freezer"]),
     PantrySensorDescription(key="pantry_items", translation_key="pantry_items", value_fn=lambda summary: summary["location_counts"]["Pantry"]),
+    PantrySensorDescription(
+        key="kitchen_value",
+        translation_key="kitchen_value",
+        native_unit_of_measurement="USD",
+        value_fn=lambda summary: summary["location_values"]["Kitchen"],
+    ),
+    PantrySensorDescription(
+        key="refrigerator_value",
+        translation_key="refrigerator_value",
+        native_unit_of_measurement="USD",
+        value_fn=lambda summary: summary["location_values"]["Refrigerator"],
+    ),
+    PantrySensorDescription(
+        key="freezer_value",
+        translation_key="freezer_value",
+        native_unit_of_measurement="USD",
+        value_fn=lambda summary: summary["location_values"]["Freezer"],
+    ),
+    PantrySensorDescription(
+        key="pantry_value",
+        translation_key="pantry_value",
+        native_unit_of_measurement="USD",
+        value_fn=lambda summary: summary["location_values"]["Pantry"],
+    ),
 )
 
 

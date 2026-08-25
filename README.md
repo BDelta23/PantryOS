@@ -5,7 +5,7 @@ PantryOS is a home food intelligence system with two surfaces:
 - A runnable local kitchen dashboard in `app/` for the v1 vertical slice.
 - A Home Assistant custom integration in `custom_components/pantryos` for sensors, services, and automation.
 
-Home Assistant is intended to be one interface into the food database, not the database itself. The current Core work keeps persistence local in SQLite for the web app and legacy import path. The Home Assistant integration is still scheduled to move from HA Store to the same API in Phase 3.
+Home Assistant is intended to be one interface into the food database, not the database itself. PantryOS Core owns the local SQLite database, and both the web app and Home Assistant integration use the authenticated Core API for current supported v1 workflows.
 
 ## V1 Vertical Slice
 
@@ -89,6 +89,10 @@ The integration exposes these sensors:
 - `sensor.pantryos_refrigerator_items`
 - `sensor.pantryos_freezer_items`
 - `sensor.pantryos_pantry_items`
+- `sensor.pantryos_kitchen_value`
+- `sensor.pantryos_refrigerator_value`
+- `sensor.pantryos_freezer_value`
+- `sensor.pantryos_pantry_value`
 
 ### Example Service Calls
 
@@ -125,6 +129,8 @@ Current versioned endpoints:
 - `GET /api/v1/health/ready`
 - `GET /api/v1/instance`
 - `GET /api/v1/dashboard`
+- `GET /api/v1/locations/summary`
+- `GET /api/v1/waste/monthly`
 - `POST /api/v1/inventory/lots`
 - `POST /api/v1/inventory/lots/{id}/consume`
 - `POST /api/v1/inventory/lots/{id}/move`

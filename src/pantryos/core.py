@@ -130,7 +130,18 @@ class PantryCore:
                 "api_version": "v1",
                 "schema_version": CURRENT_SCHEMA_VERSION,
                 "state_revision": int(self._metadata(connection, "state_revision")),
-                "capabilities": ["sqlite_core", "legacy_import", "inventory_lots", "events", "shopping_lifecycle", "purchase_ledger", "cooking_sessions", "leftovers"],
+                "capabilities": [
+                    "sqlite_core",
+                    "legacy_import",
+                    "inventory_lots",
+                    "events",
+                    "shopping_lifecycle",
+                    "purchase_ledger",
+                    "cooking_sessions",
+                    "leftovers",
+                    "waste_metrics",
+                    "location_value",
+                ],
             }
 
     def add_inventory_lot(self, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
@@ -210,6 +221,42 @@ class PantryCore:
                 allocations.append({"lot_id": lot["id"], "quantity": decimal_text(take_lot_unit), "unit": lot["unit"]})
                 remaining -= take_wanted
             return {"allocations": allocations, "revision": revision}
+
+    def discard_lot(self, lot_id: str, *, reason: str = "api discard", source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+            if lot is None:
+                raise NotFoundError(f"Inventory lot not found: {lot_id}")
+            if lot["status"] != "active":
+                raise ValidationError(f"Inventory lot is not active: {lot_id}")
+            discarded_quantity = require_non_negative(lot["quantity"])
+            discarded_value = self._lot_value_for_quantity(connection, lot, discarded_quantity)
+            connection.execute(
+                "UPDATE inventory_lots SET quantity = '0', status = 'discarded', updated_at = ?, version = version + 1 WHERE id = ?",
+                (utc_now(), lot_id),
+            )
+            revision = self._append_event(
+                connection,
+                "DISCARD",
+                product_id=lot["product_id"],
+                lot_id=lot_id,
+                quantity=decimal_text(discarded_quantity),
+                unit=lot["unit"],
+                reason=reason,
+                source=source,
+                metadata={
+                    "currency": lot["currency"],
+                    "waste_value": self._money_text(discarded_value),
+                    "location_id": lot["location_id"],
+                },
+            )
+        return {
+            "ok": True,
+            "revision": revision,
+            "discarded_value": self._money_text(discarded_value),
+            "currency": lot["currency"],
+        }
 
     def backup(self, output_path: Path | str) -> Path:
         self.migrate()
@@ -1229,6 +1276,7 @@ class PantryCore:
     def _dashboard(self, connection: sqlite3.Connection) -> dict[str, Any]:
         revision = int(self._metadata(connection, "state_revision"))
         products = [dict(row) for row in connection.execute("SELECT * FROM products ORDER BY name")]
+        location_paths = self._location_paths(connection)
         lots = [dict(row) for row in connection.execute("""
             SELECT l.*, p.name AS product_name, p.minimum_stock_quantity,
                    p.minimum_stock_unit, loc.name AS location_name
@@ -1237,9 +1285,15 @@ class PantryCore:
             JOIN locations loc ON loc.id = l.location_id
             ORDER BY p.name, l.expires_at IS NULL, l.expires_at, l.created_at
         """)]
+        for lot in lots:
+            lot["location_path"] = location_paths.get(lot["location_id"], lot["location_name"])
+            lot["estimated_value"] = self._money_text(
+                self._lot_value_for_quantity(connection, lot, require_non_negative(lot["quantity"]))
+            )
         recipes = [self._recipe_snapshot(connection, row["id"]) for row in connection.execute("SELECT id FROM recipes ORDER BY name")]
         shopping = [dict(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name")]
         events = [dict(row) for row in connection.execute("SELECT * FROM inventory_events ORDER BY revision DESC LIMIT 25")]
+        location_summary = self._location_summary(lots)
         return {
             "revision": revision,
             "instance_id": self._metadata(connection, "instance_id"),
@@ -1253,8 +1307,128 @@ class PantryCore:
                 "active_lot_count": sum(1 for lot in lots if lot["status"] == "active"),
                 "shopping_count": sum(1 for row in shopping if row["status"] == "active" and not row["checked"]),
                 "event_count": connection.execute("SELECT COUNT(*) FROM inventory_events").fetchone()[0],
+                "food_waste_this_month": self._money_text(self._monthly_waste_value(connection)),
+                "location_counts": location_summary["counts"],
+                "location_values": location_summary["values"],
+                "locations": location_summary["locations"],
             },
         }
+
+    def _location_paths(self, connection: sqlite3.Connection) -> dict[str, str]:
+        rows = {row["id"]: dict(row) for row in connection.execute("SELECT id, parent_id, name FROM locations")}
+        cache: dict[str, str] = {}
+
+        def resolve(location_id: str, seen: set[str] | None = None) -> str:
+            if location_id in cache:
+                return cache[location_id]
+            seen = set() if seen is None else seen
+            if location_id in seen or location_id not in rows:
+                return rows.get(location_id, {}).get("name", "Unknown")
+            seen.add(location_id)
+            row = rows[location_id]
+            parent_id = row["parent_id"]
+            path = str(row["name"]) if parent_id is None else f"{resolve(parent_id, seen)}/{row['name']}"
+            cache[location_id] = path
+            return path
+
+        return {location_id: resolve(location_id) for location_id in rows}
+
+    def _location_summary(self, lots: list[dict[str, Any]]) -> dict[str, Any]:
+        counts = {"Kitchen": 0, "Refrigerator": 0, "Freezer": 0, "Pantry": 0}
+        value_totals = {key: Decimal("0") for key in counts}
+        by_location: dict[str, dict[str, Any]] = {}
+        for lot in lots:
+            if lot["status"] != "active":
+                continue
+            path = lot.get("location_path") or lot["location_name"]
+            estimated_value = require_non_negative(lot.get("estimated_value", "0"), "estimated_value")
+            location_row = by_location.setdefault(
+                path,
+                {
+                    "location_id": lot["location_id"],
+                    "path": path,
+                    "active_lot_count": 0,
+                    "inventory_value": "0.00",
+                    "_inventory_value": Decimal("0"),
+                    "currency": lot["currency"],
+                },
+            )
+            location_row["active_lot_count"] += 1
+            location_row["_inventory_value"] += estimated_value
+            for bucket in self._location_buckets(path):
+                counts[bucket] += 1
+                value_totals[bucket] += estimated_value
+        values = {key: self._money_text(value) for key, value in value_totals.items()}
+        locations = []
+        for row in by_location.values():
+            row["inventory_value"] = self._money_text(row.pop("_inventory_value"))
+            locations.append(row)
+        locations.sort(key=lambda row: row["path"])
+        return {"counts": counts, "values": values, "locations": locations}
+
+    def _location_buckets(self, path: str) -> list[str]:
+        normalized = normalize_name(path)
+        buckets = []
+        if normalized.startswith("kitchen"):
+            buckets.append("Kitchen")
+        if "refrigerator" in normalized or "fridge" in normalized:
+            buckets.append("Refrigerator")
+        if "freezer" in normalized:
+            buckets.append("Freezer")
+        if "pantry" in normalized:
+            buckets.append("Pantry")
+        return buckets
+
+    def _monthly_waste_value(self, connection: sqlite3.Connection) -> Decimal:
+        month_start = date.today().replace(day=1).isoformat()
+        total = Decimal("0")
+        rows = connection.execute(
+            """
+            SELECT e.*, l.total_cost, l.quantity AS lot_quantity, l.unit AS lot_unit, l.currency
+            FROM inventory_events e
+            LEFT JOIN inventory_lots l ON l.id = e.lot_id
+            WHERE e.event_type = 'DISCARD' AND substr(e.occurred_at, 1, 10) >= ?
+            """,
+            (month_start,),
+        )
+        for row in rows:
+            metadata = json.loads(row["metadata_json"] or "{}")
+            if "waste_value" in metadata:
+                total += require_non_negative(metadata["waste_value"], "waste_value")
+                continue
+            if row["lot_id"] is not None and row["quantity"] is not None:
+                lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (row["lot_id"],)).fetchone()
+                if lot is not None:
+                    total += self._lot_value_for_quantity(connection, lot, require_non_negative(row["quantity"]))
+        return total
+
+    def _lot_value_for_quantity(self, connection: sqlite3.Connection, lot: sqlite3.Row | dict[str, Any], quantity: Decimal) -> Decimal:
+        total_cost = lot["total_cost"]
+        if total_cost in (None, "") or quantity == 0:
+            return Decimal("0")
+        original_quantity, original_unit = self._lot_original_quantity(connection, str(lot["id"]), str(lot["unit"]))
+        if original_quantity <= 0:
+            return require_non_negative(total_cost, "estimated_cost")
+        quantity_in_original_unit = convert(quantity, str(lot["unit"]), original_unit)
+        return require_non_negative(total_cost, "estimated_cost") * quantity_in_original_unit / original_quantity
+
+    def _lot_original_quantity(self, connection: sqlite3.Connection, lot_id: str, fallback_unit: str) -> tuple[Decimal, str]:
+        row = connection.execute(
+            """
+            SELECT quantity, unit
+            FROM inventory_events
+            WHERE lot_id = ? AND event_type IN ('ADD', 'IMPORT', 'LEFTOVER_CREATE')
+            ORDER BY revision ASC
+            LIMIT 1
+            """,
+            (lot_id,),
+        ).fetchone()
+        if row is None or row["quantity"] is None:
+            return Decimal("0"), fallback_unit
+        return require_positive(row["quantity"]), str(row["unit"] or fallback_unit)
+
+    def _money_text(self, value: Decimal) -> str:
+        return f"{value.quantize(Decimal('0.01')):.2f}"
 
     def _recipe_snapshot(self, connection: sqlite3.Connection, recipe_id: str) -> dict[str, Any]:
         recipe = dict(connection.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone())

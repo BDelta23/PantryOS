@@ -26,7 +26,11 @@
       "kitchen_items": {"name": "Kitchen items"},
       "refrigerator_items": {"name": "Refrigerator items"},
       "freezer_items": {"name": "Freezer items"},
-      "pantry_items": {"name": "Pantry items"}
+      "pantry_items": {"name": "Pantry items"},
+      "kitchen_value": {"name": "Kitchen value"},
+      "refrigerator_value": {"name": "Refrigerator value"},
+      "freezer_value": {"name": "Freezer value"},
+      "pantry_value": {"name": "Pantry value"}
     }
   }
 }

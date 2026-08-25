@@ -180,7 +180,7 @@ def public_state(core: PantryCore) -> dict[str, Any]:
         "meal_plan": meal_plan_legacy(core),
         "leftovers": [lot_to_item(lot) for lot in lots if lot["status"] == "active" and lot["lot_type"] == "leftover"],
         "meals_with_two_or_fewer_missing": recipe_matches(core, recipes, max_missing=2),
-        "core": {"products": products, "lots": lots, "events": dashboard["events"]},
+        "core": {"products": products, "lots": lots, "events": dashboard["events"], "summary": dashboard["summary"]},
     }
 
 
@@ -190,13 +190,15 @@ def lot_to_item(lot: dict[str, Any]) -> dict[str, Any]:
         "name": lot["product_name"],
         "quantity": lot["quantity"],
         "unit": lot["unit"],
-        "location": lot["location_name"],
+        "location": lot.get("location_path") or lot["location_name"],
+        "location_name": lot["location_name"],
         "purchased": lot["acquired_at"],
         "expires": lot["expires_at"],
         "opened": bool(lot["opened_at"]),
         "minimum_stock": lot["minimum_stock_quantity"],
         "barcode": None,
         "estimated_cost": lot["total_cost"],
+        "estimated_value": lot.get("estimated_value", "0.00"),
         "tags": ["leftover"] if lot["lot_type"] == "leftover" else [],
         "notes": lot["notes"],
     }
@@ -265,8 +267,10 @@ def legacy_summary(core: PantryCore, dashboard: dict[str, Any]) -> dict[str, Any
         "suggested_purchase_count": len(suggestions),
         "possible_meals": possible,
         "possible_meal_count": len(possible),
-        "food_waste_this_month": "0",
-        "location_counts": location_counts(dashboard["lots"]),
+        "food_waste_this_month": dashboard["summary"]["food_waste_this_month"],
+        "location_counts": dashboard["summary"]["location_counts"],
+        "location_values": dashboard["summary"]["location_values"],
+        "locations": dashboard["summary"]["locations"],
     }
 
 
@@ -284,7 +288,8 @@ def expiring_soon(lots: list[dict[str, Any]], days: int = 4) -> list[dict[str, A
                     "name": lot["product_name"],
                     "quantity": lot["quantity"],
                     "unit": lot["unit"],
-                    "location": lot["location_name"],
+                    "location": lot.get("location_path") or lot["location_name"],
+                    "location_name": lot["location_name"],
                     "days_left": days_left,
                     "expires": lot["expires_at"],
                 }
@@ -412,6 +417,21 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path in ("/api/state", "/api/v1/dashboard"):
             self._send_json(public_state(self.core))
+            return
+        if parsed.path == "/api/v1/locations/summary":
+            summary = self.core.dashboard()["summary"]
+            self._send_json(
+                {
+                    "counts": summary["location_counts"],
+                    "values": summary["location_values"],
+                    "locations": summary["locations"],
+                    "currency": "USD",
+                }
+            )
+            return
+        if parsed.path == "/api/v1/waste/monthly":
+            summary = self.core.dashboard()["summary"]
+            self._send_json({"food_waste_this_month": summary["food_waste_this_month"], "currency": "USD"})
             return
         cooking_session_id = cooking_session_path(parsed.path)
         if cooking_session_id is not None:
@@ -818,26 +838,7 @@ def move_lot(core: PantryCore, lot_id: str, location: str) -> dict[str, Any]:
 
 
 def discard_lot(core: PantryCore, lot_id: str, reason: str = "web delete action") -> dict[str, Any]:
-    core.migrate()
-    with core.transaction() as connection:
-        lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
-        if lot is None:
-            raise PantryOSError(f"Unknown inventory lot: {lot_id}")
-        connection.execute(
-            "UPDATE inventory_lots SET quantity = '0', status = 'discarded', updated_at = ?, version = version + 1 WHERE id = ?",
-            (datetime_now(), lot_id),
-        )
-        revision = core._append_event(
-            connection,
-            "DISCARD",
-            product_id=lot["product_id"],
-            lot_id=lot_id,
-            quantity=lot["quantity"],
-            unit=lot["unit"],
-            reason=reason,
-            source="api",
-        )
-    return {"ok": True, "revision": revision}
+    return core.discard_lot(lot_id, reason=reason, source="api")
 
 
 def add_recipe(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:

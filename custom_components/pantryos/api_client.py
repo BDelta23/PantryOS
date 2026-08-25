@@ -127,8 +127,10 @@ class PantryAPIClient:
                 "suggested_purchase_count": 0,
                 "possible_meals": [],
                 "possible_meal_count": 0,
-                "food_waste_this_month": "0",
+                "food_waste_this_month": "0.00",
                 "location_counts": {"Kitchen": 0, "Refrigerator": 0, "Freezer": 0, "Pantry": 0},
+                "location_values": {"Kitchen": "0.00", "Refrigerator": "0.00", "Freezer": "0.00", "Pantry": "0.00"},
+                "locations": [],
             }
         return self._dashboard["summary"]
 

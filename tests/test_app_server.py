@@ -169,6 +169,7 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
                     "quantity": "1",
                     "unit": "lb",
                     "location": "Kitchen/Refrigerator",
+                    "estimated_cost": "4.00",
                 },
             )
             consumed = request_json(
@@ -184,6 +185,14 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
                 payload={"quantity": "2", "reason": "api test"},
                 request_id="too-much",
             )
+            discarded = request_json(
+                f"{base}/api/v1/inventory/lots/{created['item']['id']}/discard",
+                method="POST",
+                token="test-token",
+                payload={"reason": "spoiled"},
+            )
+            locations = request_json(f"{base}/api/v1/locations/summary", token="test-token")
+            waste = request_json(f"{base}/api/v1/waste/monthly", token="test-token")
             bad_status, invalid_json = request_raw_error(
                 f"{base}/api/v1/inventory/lots",
                 b"{",
@@ -206,6 +215,10 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     assert over_status == 409
     assert over_consume["code"] == "insufficient_inventory"
     assert over_consume["request_id"] == "too-much"
+    assert discarded["discarded_value"] == "2.00"
+    assert locations["currency"] == "USD"
+    assert "Refrigerator" in locations["values"]
+    assert waste == {"food_waste_this_month": "2.00", "currency": "USD"}
     assert bad_status == 400
     assert invalid_json["code"] == "invalid_json"
     assert invalid_json["request_id"] == "bad-json"

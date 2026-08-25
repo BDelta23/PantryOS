@@ -17,7 +17,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 - [ ] Phase 2 — inventory domain and authenticated API foundation (in progress; current HA-used routes are authenticated under `/api/v1`)
 - [ ] Phase 3 — web + Home Assistant one-source-of-truth proof (in progress; automated web/API-to-HA-client sync proof added)
 - [ ] Phase 4 — recipes, use-soon, meal plan, idempotent shopping (in progress; shopping rebuild, edit/check/remove, and complete-purchase API slice added)
-- [ ] Phase 5 — cooking, leftovers, waste, and location value (in progress; cooking sessions and leftover creation added)
+- [ ] Phase 5 — cooking, leftovers, waste, and location value (in progress; cooking sessions, leftover creation, waste metrics, and location value surfaces added)
 - [ ] Phase 6 — barcode, receipts, purchases, and price history
 - [ ] Phase 7 — complete Home Assistant surface
 - [ ] Phase 8 — security, operations, UX, and release hardening
@@ -40,6 +40,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 | 2026-08-25 | Phase 4 | Added Core meal-plan shopping rebuild that aggregates active planned recipe ingredients, subtracts usable inventory, uses stable generated source keys, inactivates stale generated meal-plan demand, and exposes it through authenticated `POST /api/v1/shopping/rebuild` plus HA client method | `python scripts/check.py` -> python compile: 21 files passed; 23 tests passed; javascript syntax passed; API client test proves two planned meals rebuild to stable generated rows (`Plan Flour` 24 oz after inventory subtraction and `Baking Powder` 2 tbsp) across repeated rebuilds | Full shopping editing/checking/suppression/purchase workflow, manual/generated source breakdown UI, and user override reconciliation remain pending |
 | 2026-08-25 | Phase 4 | Added schema migration 002 for purchase/purchase-line history; implemented shopping line list/edit/check/uncheck/remove and transactional purchase completion that creates purchase records, purchase lines, inventory lots linked by `purchase_line_id`, and completes shopping demand | `python scripts/check.py` -> python compile: 21 files passed; 26 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 26 tests passed; Docker smoke `GET /api/v1/instance` with bearer token -> schema_version 2 | Purchase UI, user override reconciliation, price history comparison, and complete browser workflow are still pending |
 | 2026-08-25 | Phase 5 | Added schema migration 003 for cooking sessions; implemented start/complete/cancel session Core operations and authenticated `/api/v1/cooking/sessions` routes. Start records a cooking event without consuming inventory; completion atomically consumes confirmed lot allocations, marks linked session completed, and creates leftover lots with `cooking_session_id` provenance; cancel leaves inventory unchanged | `python scripts/check.py` -> python compile: 21 files passed; 29 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 29 tests passed; Docker smoke `GET /api/v1/instance` with bearer token -> schema_version 3 | Waste attribution, location value API/HA surfaces, cooking UI, and full HA runtime proof remain pending |
+| 2026-08-25 | Phase 5 | Moved discard into PantryOS Core with event-time waste value metadata, added monthly waste and location count/value summaries from SQLite, exposed authenticated `/api/v1/locations/summary` and `/api/v1/waste/monthly`, and added HA category value sensors | `python scripts/check.py` -> python compile: 21 files passed; 31 tests passed; javascript syntax passed; `git diff --check` -> passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 31 tests passed; Docker smoke `GET /api/v1/locations/summary` -> values returned; `GET /api/v1/waste/monthly` -> `{"food_waste_this_month":"0.00","currency":"USD"}`; `GET /api/v1/instance` -> capabilities include `waste_metrics` and `location_value` | Cooking UI, browser purchase workflow, and full HA runtime proof remain pending |
 ## Architectural decisions
 
 Record ADR paths here as they are created.
@@ -54,7 +55,7 @@ Record ADR paths here as they are created.
 - Browser compatibility routes remain unauthenticated until browser session, CSRF, CORS/origin, and UI token/session work are implemented; current HA client no longer depends on those routes.
 - OpenAPI generation/validation is not implemented yet.
 - Events are persisted but no authenticated SSE/WebSocket subscription exists yet.
-- Advanced product/location/recipe UI, browser cooking/purchase workflows, waste attribution, barcode, receipt, and price history are still incomplete.
+- Advanced product/location/recipe UI, browser cooking/purchase workflows, barcode, receipt, and price history are still incomplete.
 - Completion acceptance criteria are not fully evidenced.
 
 
