@@ -22,34 +22,39 @@ def request_json(url: str, method: str = "GET", payload: dict | None = None) -> 
         return json.loads(response.read().decode("utf-8"))
 
 
-def test_seed_manager_builds_vertical_slice_state() -> None:
-    manager = server_module.seed_manager()
-    state = server_module.public_state(manager)
-
-    assert state["summary"]["total_items"] == 7
-    assert state["summary"]["suggested_purchase_count"] == 2
-    assert state["meal_plan"]["Tonight"] == "Spinach Omelette"
-    assert [item["name"] for item in state["leftovers"]] == ["Taco Meat"]
-    assert "Chicken Alfredo" in [meal["name"] for meal in state["meals_with_two_or_fewer_missing"]]
-
-
-def test_repository_persists_mutations() -> None:
+def test_seed_core_builds_vertical_slice_state() -> None:
     with TemporaryDirectory() as directory:
-        repository = server_module.JsonInventoryRepository(Path(directory) / "pantry.json")
-        repository.save(server_module.seed_manager())
-        manager = repository.load()
-        item = next(item for item in manager.state.items if item.name == "Eggs")
-        repository.mutate(lambda loaded: loaded.consume_item(item.id, server_module.Decimal("4")))
+        core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")
 
-        updated = repository.load()
-        eggs = next(item for item in updated.state.items if item.name == "Eggs")
-        assert eggs.quantity == server_module.Decimal("0")
-        assert updated.suggested_purchases()[0]["name"] == "Eggs"
+        state = server_module.seed_core(core, reset=True)
+
+        assert state["summary"]["total_items"] == 7
+        assert state["summary"]["suggested_purchase_count"] == 2
+        assert state["meal_plan"]["Tonight"] == "Spinach Omelette"
+        assert [item["name"] for item in state["leftovers"]] == ["Taco Meat"]
+        assert "Chicken Alfredo" in [meal["name"] for meal in state["meals_with_two_or_fewer_missing"]]
+        assert state["core"]["products"]
+        assert state["core"]["events"]
+
+
+def test_core_backed_server_persists_mutations() -> None:
+    with TemporaryDirectory() as directory:
+        core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")
+        server_module.seed_core(core, reset=True)
+        eggs = next(product for product in core.dashboard()["products"] if product["name"] == "Eggs")
+
+        core.consume_product(product_id=eggs["id"], quantity="4", unit="count")
+
+        updated = server_module.public_state(core)
+        eggs_lots = [lot for lot in updated["core"]["lots"] if lot["product_name"] == "Eggs"]
+        assert eggs_lots[0]["quantity"] == "0"
+        assert eggs_lots[0]["status"] == "closed"
+        assert updated["summary"]["suggested_purchases"][0]["name"] == "Eggs"
 
 
 def test_http_api_serves_state_and_accepts_items() -> None:
     with TemporaryDirectory() as directory:
-        data_path = Path(directory) / "pantry.json"
+        data_path = Path(directory) / "pantryos.sqlite3"
         httpd = server_module.make_server("127.0.0.1", 0, data_path)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
@@ -68,6 +73,7 @@ def test_http_api_serves_state_and_accepts_items() -> None:
                 },
             )
             state = request_json(f"{base}/api/state")
+            instance = request_json(f"{base}/api/v1/instance")
         finally:
             httpd.shutdown()
             thread.join(timeout=5)
@@ -76,3 +82,5 @@ def test_http_api_serves_state_and_accepts_items() -> None:
     assert created["item"]["name"] == "Heavy Cream"
     assert any(item["name"] == "Heavy Cream" for item in state["items"])
     assert state["summary"]["total_items"] == 8
+    assert instance["schema_version"] == 1
+    assert instance["state_revision"] >= 1

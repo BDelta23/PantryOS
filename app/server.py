@@ -1,8 +1,4 @@
-"""Local PantryOS web application server.
-
-Run with:
-    python app/server.py
-"""
+"""Local PantryOS web application server backed by PantryOS Core."""
 
 from __future__ import annotations
 
@@ -10,301 +6,460 @@ import argparse
 import json
 import mimetypes
 import sys
-from collections.abc import Callable
+import tempfile
+from contextlib import closing
 from decimal import Decimal
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from pantryos.core import PantryCore, normalize_name  # noqa: E402
+from pantryos.errors import PantryOSError  # noqa: E402
+from pantryos.units import convert, decimal_text, require_non_negative, unit_code  # noqa: E402
+
 STATIC_DIR = ROOT / "app" / "static"
-DEFAULT_DATA_PATH = ROOT / "data" / "pantryos.json"
-INVENTORY_PATH = ROOT / "custom_components" / "pantryos" / "inventory.py"
-
-_SPEC = spec_from_file_location("pantryos_inventory", INVENTORY_PATH)
-if _SPEC is None or _SPEC.loader is None:
-    raise RuntimeError(f"Unable to load inventory engine from {INVENTORY_PATH}")
-inventory = module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = inventory
-_SPEC.loader.exec_module(inventory)
-
-InventoryManager = inventory.InventoryManager
-InventoryState = inventory.InventoryState
-InventoryItem = inventory.InventoryItem
-Recipe = inventory.Recipe
-ShoppingListItem = inventory.ShoppingListItem
-
-DEFAULT_STATE = {
-    "items": [],
-    "recipes": [],
-    "shopping_list": [],
-    "meal_plan": {},
-}
+DEFAULT_DB_PATH = ROOT / "data" / "pantryos.sqlite3"
+LEGACY_JSON_PATH = ROOT / "data" / "pantryos.json"
 
 
-class JsonInventoryRepository:
-    """File-backed inventory repository for the local app."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-
-    def load(self) -> InventoryManager:
-        if not self.path.exists():
-            return InventoryManager(InventoryState.from_dict(DEFAULT_STATE))
-        with self.path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        return InventoryManager.from_dict(data)
-
-    def save(self, manager: InventoryManager) -> None:
-        with NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=self.path.parent,
-            delete=False,
-        ) as handle:
-            json.dump(manager.to_dict(), handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            temp_path = Path(handle.name)
-        temp_path.replace(self.path)
-
-    def mutate(self, callback: Callable[[Any], Any]) -> Any:
-        manager = self.load()
-        result = callback(manager)
-        self.save(manager)
-        return result
-
-
-def public_state(manager: Any) -> dict[str, Any]:
-    state = manager.to_dict()
-    summary = manager.summary()
-    leftovers = [
-        item
-        for item in state["items"]
-        if "leftover" in [tag.casefold() for tag in item.get("tags", [])]
-    ]
+def demo_seed_document() -> dict[str, Any]:
     return {
-        "summary": summary,
-        "items": sorted(state["items"], key=lambda item: (item["location"], item["name"])),
-        "recipes": sorted(state["recipes"], key=lambda recipe: recipe["name"]),
-        "shopping_list": state["shopping_list"],
-        "meal_plan": state["meal_plan"],
-        "leftovers": leftovers,
-        "meals_with_two_or_fewer_missing": manager.possible_meals(max_missing=2),
+        "items": [
+            {
+                "id": "seed-chicken",
+                "name": "Chicken Breast",
+                "quantity": "2",
+                "unit": "lb",
+                "location": "Garage/Chest Freezer",
+                "purchased": "2026-08-21",
+                "expires": "2026-08-27",
+                "minimum_stock": "1",
+                "estimated_cost": "8.50",
+            },
+            {
+                "id": "seed-pasta",
+                "name": "Pasta",
+                "quantity": "16",
+                "unit": "oz",
+                "location": "Kitchen/Pantry/Shelf 1",
+                "minimum_stock": "16",
+                "estimated_cost": "1.79",
+            },
+            {
+                "id": "seed-parmesan",
+                "name": "Parmesan",
+                "quantity": "6",
+                "unit": "oz",
+                "location": "Kitchen/Refrigerator/Door",
+                "expires": "2026-09-08",
+                "estimated_cost": "4.50",
+            },
+            {
+                "id": "seed-spinach",
+                "name": "Spinach",
+                "quantity": "1",
+                "unit": "bag",
+                "location": "Kitchen/Refrigerator/Crisper",
+                "expires": "2026-08-28",
+                "estimated_cost": "3.49",
+            },
+            {
+                "id": "seed-milk",
+                "name": "Milk",
+                "quantity": "0.25",
+                "unit": "gallon",
+                "location": "Kitchen/Refrigerator/Top Shelf",
+                "expires": "2026-08-29",
+                "minimum_stock": "1",
+                "estimated_cost": "3.69",
+            },
+            {
+                "id": "seed-eggs",
+                "name": "Eggs",
+                "quantity": "4",
+                "unit": "count",
+                "location": "Kitchen/Refrigerator/Door",
+                "minimum_stock": "12",
+                "estimated_cost": "2.99",
+            },
+            {
+                "id": "seed-taco-meat",
+                "name": "Taco Meat",
+                "quantity": "3",
+                "unit": "serving",
+                "location": "Kitchen/Refrigerator/Bottom Shelf",
+                "purchased": "2026-08-24",
+                "expires": "2026-08-28",
+                "tags": ["leftover"],
+                "notes": "Dinner leftovers",
+            },
+        ],
+        "recipes": [
+            {
+                "name": "Chicken Alfredo",
+                "prep_minutes": 25,
+                "ingredients": [
+                    {"name": "Chicken Breast", "quantity": "1", "unit": "lb"},
+                    {"name": "Pasta", "quantity": "16", "unit": "oz"},
+                    {"name": "Parmesan", "quantity": "4", "unit": "oz"},
+                    {"name": "Heavy Cream", "quantity": "1", "unit": "cup"},
+                ],
+            },
+            {
+                "name": "Spinach Omelette",
+                "prep_minutes": 12,
+                "ingredients": [
+                    {"name": "Eggs", "quantity": "3", "unit": "count"},
+                    {"name": "Spinach", "quantity": "0.5", "unit": "bag"},
+                    {"name": "Parmesan", "quantity": "1", "unit": "oz"},
+                ],
+            },
+            {
+                "name": "Taco Leftover Bowls",
+                "prep_minutes": 10,
+                "ingredients": [
+                    {"name": "Taco Meat", "quantity": "2", "unit": "serving"},
+                    {"name": "Rice", "quantity": "1", "unit": "cup"},
+                ],
+            },
+        ],
+        "shopping_list": [],
+        "meal_plan": {"Tonight": "Spinach Omelette"},
     }
 
 
-def seed_manager() -> Any:
-    manager = InventoryManager()
-    items = [
-        {
-            "name": "Chicken Breast",
-            "quantity": "2",
-            "unit": "lb",
-            "location": "Garage/Chest Freezer",
-            "purchased": "2026-08-21",
-            "expires": "2026-08-27",
-            "minimum_stock": "1",
-            "estimated_cost": "8.50",
-        },
-        {
-            "name": "Pasta",
-            "quantity": "16",
-            "unit": "oz",
-            "location": "Kitchen/Pantry/Shelf 1",
-            "minimum_stock": "16",
-            "estimated_cost": "1.79",
-        },
-        {
-            "name": "Parmesan",
-            "quantity": "6",
-            "unit": "oz",
-            "location": "Kitchen/Refrigerator/Door",
-            "expires": "2026-09-08",
-            "estimated_cost": "4.50",
-        },
-        {
-            "name": "Spinach",
-            "quantity": "1",
-            "unit": "bag",
-            "location": "Kitchen/Refrigerator/Crisper",
-            "expires": "2026-08-28",
-            "estimated_cost": "3.49",
-        },
-        {
-            "name": "Milk",
-            "quantity": "0.25",
-            "unit": "gallon",
-            "location": "Kitchen/Refrigerator/Top Shelf",
-            "expires": "2026-08-29",
-            "minimum_stock": "1",
-            "estimated_cost": "3.69",
-        },
-        {
-            "name": "Eggs",
-            "quantity": "4",
-            "unit": "count",
-            "location": "Kitchen/Refrigerator/Door",
-            "minimum_stock": "12",
-            "estimated_cost": "2.99",
-        },
-        {
-            "name": "Taco Meat",
-            "quantity": "3",
-            "unit": "serving",
-            "location": "Kitchen/Refrigerator/Bottom Shelf",
-            "purchased": "2026-08-24",
-            "expires": "2026-08-28",
-            "tags": ["leftover"],
-            "notes": "Dinner leftovers",
-        },
-    ]
-    for item in items:
-        manager.add_item(item)
+def remove_database_files(db_path: Path) -> None:
+    for path in (db_path, db_path.with_name(db_path.name + "-wal"), db_path.with_name(db_path.name + "-shm")):
+        if path.exists():
+            path.unlink()
 
-    recipes = [
-        {
-            "name": "Chicken Alfredo",
-            "prep_minutes": 25,
-            "ingredients": [
-                {"name": "Chicken Breast", "quantity": "1", "unit": "lb"},
-                {"name": "Pasta", "quantity": "16", "unit": "oz"},
-                {"name": "Parmesan", "quantity": "4", "unit": "oz"},
-                {"name": "Heavy Cream", "quantity": "1", "unit": "cup"},
-            ],
-        },
-        {
-            "name": "Spinach Omelette",
-            "prep_minutes": 12,
-            "ingredients": [
-                {"name": "Eggs", "quantity": "3", "unit": "count"},
-                {"name": "Spinach", "quantity": "0.5", "unit": "bag"},
-                {"name": "Parmesan", "quantity": "1", "unit": "oz"},
-            ],
-        },
-        {
-            "name": "Taco Leftover Bowls",
-            "prep_minutes": 10,
-            "ingredients": [
-                {"name": "Taco Meat", "quantity": "2", "unit": "serving"},
-                {"name": "Rice", "quantity": "1", "unit": "cup"},
-            ],
-        },
-    ]
+
+def seed_core(core: PantryCore, reset: bool = False) -> dict[str, Any]:
+    if reset:
+        remove_database_files(core.db_path)
+    core.migrate()
+    if core.dashboard()["summary"]["product_count"] > 0 and not reset:
+        return public_state(core)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
+        json.dump(demo_seed_document(), handle)
+        seed_path = Path(handle.name)
+    try:
+        core.import_legacy_json(seed_path)
+    finally:
+        seed_path.unlink(missing_ok=True)
+    return public_state(core)
+
+
+def public_state(core: PantryCore) -> dict[str, Any]:
+    dashboard = core.dashboard()
+    lots = dashboard["lots"]
+    products = dashboard["products"]
+    recipes = dashboard["recipes"]
+    shopping = dashboard["shopping"]
+    summary = legacy_summary(core, dashboard)
+    return {
+        "revision": dashboard["revision"],
+        "instance_id": dashboard["instance_id"],
+        "summary": summary,
+        "items": [lot_to_item(lot) for lot in lots if lot["status"] == "active"],
+        "recipes": [recipe_to_legacy(recipe) for recipe in recipes],
+        "shopping_list": [shopping_to_legacy(row) for row in shopping if row["status"] == "active"],
+        "meal_plan": meal_plan_legacy(core),
+        "leftovers": [lot_to_item(lot) for lot in lots if lot["status"] == "active" and lot["lot_type"] == "leftover"],
+        "meals_with_two_or_fewer_missing": recipe_matches(core, recipes, max_missing=2),
+        "core": {"products": products, "lots": lots, "events": dashboard["events"]},
+    }
+
+
+def lot_to_item(lot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": lot["id"],
+        "name": lot["product_name"],
+        "quantity": lot["quantity"],
+        "unit": lot["unit"],
+        "location": lot["location_name"],
+        "purchased": lot["acquired_at"],
+        "expires": lot["expires_at"],
+        "opened": bool(lot["opened_at"]),
+        "minimum_stock": lot["minimum_stock_quantity"],
+        "barcode": None,
+        "estimated_cost": lot["total_cost"],
+        "tags": ["leftover"] if lot["lot_type"] == "leftover" else [],
+        "notes": lot["notes"],
+    }
+
+
+def recipe_to_legacy(recipe: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": recipe["id"],
+        "name": recipe["name"],
+        "prep_minutes": recipe["prep_minutes"],
+        "instructions": recipe["instructions"],
+        "tags": json.loads(recipe["tags_json"]),
+        "ingredients": [
+            {
+                "id": ingredient["id"],
+                "product_id": ingredient["product_id"],
+                "name": ingredient["display_text"],
+                "quantity": ingredient["quantity"],
+                "unit": ingredient["unit"],
+            }
+            for ingredient in recipe["ingredients"]
+        ],
+    }
+
+
+def shopping_to_legacy(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["display_name"],
+        "quantity": row["quantity"],
+        "unit": row["unit"],
+        "source": row["source_key"],
+        "checked": bool(row["checked"]),
+    }
+
+
+def meal_plan_legacy(core: PantryCore) -> dict[str, str]:
+    with closing(core.connect()) as connection:
+        rows = connection.execute(
+            """
+            SELECT m.meal_type, r.name
+            FROM meal_plan_entries m
+            JOIN recipes r ON r.id = m.recipe_id
+            ORDER BY m.plan_date, m.meal_type
+            """
+        ).fetchall()
+    return {row["meal_type"]: row["name"] for row in rows}
+
+
+def legacy_summary(core: PantryCore, dashboard: dict[str, Any]) -> dict[str, Any]:
+    expiring = expiring_soon(dashboard["lots"])
+    suggestions = minimum_stock_suggestions(core)
+    possible = recipe_matches(core, dashboard["recipes"], max_missing=0)
+    return {
+        "total_items": dashboard["summary"]["active_lot_count"],
+        "expiring_soon": expiring,
+        "expiring_soon_count": len(expiring),
+        "shopping_list_count": dashboard["summary"]["shopping_count"],
+        "suggested_purchases": suggestions,
+        "suggested_purchase_count": len(suggestions),
+        "possible_meals": possible,
+        "possible_meal_count": len(possible),
+        "food_waste_this_month": "0",
+        "location_counts": location_counts(dashboard["lots"]),
+    }
+
+
+def expiring_soon(lots: list[dict[str, Any]], days: int = 4) -> list[dict[str, Any]]:
+    today = datetime_date()
+    rows = []
+    for lot in lots:
+        if lot["status"] != "active" or not lot["expires_at"]:
+            continue
+        days_left = (datetime_date(lot["expires_at"]) - today).days
+        if 0 <= days_left <= days:
+            rows.append(
+                {
+                    "id": lot["id"],
+                    "name": lot["product_name"],
+                    "quantity": lot["quantity"],
+                    "unit": lot["unit"],
+                    "location": lot["location_name"],
+                    "days_left": days_left,
+                    "expires": lot["expires_at"],
+                }
+            )
+    return sorted(rows, key=lambda row: (row["days_left"], row["name"]))
+
+
+def datetime_date(value: str | None = None):
+    from datetime import date
+
+    if value is None:
+        return date.today()
+    return date.fromisoformat(value[:10])
+
+
+def location_counts(lots: list[dict[str, Any]]) -> dict[str, int]:
+    active = [lot for lot in lots if lot["status"] == "active"]
+    return {
+        "Kitchen": sum(1 for lot in active if lot["location_name"] != "Chest Freezer"),
+        "Refrigerator": sum(1 for lot in active if "Refrigerator" in lot["location_name"] or lot["location_name"] in {"Door", "Crisper", "Top Shelf", "Bottom Shelf"}),
+        "Freezer": sum(1 for lot in active if "Freezer" in lot["location_name"]),
+        "Pantry": sum(1 for lot in active if "Pantry" in lot["location_name"] or "Shelf" in lot["location_name"]),
+    }
+
+
+def recipe_matches(core: PantryCore, recipes: list[dict[str, Any]], max_missing: int) -> list[dict[str, Any]]:
+    with closing(core.connect()) as connection:
+        lot_rows = connection.execute(
+            "SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0"
+        ).fetchall()
+    available: dict[str, list[dict[str, Any]]] = {}
+    today = datetime_date()
+    for row in lot_rows:
+        lot = dict(row)
+        if lot["expires_at"] and datetime_date(lot["expires_at"]) < today:
+            continue
+        available.setdefault(lot["product_id"], []).append(lot)
+
+    meals = []
     for recipe in recipes:
-        manager.add_recipe(recipe)
+        missing = []
+        unresolved = []
+        for ingredient in recipe["ingredients"]:
+            product_id = ingredient["product_id"]
+            if product_id is None:
+                unresolved.append(ingredient["display_text"])
+                missing.append(
+                    {
+                        "name": ingredient["display_text"],
+                        "quantity": ingredient["quantity"],
+                        "unit": ingredient["unit"],
+                    }
+                )
+                continue
+            required = require_non_negative(ingredient["quantity"])
+            unit = unit_code(ingredient["unit"])
+            on_hand = Decimal("0")
+            try:
+                for lot in available.get(product_id, []):
+                    on_hand += convert(require_non_negative(lot["quantity"]), lot["unit"], unit)
+            except PantryOSError:
+                on_hand = Decimal("0")
+            if on_hand < required:
+                missing.append(
+                    {
+                        "name": ingredient["display_text"],
+                        "quantity": decimal_text(required - on_hand),
+                        "unit": unit,
+                    }
+                )
+        if len(missing) <= max_missing:
+            meals.append(
+                {
+                    "name": recipe["name"],
+                    "prep_minutes": recipe["prep_minutes"],
+                    "missing_count": len(missing),
+                    "missing": missing,
+                    "unresolved": unresolved,
+                }
+            )
+    return sorted(meals, key=lambda meal: (meal["missing_count"], meal["prep_minutes"] or 9999, meal["name"]))
 
-    manager.plan_meal("Tonight", "Spinach Omelette")
-    return manager
+
+def minimum_stock_suggestions(core: PantryCore) -> list[dict[str, Any]]:
+    with closing(core.connect()) as connection:
+        products = connection.execute(
+            "SELECT * FROM products WHERE active = 1 AND minimum_stock_quantity IS NOT NULL ORDER BY name"
+        ).fetchall()
+        lots = connection.execute(
+            "SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0"
+        ).fetchall()
+    by_product: dict[str, list[dict[str, Any]]] = {}
+    for row in lots:
+        by_product.setdefault(row["product_id"], []).append(dict(row))
+    suggestions = []
+    for product in products:
+        target = require_non_negative(product["minimum_stock_quantity"])
+        unit = unit_code(product["minimum_stock_unit"])
+        current = Decimal("0")
+        try:
+            for lot in by_product.get(product["id"], []):
+                current += convert(require_non_negative(lot["quantity"]), lot["unit"], unit)
+        except PantryOSError:
+            continue
+        if current < target:
+            suggestions.append(
+                {
+                    "name": product["name"],
+                    "quantity": decimal_text(target - current),
+                    "unit": unit,
+                    "current": decimal_text(current),
+                    "minimum_stock": decimal_text(target),
+                }
+            )
+    return suggestions
 
 
 class PantryRequestHandler(BaseHTTPRequestHandler):
-    repository: JsonInventoryRepository
+    core: PantryCore
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/api/state":
-            self._send_json(public_state(self.repository.load()))
+        if parsed.path in ("/api/state", "/api/v1/dashboard"):
+            self._send_json(public_state(self.core))
+            return
+        if parsed.path == "/api/v1/instance":
+            self._send_json(self.core.instance())
+            return
+        if parsed.path == "/api/v1/health/live":
+            self._send_json({"status": "live"})
+            return
+        if parsed.path == "/api/v1/health/ready":
+            self.core.integrity_check()
+            self._send_json({"status": "ready"})
             return
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        body = self._read_json()
-
         try:
-            if parsed.path == "/api/items":
-                item = self.repository.mutate(lambda manager: manager.add_item(body))
-                self._send_json({"item": item.to_dict()}, HTTPStatus.CREATED)
+            body = self._read_json()
+            if parsed.path in ("/api/items", "/api/v1/inventory/lots"):
+                result = self.core.add_inventory_lot(body)
+                self._send_json({"item": lot_to_item(result["lot"]), "revision": result["revision"]}, HTTPStatus.CREATED)
                 return
-
             if parsed.path.startswith("/api/items/") and parsed.path.endswith("/consume"):
-                item_id = parsed.path.removeprefix("/api/items/").removesuffix("/consume")
-                quantity = Decimal(str(body.get("quantity", "1")))
-                result = self.repository.mutate(
-                    lambda manager: manager.consume_item(item_id, quantity)
-                )
-                self._send_json({"item": result.to_dict() if result is not None else None})
+                lot_id = parsed.path.removeprefix("/api/items/").removesuffix("/consume")
+                result = consume_lot_product(self.core, lot_id, str(body.get("quantity", "1")))
+                self._send_json(result)
                 return
-
             if parsed.path.startswith("/api/items/") and parsed.path.endswith("/move"):
-                item_id = parsed.path.removeprefix("/api/items/").removesuffix("/move")
-                result = self.repository.mutate(
-                    lambda manager: manager.move_item(item_id, body["location"])
-                )
-                self._send_json({"item": result.to_dict()})
+                lot_id = parsed.path.removeprefix("/api/items/").removesuffix("/move")
+                self._send_json(move_lot(self.core, lot_id, body["location"]))
                 return
-
-            if parsed.path == "/api/recipes":
-                recipe = self.repository.mutate(lambda manager: manager.add_recipe(body))
-                self._send_json({"recipe": recipe.to_dict()}, HTTPStatus.CREATED)
-                return
-
-            if parsed.path.startswith("/api/recipes/") and parsed.path.endswith("/shopping"):
-                recipe_name = unquote(
-                    parsed.path.removeprefix("/api/recipes/").removesuffix("/shopping")
-                )
-                rows = self.repository.mutate(
-                    lambda manager: manager.add_missing_to_shopping_list(recipe_name)
-                )
-                self._send_json({"items": [row.to_dict() for row in rows]})
-                return
-
-            if parsed.path == "/api/shopping":
-                row = self.repository.mutate(
-                    lambda manager: manager.add_shopping_item(
-                        body["name"],
-                        Decimal(str(body.get("quantity", "1"))),
-                        body.get("unit") or "count",
-                        body.get("source") or "manual",
-                    )
-                )
-                self._send_json({"item": row.to_dict()}, HTTPStatus.CREATED)
-                return
-
-            if parsed.path == "/api/shopping/promote-suggestions":
-                rows = self.repository.mutate(
-                    lambda manager: manager.promote_suggested_purchases()
-                )
-                self._send_json({"items": [row.to_dict() for row in rows]})
-                return
-
-            if parsed.path == "/api/meal-plan":
-                self.repository.mutate(
-                    lambda manager: manager.plan_meal(body["day"], body["recipe_name"])
-                )
-                self._send_json({"ok": True})
-                return
-
             if parsed.path == "/api/seed":
-                query = parse_qs(parsed.query)
-                reset = query.get("reset", ["false"])[0].casefold() == "true"
-                if reset or not self.repository.path.exists():
-                    self.repository.save(seed_manager())
-                self._send_json(public_state(self.repository.load()))
+                reset = parse_qs(parsed.query).get("reset", ["false"])[0].casefold() == "true"
+                self._send_json(seed_core(self.core, reset=reset))
                 return
-
-        except (KeyError, ValueError, json.JSONDecodeError) as exc:
-            self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            if parsed.path == "/api/meal-plan":
+                self._send_json(plan_meal(self.core, body["day"], body["recipe_name"]))
+                return
+            if parsed.path == "/api/recipes":
+                self._send_json(add_recipe(self.core, body), HTTPStatus.CREATED)
+                return
+            if parsed.path.startswith("/api/recipes/") and parsed.path.endswith("/shopping"):
+                recipe_name = unquote(parsed.path.removeprefix("/api/recipes/").removesuffix("/shopping"))
+                self._send_json(add_missing_to_shopping(self.core, recipe_name))
+                return
+            if parsed.path == "/api/shopping/promote-suggestions":
+                self._send_json(promote_suggestions(self.core))
+                return
+        except (json.JSONDecodeError, KeyError, PantryOSError, ValueError) as exc:
+            self._send_json(problem(str(exc)), HTTPStatus.BAD_REQUEST)
             return
-
-        self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        self._send_json(problem("Not found"), HTTPStatus.NOT_FOUND)
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/items/"):
-            item_id = parsed.path.removeprefix("/api/items/")
-            try:
-                self.repository.mutate(lambda manager: manager.delete_item(item_id))
-                self._send_json({"ok": True})
-            except KeyError as exc:
-                self._send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+        try:
+            if parsed.path.startswith("/api/items/"):
+                lot_id = parsed.path.removeprefix("/api/items/")
+                self._send_json(discard_lot(self.core, lot_id))
+                return
+        except PantryOSError as exc:
+            self._send_json(problem(str(exc)), HTTPStatus.BAD_REQUEST)
             return
-        self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        self._send_json(problem("Not found"), HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -313,14 +468,11 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", "0"))
         if length == 0:
             return {}
-        payload = self.rfile.read(length).decode("utf-8")
-        return json.loads(payload)
+        if length > 1_000_000:
+            raise ValueError("Request body too large")
+        return json.loads(self.rfile.read(length).decode("utf-8"))
 
-    def _send_json(
-        self,
-        data: dict[str, Any],
-        status: HTTPStatus = HTTPStatus.OK,
-    ) -> None:
+    def _send_json(self, data: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         payload = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status.value)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -329,18 +481,15 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _serve_static(self, path: str) -> None:
-        if path in ("/", ""):
-            target = STATIC_DIR / "index.html"
-        else:
-            target = STATIC_DIR / path.lstrip("/")
+        target = STATIC_DIR / "index.html" if path in ("/", "") else STATIC_DIR / path.lstrip("/")
         try:
             resolved = target.resolve()
-            static_root = STATIC_DIR.resolve()
-            if not str(resolved).startswith(str(static_root)) or not resolved.is_file():
+            resolved.relative_to(STATIC_DIR.resolve())
+            if not resolved.is_file():
                 raise FileNotFoundError
             content = resolved.read_bytes()
-        except FileNotFoundError:
-            self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        except (FileNotFoundError, ValueError):
+            self._send_json(problem("Not found"), HTTPStatus.NOT_FOUND)
             return
         content_type = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK.value)
@@ -350,9 +499,185 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 
-def make_server(host: str, port: int, data_path: Path) -> ThreadingHTTPServer:
+def problem(detail: str) -> dict[str, Any]:
+    return {
+        "type": "https://pantryos.local/problems/request-failed",
+        "title": "Request failed",
+        "status": 400,
+        "code": "request_failed",
+        "detail": detail,
+        "errors": [],
+    }
+
+
+def consume_lot_product(core: PantryCore, lot_id: str, quantity: str) -> dict[str, Any]:
+    with closing(core.connect()) as connection:
+        lot = connection.execute("SELECT product_id, unit FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+    if lot is None:
+        raise PantryOSError(f"Unknown inventory lot: {lot_id}")
+    return core.consume_product(product_id=lot["product_id"], quantity=quantity, unit=lot["unit"])
+
+
+def move_lot(core: PantryCore, lot_id: str, location: str) -> dict[str, Any]:
+    core.migrate()
+    with core.transaction() as connection:
+        lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+        if lot is None:
+            raise PantryOSError(f"Unknown inventory lot: {lot_id}")
+        to_location_id = core.ensure_location_path(connection, location)
+        from_location_id = lot["location_id"]
+        connection.execute(
+            "UPDATE inventory_lots SET location_id = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+            (to_location_id, datetime_now(), lot_id),
+        )
+        revision = core._append_event(
+            connection,
+            "MOVE",
+            product_id=lot["product_id"],
+            lot_id=lot_id,
+            from_location_id=from_location_id,
+            to_location_id=to_location_id,
+            source="api",
+        )
+        updated = core.get_lot(connection, lot_id)
+    return {"item": lot_to_item(updated), "revision": revision}
+
+
+def discard_lot(core: PantryCore, lot_id: str) -> dict[str, Any]:
+    core.migrate()
+    with core.transaction() as connection:
+        lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+        if lot is None:
+            raise PantryOSError(f"Unknown inventory lot: {lot_id}")
+        connection.execute(
+            "UPDATE inventory_lots SET quantity = '0', status = 'discarded', updated_at = ?, version = version + 1 WHERE id = ?",
+            (datetime_now(), lot_id),
+        )
+        revision = core._append_event(
+            connection,
+            "DISCARD",
+            product_id=lot["product_id"],
+            lot_id=lot_id,
+            quantity=lot["quantity"],
+            unit=lot["unit"],
+            reason="web delete action",
+            source="api",
+        )
+    return {"ok": True, "revision": revision}
+
+
+def add_recipe(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:
+    core.migrate()
+    with core.transaction() as connection:
+        recipe_id = core._upsert_recipe(connection, body)
+        connection.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
+        for position, ingredient in enumerate(body.get("ingredients", [])):
+            product = connection.execute(
+                "SELECT id FROM products WHERE normalized_name = ?",
+                (normalize_name(ingredient["name"]),),
+            ).fetchone()
+            core._insert_recipe_ingredient(
+                connection,
+                recipe_id,
+                ingredient,
+                product["id"] if product else None,
+                position,
+            )
+        snapshot = core._recipe_snapshot(connection, recipe_id)
+        revision = int(connection.execute("SELECT value FROM app_metadata WHERE key = 'state_revision'").fetchone()[0])
+    return {"recipe": recipe_to_legacy(snapshot), "revision": revision}
+
+
+def plan_meal(core: PantryCore, day: str, recipe_name: str) -> dict[str, Any]:
+    core.migrate()
+    with core.transaction() as connection:
+        recipe = connection.execute(
+            "SELECT id FROM recipes WHERE normalized_name = ?",
+            (normalize_name(recipe_name),),
+        ).fetchone()
+        if recipe is None:
+            raise PantryOSError(f"Unknown recipe: {recipe_name}")
+        core._upsert_meal_plan(
+            connection,
+            plan_date=datetime_date().isoformat(),
+            meal_type=day,
+            recipe_id=recipe["id"],
+            servings="1",
+        )
+        revision = int(connection.execute("SELECT value FROM app_metadata WHERE key = 'state_revision'").fetchone()[0])
+    return {"ok": True, "revision": revision}
+
+
+def add_missing_to_shopping(core: PantryCore, recipe_name: str) -> dict[str, Any]:
+    core.migrate()
+    with core.transaction() as connection:
+        recipe_row = connection.execute(
+            "SELECT id FROM recipes WHERE normalized_name = ?",
+            (normalize_name(recipe_name),),
+        ).fetchone()
+        if recipe_row is None:
+            raise PantryOSError(f"Unknown recipe: {recipe_name}")
+        recipe = core._recipe_snapshot(connection, recipe_row["id"])
+        missing = recipe_matches(core, [recipe], max_missing=999)[0]["missing"]
+        for row in missing:
+            product = connection.execute(
+                "SELECT id FROM products WHERE normalized_name = ?",
+                (normalize_name(row["name"]),),
+            ).fetchone()
+            source_key = f"recipe:{recipe['id']}:{normalize_name(row['name'])}:{unit_code(row['unit'])}"
+            core._upsert_shopping_demand(
+                connection,
+                source_key=source_key,
+                product_id=product["id"] if product else None,
+                display_name=row["name"],
+                quantity=row["quantity"],
+                unit=row["unit"],
+                source_kind="recipe",
+                source_id=recipe["id"],
+                accepted=True,
+            )
+        rows = [dict(item) for item in connection.execute("SELECT * FROM shopping_demands WHERE source_id = ?", (recipe["id"],))]
+    return {"items": [shopping_to_legacy(row) for row in rows]}
+
+
+def promote_suggestions(core: PantryCore) -> dict[str, Any]:
+    core.migrate()
+    suggestions = minimum_stock_suggestions(core)
+    with core.transaction() as connection:
+        for row in suggestions:
+            product = connection.execute(
+                "SELECT id FROM products WHERE normalized_name = ?",
+                (normalize_name(row["name"]),),
+            ).fetchone()
+            if product is None:
+                continue
+            core._upsert_shopping_demand(
+                connection,
+                source_key=f"minimum:{product['id']}",
+                product_id=product["id"],
+                display_name=row["name"],
+                quantity=row["quantity"],
+                unit=row["unit"],
+                source_kind="minimum_stock",
+                source_id=product["id"],
+                accepted=True,
+            )
+        rows = [dict(item) for item in connection.execute("SELECT * FROM shopping_demands WHERE source_kind = 'minimum_stock'")]
+    return {"items": [shopping_to_legacy(row) for row in rows]}
+
+
+def datetime_now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
-    handler.repository = JsonInventoryRepository(data_path)
+    handler.core = PantryCore(db_path)
+    handler.core.migrate()
+    if LEGACY_JSON_PATH.exists() and handler.core.dashboard()["summary"]["product_count"] == 0:
+        handler.core.import_legacy_json(LEGACY_JSON_PATH)
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -360,7 +685,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the PantryOS local app")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--data", type=Path, default=DEFAULT_DATA_PATH)
+    parser.add_argument("--data", type=Path, default=DEFAULT_DB_PATH)
     args = parser.parse_args()
 
     server = make_server(args.host, args.port, args.data)
@@ -370,3 +695,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

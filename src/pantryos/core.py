@@ -473,7 +473,7 @@ class PantryCore:
     def get_lot(self, connection: sqlite3.Connection, lot_id: str) -> dict[str, Any]:
         row = connection.execute(
             """
-            SELECT l.*, p.name AS product_name, p.default_unit, loc.name AS location_name
+            SELECT l.*, p.name AS product_name, p.default_unit, p.minimum_stock_quantity, p.minimum_stock_unit, loc.name AS location_name
             FROM inventory_lots l
             JOIN products p ON p.id = l.product_id
             JOIN locations loc ON loc.id = l.location_id
@@ -819,4 +819,5 @@ class PantryCore:
         if "cabinet" in normalized:
             return "cabinet"
         return "other"
+
 

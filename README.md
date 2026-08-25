@@ -5,7 +5,7 @@ PantryOS is a home food intelligence system with two surfaces:
 - A runnable local kitchen dashboard in `app/` for the v1 vertical slice.
 - A Home Assistant custom integration in `custom_components/pantryos` for sensors, services, and automation.
 
-Home Assistant is intended to be one interface into the food database, not the database itself. The first version keeps persistence local in JSON and shares the same inventory and meal-planning engine across the app and integration.
+Home Assistant is intended to be one interface into the food database, not the database itself. The current Core work keeps persistence local in SQLite for the web app and legacy import path. The Home Assistant integration is still scheduled to move from HA Store to the same API in Phase 3.
 
 ## V1 Vertical Slice
 
@@ -19,7 +19,7 @@ The local app covers the end-to-end loop that makes the product useful:
 - Compare recipes against current inventory.
 - Add missing recipe ingredients to the shopping list.
 - Keep suggested purchases separate from the shopping list until explicitly promoted.
-- Persist state to `data/pantryos.json`.
+- Persist state to `data/pantryos.sqlite3`, with one-time import support for legacy `data/pantryos.json`.
 
 Run it with the bundled or system Python:
 
@@ -33,7 +33,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The dashboard seeds demo data automatically when the data file is empty. You can also use **Seed Demo** or **Reset Demo** from the UI.
+The dashboard imports legacy JSON on first startup when available and can seed demo data when the SQLite database is empty. You can also use **Seed Demo** or **Reset Demo** from the UI.
 
 
 ## Docker
@@ -50,7 +50,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The container writes persistent app state to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. Change the host port with `PANTRYOS_PORT`:
+The container writes the SQLite database to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. Change the host port with `PANTRYOS_PORT`:
 
 ```powershell
 $env:PANTRYOS_PORT = "8770"
@@ -143,5 +143,6 @@ In the Codex bundled Python runtime, `pytest` may not be installed. The test fun
 ```powershell
 python scripts/run_tests.py
 ```
+
 
 
