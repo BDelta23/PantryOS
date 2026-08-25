@@ -283,6 +283,19 @@ class PantryCore:
         restored.integrity_check()
         temp.replace(self.db_path)
 
+    def inspect_legacy_json(self, path: Path | str) -> dict[str, Any]:
+        source_path = Path(path)
+        payload = source_path.read_bytes()
+        content_hash = hashlib.sha256(payload).hexdigest()
+        data = json.loads(payload.decode("utf-8"))
+        self._validate_legacy_document(data)
+        return {
+            "content_hash": content_hash,
+            "item_count": len(data.get("items", [])),
+            "recipe_count": len(data.get("recipes", [])),
+            "shopping_count": len(data.get("shopping_list", [])),
+            "meal_plan_count": len(data.get("meal_plan", {})),
+        }
     def import_legacy_json(self, path: Path | str, backup_dir: Path | str | None = None) -> ImportResult:
         self.migrate()
         source_path = Path(path)

@@ -209,6 +209,18 @@ The browser still uses these temporary compatibility routes while its session/au
 - `POST /api/cooking/sessions/{id}/complete`
 - `POST /api/cooking/sessions/{id}/cancel`
 
+## Operations
+
+The local operations CLI runs from a checkout or from the installed `pantryos` console entry point:
+
+```powershell
+python scripts/pantryos.py --db data/pantryos.sqlite3 doctor
+python scripts/pantryos.py --db data/pantryos.sqlite3 backup --output backups/pantryos.sqlite3
+python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pantryos.sqlite3 --verify
+python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/pantryos.json --dry-run
+```
+
+`backup` writes a SQLite backup plus a `.sha256.json` manifest. `restore` verifies that manifest when present and validates the backup before replacing the target database. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
 ## Development
 
 The authoritative inventory engine lives in `src/pantryos` and is exposed through the local Core API. The older pure inventory engine in `custom_components/pantryos/inventory.py` is retained temporarily as baseline coverage for the original proof of concept.
