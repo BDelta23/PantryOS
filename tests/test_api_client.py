@@ -65,6 +65,8 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         consumed = await client.async_consume_item(created["item"]["id"], "0.25", reason="client test")
         shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
         refreshed = await client.async_refresh()
+        events = await client.async_events(limit=3)
+        latest_event = await client.async_event(events["items"][-1]["id"])
 
         assert instance["schema_version"] == 4
         initial_total = initial["summary"]["total_items"]
@@ -74,6 +76,8 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         assert refreshed["summary"]["total_items"] == initial_total + 1
         assert client.available is True
         assert client.summary()["total_items"] == initial_total + 1
+        assert events["limit"] == 3
+        assert latest_event["id"] == events["items"][-1]["id"]
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))

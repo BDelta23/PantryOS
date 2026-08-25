@@ -64,6 +64,25 @@ def request_error(
     raise AssertionError("Expected request to fail")
 
 
+
+def request_text(
+    url: str,
+    method: str = "GET",
+    *,
+    token: str | None = None,
+    request_id: str | None = None,
+    accept: str | None = None,
+) -> tuple[str, str]:
+    request = Request(url, method=method)
+    if token is not None:
+        request.add_header("Authorization", f"Bearer {token}")
+    if request_id is not None:
+        request.add_header("X-Request-ID", request_id)
+    if accept is not None:
+        request.add_header("Accept", accept)
+    with urlopen(request, timeout=5) as response:
+        return response.headers.get("Content-Type", ""), response.read().decode("utf-8")
+
 def request_raw_error(
     url: str,
     body: bytes,
@@ -395,6 +414,44 @@ def test_receipt_api_review_commit_and_price_history() -> None:
     assert purchase_detail["prices"][0]["unit_price"] == "2.00"
     assert prices["product"]["name"] == "API Apples"
     assert prices["prices"][0]["comparable_unit"] == "count"
+
+def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            status, unauth = request_error(f"{base}/api/v1/events", request_id="events-unauth")
+            created = request_json(
+                f"{base}/api/v1/inventory/lots",
+                method="POST",
+                token="test-token",
+                payload={"name": "Event Apples", "quantity": "2", "unit": "count", "location": "Kitchen/Pantry"},
+            )
+            events = request_json(f"{base}/api/v1/inventory/events?limit=5", token="test-token")
+            event_detail = request_json(f"{base}/api/v1/events/{events['items'][-1]['id']}", token="test-token")
+            content_type, stream = request_text(f"{base}/api/v1/events", token="test-token", accept="text/event-stream")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert status == 401
+    assert unauth["code"] == "unauthorized"
+    assert unauth["request_id"] == "events-unauth"
+    assert created["revision"] >= 1
+    assert events["limit"] == 5
+    assert events["items"][-1]["type"] == "ADD"
+    assert events["items"][-1]["data"]["quantity"] == "2"
+    assert event_detail["id"] == events["items"][-1]["id"]
+    assert event_detail["revision"] == events["items"][-1]["revision"]
+    assert content_type.startswith("text/event-stream")
+    assert "event: pantryos.hello" in stream
+    assert "event: ADD" in stream
+    assert "data:" in stream
+    assert ": heartbeat" in stream
 def test_static_browser_workflows_are_not_stubbed() -> None:
     app_js = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (Path(__file__).resolve().parents[1] / "app" / "static" / "index.html").read_text(encoding="utf-8")

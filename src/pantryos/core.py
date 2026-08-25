@@ -659,6 +659,32 @@ class PantryCore:
             rows = [dict(row) for row in connection.execute("SELECT * FROM price_history WHERE product_id = ? ORDER BY purchased_at DESC, created_at DESC", (product_id,))]
         return {"product": dict(product), "prices": rows}
 
+    def events(self, *, limit: int = 25, after_revision: int | None = None) -> dict[str, Any]:
+        self.migrate()
+        bounded_limit = max(1, min(int(limit), 100))
+        with closing(self.connect()) as connection:
+            if after_revision is None:
+                fetched = connection.execute(
+                    "SELECT * FROM inventory_events ORDER BY revision DESC LIMIT ?",
+                    (bounded_limit,),
+                ).fetchall()
+                fetched = list(reversed(fetched))
+            else:
+                fetched = connection.execute(
+                    "SELECT * FROM inventory_events WHERE revision > ? ORDER BY revision ASC LIMIT ?",
+                    (int(after_revision), bounded_limit),
+                ).fetchall()
+            rows = [self._event_snapshot(row) for row in fetched]
+            revision = int(self._metadata(connection, "state_revision"))
+        return {"items": rows, "revision": revision, "limit": bounded_limit}
+
+    def event(self, event_id: str) -> dict[str, Any]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            row = connection.execute("SELECT * FROM inventory_events WHERE id = ?", (event_id,)).fetchone()
+            if row is None:
+                raise NotFoundError(f"Event not found: {event_id}")
+            return self._event_snapshot(row)
     def resolve_barcode(self, barcode: str) -> dict[str, Any]:
         self.migrate()
         barcode_text = self._normalize_barcode(barcode)
@@ -1484,6 +1510,21 @@ class PantryCore:
             ),
         )
 
+    def _event_snapshot(self, row: sqlite3.Row) -> dict[str, Any]:
+        data = json.loads(row["metadata_json"] or "{}")
+        for key in ("product_id", "lot_id", "quantity", "unit", "from_location_id", "to_location_id"):
+            if row[key] is not None:
+                data[key] = row[key]
+        return {
+            "id": row["id"],
+            "revision": row["revision"],
+            "type": row["event_type"],
+            "event_type": row["event_type"],
+            "occurred_at": row["occurred_at"],
+            "source": row["source"],
+            "reason": row["reason"],
+            "data": data,
+        }
     def _receipt_row(self, connection: sqlite3.Connection, receipt_id: str) -> sqlite3.Row:
         row = connection.execute("SELECT * FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()
         if row is None:

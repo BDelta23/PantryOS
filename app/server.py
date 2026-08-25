@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import time
 import os
 import secrets
 import sys
@@ -419,6 +420,19 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if not self._authorize(parsed.path):
             return
+        if parsed.path == "/api/v1/events":
+            self._send_event_stream(parsed)
+            return
+        if parsed.path == "/api/v1/inventory/events":
+            query = parse_qs(parsed.query)
+            limit = int(query.get("limit", ["25"])[0])
+            after = query.get("after_revision", [None])[0]
+            self._send_json(self.core.events(limit=limit, after_revision=int(after) if after else None))
+            return
+        event_id = event_detail_path(parsed.path)
+        if event_id is not None:
+            self._send_json(self.core.event(event_id))
+            return
         if parsed.path in ("/api/state", "/api/v1/dashboard"):
             self._send_json(public_state(self.core))
             return
@@ -721,6 +735,29 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             headers=headers,
         )
 
+    def _send_event_stream(self, parsed: Any) -> None:
+        last_event_id = self.headers.get("Last-Event-ID")
+        after_revision: int | None = None
+        if last_event_id and last_event_id.isdecimal():
+            after_revision = int(last_event_id)
+        events = self.core.events(limit=25, after_revision=after_revision)
+        self.send_response(HTTPStatus.OK.value)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        hello = {"type": "hello", "revision": events["revision"], "retry_ms": 5000}
+        self._write_sse("pantryos.hello", str(events["revision"]), hello)
+        for event in events["items"]:
+            self._write_sse(event["type"], str(event["revision"]), event)
+        self.wfile.write(f": heartbeat {int(time.time())}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
+    def _write_sse(self, event_type: str, event_id: str, data: dict[str, Any]) -> None:
+        payload = json.dumps(data, separators=(",", ":"))
+        self.wfile.write(f"id: {event_id}\n".encode("utf-8"))
+        self.wfile.write(f"event: {event_type}\n".encode("utf-8"))
+        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
     def _send_json(
         self,
         data: dict[str, Any],
@@ -814,6 +851,15 @@ def recipe_shopping_path(path: str) -> str | None:
             return unquote(path.removeprefix(prefix).removesuffix("/shopping"))
     return None
 
+
+def event_detail_path(path: str) -> str | None:
+    prefix = "/api/v1/events/"
+    if not path.startswith(prefix):
+        return None
+    suffix = path.removeprefix(prefix)
+    if not suffix or "/" in suffix:
+        return None
+    return unquote(suffix)
 
 def receipt_review_path(path: str) -> str | None:
     for prefix in ("/api/receipts/", "/api/v1/receipts/"):

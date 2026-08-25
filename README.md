@@ -138,6 +138,9 @@ Current versioned endpoints:
 - `GET /api/v1/health/ready`
 - `GET /api/v1/instance`
 - `GET /api/v1/dashboard`
+- `GET /api/v1/events`
+- `GET /api/v1/events/{id}`
+- `GET /api/v1/inventory/events`
 - `GET /api/v1/barcodes/{barcode}`
 - `GET /api/v1/locations/summary`
 - `GET /api/v1/waste/monthly`

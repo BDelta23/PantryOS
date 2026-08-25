@@ -39,6 +39,15 @@ class PantryAPIClient:
 
     async def async_dashboard(self) -> dict[str, Any]:
         return await self._request("GET", "/api/v1/dashboard", authenticated=True)
+    async def async_events(self, *, limit: int = 25, after_revision: int | None = None) -> dict[str, Any]:
+        path = f"/api/v1/inventory/events?limit={limit}"
+        if after_revision is not None:
+            path = f"{path}&after_revision={after_revision}"
+        return await self._request("GET", path, authenticated=True)
+
+    async def async_event(self, event_id: str) -> dict[str, Any]:
+        path = f"/api/v1/events/{quote(event_id, safe='')}"
+        return await self._request("GET", path, authenticated=True)
 
     async def async_refresh(self) -> dict[str, Any]:
         try:
