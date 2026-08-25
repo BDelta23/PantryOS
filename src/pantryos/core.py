@@ -141,6 +141,7 @@ class PantryCore:
                     "leftovers",
                     "waste_metrics",
                     "location_value",
+                    "barcode_mapping",
                 ],
             }
 
@@ -430,6 +431,119 @@ class PantryCore:
         self.migrate()
         with closing(self.connect()) as connection:
             return self._dashboard(connection)
+
+    def resolve_barcode(self, barcode: str) -> dict[str, Any]:
+        self.migrate()
+        barcode_text = self._normalize_barcode(barcode)
+        with closing(self.connect()) as connection:
+            mapping = self._barcode_mapping_row(connection, barcode_text)
+            if mapping is None:
+                return {"matched": False, "barcode": barcode_text}
+            return {"matched": True, "barcode": barcode_text, "mapping": self._barcode_mapping_snapshot(mapping)}
+
+    def save_barcode_mapping(self, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        barcode_text = self._normalize_barcode(str(data["barcode"]))
+        with self.transaction() as connection:
+            product_id = data.get("product_id")
+            if product_id is not None:
+                product = connection.execute("SELECT * FROM products WHERE id = ?", (str(product_id),)).fetchone()
+                if product is None:
+                    raise NotFoundError(f"Product not found: {product_id}")
+                product_id = product["id"]
+                default_unit = product["default_unit"]
+            else:
+                default_unit = str(data.get("default_unit") or data.get("package_unit") or "count")
+                product_id = self.ensure_product(connection, name=str(data["name"]), default_unit=default_unit)
+            package_quantity = data.get("package_quantity", data.get("quantity", "1"))
+            package_unit = unit_code(str(data.get("package_unit") or data.get("unit") or default_unit))
+            existing = self._barcode_mapping_row(connection, barcode_text)
+            if existing is not None and existing["product_id"] != product_id:
+                raise ValidationError("Barcode is already mapped to another product")
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO product_barcodes(
+                      id, barcode, product_id, package_quantity, package_unit,
+                      brand, size_text, source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id("barcode"),
+                        barcode_text,
+                        product_id,
+                        decimal_text(require_positive(package_quantity, "package_quantity")),
+                        package_unit,
+                        data.get("brand"),
+                        data.get("size_text"),
+                        source,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE product_barcodes
+                    SET package_quantity = ?, package_unit = ?, brand = ?, size_text = ?, source = ?
+                    WHERE barcode = ?
+                    """,
+                    (
+                        decimal_text(require_positive(package_quantity, "package_quantity")),
+                        package_unit,
+                        data.get("brand"),
+                        data.get("size_text"),
+                        source,
+                        barcode_text,
+                    ),
+                )
+            revision = self._append_event(
+                connection,
+                "barcode.mapped",
+                product_id=product_id,
+                source=source,
+                metadata={"barcode": barcode_text},
+            )
+            mapping = self._barcode_mapping_row(connection, barcode_text)
+            assert mapping is not None
+        return {"mapping": self._barcode_mapping_snapshot(mapping), "revision": revision}
+
+    def add_lot_from_barcode(self, barcode: str, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        barcode_text = self._normalize_barcode(barcode)
+        with self.transaction() as connection:
+            mapping = self._barcode_mapping_row(connection, barcode_text)
+            if mapping is None:
+                raise NotFoundError(f"Unknown barcode: {barcode_text}")
+            quantity = data.get("quantity", mapping["package_quantity"] or "1")
+            unit = data.get("unit", mapping["package_unit"] or mapping["default_unit"])
+            location_id = self.ensure_location_path(connection, data.get("location"))
+            lot_id = self._insert_lot(
+                connection,
+                mapping["product_id"],
+                location_id,
+                {
+                    "name": mapping["product_name"],
+                    "quantity": quantity,
+                    "unit": unit,
+                    "purchased": data.get("purchased") or data.get("acquired_at"),
+                    "expires": data.get("expires") or data.get("expires_at"),
+                    "estimated_cost": data.get("estimated_cost"),
+                    "notes": data.get("notes"),
+                },
+            )
+            revision = self._append_event(
+                connection,
+                "ADD",
+                product_id=mapping["product_id"],
+                lot_id=lot_id,
+                quantity=str(quantity),
+                unit=str(unit),
+                to_location_id=location_id,
+                source=source,
+                metadata={"barcode": barcode_text, "barcode_mapping_id": mapping["id"]},
+            )
+            lot = self.get_lot(connection, lot_id)
+            mapping_snapshot = self._barcode_mapping_snapshot(mapping)
+        return {"lot": lot, "mapping": mapping_snapshot, "revision": revision}
 
     def start_cooking_session(self, data: dict[str, Any]) -> dict[str, Any]:
         self.migrate()
@@ -1138,6 +1252,38 @@ class PantryCore:
                 position,
             ),
         )
+
+    def _normalize_barcode(self, barcode: str) -> str:
+        barcode_text = "".join(str(barcode).strip().split())
+        if not barcode_text:
+            raise ValidationError("Barcode is required")
+        if len(barcode_text) > 128:
+            raise ValidationError("Barcode is too long")
+        return barcode_text
+
+    def _barcode_mapping_row(self, connection: sqlite3.Connection, barcode: str) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT b.*, p.name AS product_name, p.default_unit
+            FROM product_barcodes b
+            JOIN products p ON p.id = b.product_id
+            WHERE b.barcode = ?
+            """,
+            (barcode,),
+        ).fetchone()
+
+    def _barcode_mapping_snapshot(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "barcode": row["barcode"],
+            "product_id": row["product_id"],
+            "product_name": row["product_name"],
+            "package_quantity": row["package_quantity"] or "1",
+            "package_unit": row["package_unit"] or row["default_unit"],
+            "brand": row["brand"],
+            "size_text": row["size_text"],
+            "source": row["source"],
+        }
 
     def _find_recipe(
         self,

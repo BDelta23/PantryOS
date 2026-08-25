@@ -323,6 +323,41 @@ def test_shopping_items_can_be_removed_or_suppressed_without_deleting_history() 
         assert rows["Rice"]["status"] == "removed"
         assert rows["Beans"]["status"] == "suppressed"
         assert rows["Beans"]["accepted"] == 0
+def test_barcode_mapping_resolves_adds_lot_and_persists() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        mapping = core.save_barcode_mapping(
+            {
+                "barcode": "012345678905",
+                "name": "Barcode Beans",
+                "package_quantity": "15",
+                "package_unit": "oz",
+                "brand": "Local",
+            }
+        )
+        resolved = core.resolve_barcode("012345678905")
+        added = core.add_lot_from_barcode(
+            "012345678905",
+            {"location": "Kitchen/Pantry", "estimated_cost": "1.99"},
+        )
+        reopened = PantryCore(core.db_path)
+        reopened_resolved = reopened.resolve_barcode("012345678905")
+
+        assert mapping["mapping"]["product_name"] == "Barcode Beans"
+        assert resolved["matched"] is True
+        assert resolved["mapping"]["package_quantity"] == "15"
+        assert added["lot"]["product_name"] == "Barcode Beans"
+        assert added["lot"]["quantity"] == "15"
+        assert added["lot"]["unit"] == "oz"
+        assert reopened_resolved == resolved
+
+        try:
+            core.save_barcode_mapping({"barcode": "012345678905", "name": "Other Beans"})
+        except ValidationError as exc:
+            assert "already mapped" in str(exc)
+        else:
+            raise AssertionError("duplicate barcode mapping should fail")
+
 def test_discard_records_monthly_waste_and_location_values() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

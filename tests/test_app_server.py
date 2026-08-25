@@ -224,6 +224,44 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     assert invalid_json["request_id"] == "bad-json"
 
 
+def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            unknown = request_json(f"{base}/api/barcodes/000111222333")
+            mapping = request_json(
+                f"{base}/api/barcodes/mappings",
+                method="POST",
+                payload={
+                    "barcode": "000111222333",
+                    "name": "Browser Barcode Soup",
+                    "package_quantity": "2",
+                    "package_unit": "can",
+                },
+            )
+            browser_added = request_json(
+                f"{base}/api/barcodes/000111222333/add-lot",
+                method="POST",
+                payload={"location": "Kitchen/Pantry", "estimated_cost": "4.50"},
+            )
+            versioned_resolved = request_json(f"{base}/api/v1/barcodes/000111222333", token="test-token")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert unknown == {"matched": False, "barcode": "000111222333"}
+    assert mapping["mapping"]["product_name"] == "Browser Barcode Soup"
+    assert browser_added["item"]["name"] == "Browser Barcode Soup"
+    assert browser_added["item"]["quantity"] == "2"
+    assert browser_added["item"]["unit"] == "can"
+    assert versioned_resolved["matched"] is True
+    assert versioned_resolved["mapping"]["package_unit"] == "can"
+
 def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     with TemporaryDirectory() as directory:
         data_path = Path(directory) / "pantryos.sqlite3"
@@ -299,7 +337,10 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "Cooking mode queued" not in app_js
     assert "/api/cooking/sessions" in app_js
     assert "/api/shopping/complete-purchase" in app_js
+    assert "/api/barcodes/" in app_js
+    assert "handleBarcodeSubmit" in app_js
     assert "handleStartCooking" in app_js
     assert "handlePurchaseSubmit" in app_js
     assert "id=\"cookingForm\"" in index_html
     assert "id=\"purchaseForm\"" in index_html
+    assert "id=\"barcodeForm\"" in index_html

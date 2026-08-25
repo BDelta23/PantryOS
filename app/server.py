@@ -441,6 +441,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/leftovers":
             self._send_json({"items": [lot_to_item(row) for row in public_state(self.core)["core"]["lots"] if row["status"] == "active" and row["lot_type"] == "leftover"]})
             return
+        barcode = barcode_lookup_path(parsed.path)
+        if barcode is not None:
+            self._send_json(self.core.resolve_barcode(barcode))
+            return
         if parsed.path == "/api/v1/shopping":
             self._send_json({"items": [shopping_to_legacy(row) for row in self.core.shopping_items()]})
             return
@@ -465,6 +469,14 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if parsed.path in ("/api/items", "/api/v1/inventory/lots"):
                 result = self.core.add_inventory_lot(body)
                 self._send_json({"item": lot_to_item(result["lot"]), "revision": result["revision"]}, HTTPStatus.CREATED)
+                return
+            if parsed.path in ("/api/barcodes/mappings", "/api/v1/barcodes/mappings"):
+                self._send_json(self.core.save_barcode_mapping(body), HTTPStatus.CREATED)
+                return
+            barcode_add = barcode_add_lot_path(parsed.path)
+            if barcode_add is not None:
+                result = self.core.add_lot_from_barcode(barcode_add, body)
+                self._send_json({**result, "item": lot_to_item(result["lot"])}, HTTPStatus.CREATED)
                 return
             if parsed.path in ("/api/cooking/sessions", "/api/v1/cooking/sessions"):
                 result = self.core.start_cooking_session(body)
@@ -762,6 +774,29 @@ def recipe_shopping_path(path: str) -> str | None:
     for prefix in ("/api/recipes/", "/api/v1/recipes/"):
         if path.startswith(prefix) and path.endswith("/shopping"):
             return unquote(path.removeprefix(prefix).removesuffix("/shopping"))
+    return None
+
+
+def barcode_lookup_path(path: str) -> str | None:
+    for prefix in ("/api/barcodes/", "/api/v1/barcodes/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix or suffix == "mappings":
+            return None
+        return unquote(suffix)
+    return None
+
+
+def barcode_add_lot_path(path: str) -> str | None:
+    for prefix in ("/api/barcodes/", "/api/v1/barcodes/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        parts = suffix.split("/", 1)
+        if len(parts) != 2 or not parts[0] or parts[1] != "add-lot":
+            return None
+        return unquote(parts[0])
     return None
 
 

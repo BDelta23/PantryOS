@@ -13,6 +13,7 @@ The local app covers the end-to-end loop that makes the product useful:
 
 - See tonight's planned meal, use-soon food, quick meals, shopping, and inventory on one kitchen dashboard.
 - Add food with quantity, unit, location, expiration, minimum stock, cost, and leftover flag.
+- Type a barcode to add a known package or create a manual barcode mapping for an unknown package.
 - Consume or delete inventory items.
 - Add recipes from simple comma-separated ingredient rows.
 - Plan a recipe for tonight.
@@ -131,12 +132,15 @@ Current versioned endpoints:
 - `GET /api/v1/health/ready`
 - `GET /api/v1/instance`
 - `GET /api/v1/dashboard`
+- `GET /api/v1/barcodes/{barcode}`
 - `GET /api/v1/locations/summary`
 - `GET /api/v1/waste/monthly`
 - `POST /api/v1/inventory/lots`
 - `POST /api/v1/inventory/lots/{id}/consume`
 - `POST /api/v1/inventory/lots/{id}/move`
 - `POST /api/v1/inventory/lots/{id}/discard`
+- `POST /api/v1/barcodes/mappings`
+- `POST /api/v1/barcodes/{barcode}/add-lot`
 - `POST /api/v1/recipes`
 - `POST /api/v1/recipes/{recipe_name}/shopping`
 - `POST /api/v1/meal-plan`
@@ -162,6 +166,9 @@ The browser still uses these temporary compatibility routes while its session/au
 - `POST /api/items/{id}/consume`
 - `POST /api/items/{id}/move`
 - `DELETE /api/items/{id}`
+- `GET /api/barcodes/{barcode}`
+- `POST /api/barcodes/mappings`
+- `POST /api/barcodes/{barcode}/add-lot`
 - `POST /api/recipes`
 - `POST /api/recipes/{recipe_name}/shopping`
 - `POST /api/shopping`

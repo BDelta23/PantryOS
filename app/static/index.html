@@ -119,6 +119,17 @@
               <label class="checkline"><input name="leftover" type="checkbox" /> Leftover</label>
               <button type="submit">Add Food</button>
             </form>
+            <form id="barcodeForm" class="form-grid split-tool">
+              <label>Barcode<input name="barcode" inputmode="numeric" placeholder="012345678905" required /></label>
+              <label>Product name<input name="name" placeholder="Required for a new barcode" /></label>
+              <div class="row">
+                <label>Qty<input name="quantity" inputmode="decimal" placeholder="1" /></label>
+                <label>Unit<input name="unit" placeholder="count" /></label>
+              </div>
+              <label>Location<input name="location" placeholder="Kitchen/Pantry" /></label>
+              <label>Cost<input name="estimated_cost" inputmode="decimal" placeholder="3.99" /></label>
+              <button type="submit">Scan or Map Barcode</button>
+            </form>
           </section>
 
           <section class="tool-panel">

@@ -310,6 +310,11 @@ h2 {
   min-width: 0;
 }
 
+.split-tool {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
 .checkline {
   display: flex;
   align-items: center;

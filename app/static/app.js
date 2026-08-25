@@ -302,6 +302,45 @@ async function handleItemSubmit(event) {
   await refresh();
 }
 
+async function handleBarcodeSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = compactPayload(formData(form));
+  const barcode = payload.barcode;
+  delete payload.barcode;
+  const mappingName = payload.name;
+  try {
+    const result = await api(`/api/barcodes/${encodeURIComponent(barcode)}/add-lot`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    form.reset();
+    showToast(`${result.item.name} added from barcode`);
+    await refresh();
+    return;
+  } catch (error) {
+    if (!mappingName) {
+      throw error;
+    }
+  }
+  await api("/api/barcodes/mappings", {
+    method: "POST",
+    body: JSON.stringify({
+      barcode,
+      name: mappingName,
+      package_quantity: payload.quantity || "1",
+      package_unit: payload.unit || "count",
+    }),
+  });
+  const result = await api(`/api/barcodes/${encodeURIComponent(barcode)}/add-lot`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  form.reset();
+  showToast(`${result.item.name} mapped and added`);
+  await refresh();
+}
+
 async function handleRecipeSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -479,6 +518,7 @@ async function handlePageClick(event) {
 
 async function main() {
   $("#itemForm").addEventListener("submit", (event) => handleItemSubmit(event).catch(handleActionError));
+  $("#barcodeForm").addEventListener("submit", (event) => handleBarcodeSubmit(event).catch(handleActionError));
   $("#recipeForm").addEventListener("submit", (event) => handleRecipeSubmit(event).catch(handleActionError));
   $("#purchaseForm").addEventListener("submit", (event) => handlePurchaseSubmit(event).catch(handleActionError));
   $("#cookingForm").addEventListener("submit", (event) => handleCookingSubmit(event).catch(handleActionError));
