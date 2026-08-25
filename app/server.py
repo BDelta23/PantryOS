@@ -454,20 +454,20 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 reset = parse_qs(parsed.query).get("reset", ["false"])[0].casefold() == "true"
                 self._send_json(seed_core(self.core, reset=reset))
                 return
-            if parsed.path == "/api/meal-plan":
+            if parsed.path in ("/api/meal-plan", "/api/v1/meal-plan"):
                 self._send_json(plan_meal(self.core, body["day"], body["recipe_name"]))
                 return
-            if parsed.path == "/api/recipes":
+            if parsed.path in ("/api/recipes", "/api/v1/recipes"):
                 self._send_json(add_recipe(self.core, body), HTTPStatus.CREATED)
                 return
-            if parsed.path.startswith("/api/recipes/") and parsed.path.endswith("/shopping"):
-                recipe_name = unquote(parsed.path.removeprefix("/api/recipes/").removesuffix("/shopping"))
-                self._send_json(add_missing_to_shopping(self.core, recipe_name))
+            recipe_shopping_name = recipe_shopping_path(parsed.path)
+            if recipe_shopping_name is not None:
+                self._send_json(add_missing_to_shopping(self.core, recipe_shopping_name))
                 return
             if parsed.path in ("/api/shopping", "/api/v1/shopping/manual"):
                 self._send_json(add_manual_shopping(self.core, body), HTTPStatus.CREATED)
                 return
-            if parsed.path == "/api/shopping/promote-suggestions":
+            if parsed.path in ("/api/shopping/promote-suggestions", "/api/v1/shopping/promote-suggestions"):
                 self._send_json(promote_suggestions(self.core))
                 return
         except json.JSONDecodeError:
@@ -658,6 +658,13 @@ def versioned_lot_action_path(path: str) -> tuple[str, str] | None:
     if len(parts) != 2 or not parts[0] or parts[1] not in {"consume", "move", "discard"}:
         return None
     return unquote(parts[0]), parts[1]
+
+
+def recipe_shopping_path(path: str) -> str | None:
+    for prefix in ("/api/recipes/", "/api/v1/recipes/"):
+        if path.startswith(prefix) and path.endswith("/shopping"):
+            return unquote(path.removeprefix(prefix).removesuffix("/shopping"))
+    return None
 
 
 def consume_lot_product(core: PantryCore, lot_id: str, quantity: str, reason: str | None = None) -> dict[str, Any]:

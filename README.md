@@ -126,6 +126,14 @@ Current versioned endpoints:
 - `GET /api/v1/instance`
 - `GET /api/v1/dashboard`
 - `POST /api/v1/inventory/lots`
+- `POST /api/v1/inventory/lots/{id}/consume`
+- `POST /api/v1/inventory/lots/{id}/move`
+- `POST /api/v1/inventory/lots/{id}/discard`
+- `POST /api/v1/recipes`
+- `POST /api/v1/recipes/{recipe_name}/shopping`
+- `POST /api/v1/meal-plan`
+- `POST /api/v1/shopping/manual`
+- `POST /api/v1/shopping/promote-suggestions`
 
 The browser still uses these temporary compatibility routes while its session/auth flow is built:
 

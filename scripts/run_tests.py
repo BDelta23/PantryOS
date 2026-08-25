@@ -17,6 +17,7 @@ TEST_MODULES = (
     "tests.test_inventory",
     "tests.test_app_server",
     "tests.test_api_client",
+    "tests.test_cross_surface_sync",
     "tests.core.test_sqlite_core",
 )
 

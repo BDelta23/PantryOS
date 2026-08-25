@@ -68,20 +68,20 @@ class PantryAPIClient:
         return await self._request("POST", path, data={"location": location}, authenticated=True)
 
     async def async_add_recipe(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._request("POST", "/api/recipes", data=data, authenticated=False)
+        return await self._request("POST", "/api/v1/recipes", data=data, authenticated=True)
 
     async def async_plan_meal(self, day: str, recipe_name: str) -> dict[str, Any]:
-        return await self._request("POST", "/api/meal-plan", data={"day": day, "recipe_name": recipe_name}, authenticated=False)
+        return await self._request("POST", "/api/v1/meal-plan", data={"day": day, "recipe_name": recipe_name}, authenticated=True)
 
     async def async_add_shopping_item(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._request("POST", "/api/shopping", data=data, authenticated=False)
+        return await self._request("POST", "/api/v1/shopping/manual", data=data, authenticated=True)
 
     async def async_add_missing_to_shopping_list(self, recipe_name: str) -> dict[str, Any]:
-        path = f"/api/recipes/{quote(recipe_name, safe='')}/shopping"
-        return await self._request("POST", path, data={}, authenticated=False)
+        path = f"/api/v1/recipes/{quote(recipe_name, safe='')}/shopping"
+        return await self._request("POST", path, data={}, authenticated=True)
 
     async def async_promote_suggested_purchases(self) -> dict[str, Any]:
-        return await self._request("POST", "/api/shopping/promote-suggestions", data={}, authenticated=False)
+        return await self._request("POST", "/api/v1/shopping/promote-suggestions", data={}, authenticated=True)
 
     def summary(self) -> dict[str, Any]:
         if self._dashboard is None:
