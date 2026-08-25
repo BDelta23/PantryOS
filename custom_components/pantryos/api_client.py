@@ -87,6 +87,43 @@ class PantryAPIClient:
         path = f"/api/v1/cooking/sessions/{quote(session_id, safe='')}/cancel"
         return await self._request("POST", path, data=data or {}, authenticated=True)
 
+    async def async_leftovers(self) -> dict[str, Any]:
+        return await self._request("GET", "/api/v1/leftovers", authenticated=True)
+
+    async def async_upload_receipt(self, data: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", "/api/v1/receipts", data=data, authenticated=True)
+
+    async def async_extract_receipt(self, receipt_id: str) -> dict[str, Any]:
+        path = f"/api/v1/receipts/{quote(receipt_id, safe='')}/extract"
+        return await self._request("POST", path, data={}, authenticated=True)
+
+    async def async_receipt_review(self, receipt_id: str) -> dict[str, Any]:
+        path = f"/api/v1/receipts/{quote(receipt_id, safe='')}/review"
+        return await self._request("GET", path, authenticated=True)
+
+    async def async_update_receipt_review(self, receipt_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        path = f"/api/v1/receipts/{quote(receipt_id, safe='')}/review"
+        return await self._request("PATCH", path, data=data, authenticated=True)
+
+    async def async_commit_receipt(self, receipt_id: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        path = f"/api/v1/receipts/{quote(receipt_id, safe='')}/commit"
+        return await self._request("POST", path, data=data or {}, authenticated=True)
+
+    async def async_reject_receipt(self, receipt_id: str, *, reason: str = "rejected") -> dict[str, Any]:
+        path = f"/api/v1/receipts/{quote(receipt_id, safe='')}/reject"
+        return await self._request("POST", path, data={"reason": reason}, authenticated=True)
+
+    async def async_purchases(self) -> dict[str, Any]:
+        return await self._request("GET", "/api/v1/purchases", authenticated=True)
+
+    async def async_purchase(self, purchase_id: str) -> dict[str, Any]:
+        path = f"/api/v1/purchases/{quote(purchase_id, safe='')}"
+        return await self._request("GET", path, authenticated=True)
+
+    async def async_product_prices(self, product_id: str) -> dict[str, Any]:
+        path = f"/api/v1/products/{quote(product_id, safe='')}/prices"
+        return await self._request("GET", path, authenticated=True)
+
     async def async_add_missing_to_shopping_list(self, recipe_name: str) -> dict[str, Any]:
         path = f"/api/v1/recipes/{quote(recipe_name, safe='')}/shopping"
         return await self._request("POST", path, data={}, authenticated=True)
@@ -120,6 +157,8 @@ class PantryAPIClient:
         if self._dashboard is None:
             return {
                 "total_items": 0,
+                "state_revision": 0,
+                "leftover_count": 0,
                 "expiring_soon": [],
                 "expiring_soon_count": 0,
                 "shopping_list_count": 0,
@@ -147,7 +186,7 @@ class PantryAPIClient:
         return await loop.run_in_executor(None, request)
 
     def _request_sync(self, method: str, path: str, *, data: dict[str, Any] | None, authenticated: bool) -> dict[str, Any]:
-        body = None if data is None else json.dumps(data).encode("utf-8")
+        body = None if data is None else json.dumps(data, default=str).encode("utf-8")
         request = Request(f"{self.base_url}{path}", data=body, method=method)
         request.add_header("Accept", "application/json")
         if body is not None:

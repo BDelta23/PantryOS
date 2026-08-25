@@ -24,7 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(str(exc)) from exc
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = pantry
-    _register_services(hass, pantry)
+    _register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -40,100 +40,113 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unloaded
 
 
-def _register_services(hass: HomeAssistant, pantry: PantryAPIClient) -> None:
+def _register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, "add_item"):
         return
 
-    async def add_item(call: ServiceCall) -> None:
+    async def _run(call: ServiceCall, operation: Any) -> None:
+        pantry = _active_pantry(hass)
         try:
-            await pantry.async_add_item(dict(call.data))
+            await operation(pantry, call)
             await _refresh_entities(hass, pantry)
         except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
+    async def add_item(call: ServiceCall) -> None:
+        await _run(call, lambda pantry, call: pantry.async_add_item(dict(call.data)))
+
     async def consume_item(call: ServiceCall) -> None:
-        try:
-            await pantry.async_consume_item(
+        await _run(
+            call,
+            lambda pantry, call: pantry.async_consume_item(
                 str(call.data["item_id"]),
                 str(call.data["quantity"]),
                 reason="Home Assistant consume_item service",
-            )
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+            ),
+        )
 
     async def delete_item(call: ServiceCall) -> None:
-        try:
-            await pantry.async_discard_item(
-                str(call.data["item_id"]),
-                reason="Home Assistant delete_item service",
-            )
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+        await _run(call, lambda pantry, call: pantry.async_discard_item(str(call.data["item_id"]), reason="Home Assistant delete_item service"))
+
+    async def discard_item(call: ServiceCall) -> None:
+        await _run(call, lambda pantry, call: pantry.async_discard_item(str(call.data["item_id"]), reason=str(call.data.get("reason") or "Home Assistant discard_item service")))
 
     async def move_item(call: ServiceCall) -> None:
-        try:
-            await pantry.async_move_item(str(call.data["item_id"]), str(call.data["location"]))
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+        await _run(call, lambda pantry, call: pantry.async_move_item(str(call.data["item_id"]), str(call.data["location"])))
 
     async def add_recipe(call: ServiceCall) -> None:
-        try:
-            await pantry.async_add_recipe(dict(call.data))
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+        await _run(call, lambda pantry, call: pantry.async_add_recipe(dict(call.data)))
 
     async def plan_meal(call: ServiceCall) -> None:
-        try:
-            await pantry.async_plan_meal(str(call.data["day"]), str(call.data["recipe_name"]))
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+        await _run(call, lambda pantry, call: pantry.async_plan_meal(str(call.data["day"]), str(call.data["recipe_name"])))
 
     async def add_shopping_item(call: ServiceCall) -> None:
-        try:
-            await pantry.async_add_shopping_item(
+        await _run(
+            call,
+            lambda pantry, call: pantry.async_add_shopping_item(
                 {
                     "name": str(call.data["name"]),
                     "quantity": str(call.data["quantity"]),
                     "unit": str(call.data.get("unit") or "count"),
                     "source": str(call.data.get("source") or "manual"),
                 }
-            )
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+            ),
+        )
 
     async def add_missing_to_shopping_list(call: ServiceCall) -> None:
-        try:
-            await pantry.async_add_missing_to_shopping_list(str(call.data["recipe_name"]))
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+        await _run(call, lambda pantry, call: pantry.async_add_missing_to_shopping_list(str(call.data["recipe_name"])))
+
+    async def rebuild_shopping(call: ServiceCall) -> None:
+        await _run(call, lambda pantry, call: pantry.async_rebuild_shopping())
 
     async def promote_suggested_purchases(call: ServiceCall) -> None:
-        try:
-            await pantry.async_promote_suggested_purchases()
-            await _refresh_entities(hass, pantry)
-        except PantryAPIError as exc:
-            raise HomeAssistantError(str(exc)) from exc
+        await _run(call, lambda pantry, call: pantry.async_promote_suggested_purchases())
+
+    async def start_cooking(call: ServiceCall) -> None:
+        await _run(call, lambda pantry, call: pantry.async_start_cooking_session(dict(call.data)))
+
+    async def complete_cooking(call: ServiceCall) -> None:
+        await _run(
+            call,
+            lambda pantry, call: pantry.async_complete_cooking_session(
+                str(call.data["session_id"]),
+                {
+                    "actual_servings": str(call.data.get("actual_servings")) if call.data.get("actual_servings") is not None else None,
+                    "allocations": list(call.data.get("allocations") or []),
+                    "leftovers": list(call.data.get("leftovers") or []),
+                    "notes": call.data.get("notes"),
+                },
+            ),
+        )
+
+    async def cancel_cooking(call: ServiceCall) -> None:
+        await _run(call, lambda pantry, call: pantry.async_cancel_cooking_session(str(call.data["session_id"]), {"reason": call.data.get("reason")}))
 
     registrations = {
         "add_item": (add_item, ADD_ITEM_SCHEMA),
         "consume_item": (consume_item, CONSUME_ITEM_SCHEMA),
         "delete_item": (delete_item, ITEM_ID_SCHEMA),
+        "discard_item": (discard_item, DISCARD_ITEM_SCHEMA),
         "move_item": (move_item, MOVE_ITEM_SCHEMA),
         "add_recipe": (add_recipe, ADD_RECIPE_SCHEMA),
         "plan_meal": (plan_meal, PLAN_MEAL_SCHEMA),
         "add_shopping_item": (add_shopping_item, ADD_SHOPPING_ITEM_SCHEMA),
         "add_missing_to_shopping_list": (add_missing_to_shopping_list, RECIPE_NAME_SCHEMA),
+        "rebuild_shopping": (rebuild_shopping, None),
         "promote_suggested_purchases": (promote_suggested_purchases, None),
+        "start_cooking": (start_cooking, START_COOKING_SCHEMA),
+        "complete_cooking": (complete_cooking, COMPLETE_COOKING_SCHEMA),
+        "cancel_cooking": (cancel_cooking, CANCEL_COOKING_SCHEMA),
     }
     for name, (handler, schema) in registrations.items():
         hass.services.async_register(DOMAIN, name, handler, schema=schema)
+
+
+def _active_pantry(hass: HomeAssistant) -> PantryAPIClient:
+    entries = hass.data.get(DOMAIN, {})
+    if not entries:
+        raise HomeAssistantError("No PantryOS entry is loaded")
+    return next(iter(entries.values()))
 
 
 async def _refresh_entities(hass: HomeAssistant, pantry: PantryAPIClient) -> None:
@@ -152,12 +165,17 @@ SERVICES = (
     "add_item",
     "consume_item",
     "delete_item",
+    "discard_item",
     "move_item",
     "add_recipe",
     "plan_meal",
     "add_shopping_item",
     "add_missing_to_shopping_list",
+    "rebuild_shopping",
     "promote_suggested_purchases",
+    "start_cooking",
+    "complete_cooking",
+    "cancel_cooking",
 )
 
 ADD_ITEM_SCHEMA = vol.Schema(
@@ -179,6 +197,7 @@ ADD_ITEM_SCHEMA = vol.Schema(
 
 CONSUME_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Required("quantity"): _number})
 ITEM_ID_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string})
+DISCARD_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Optional("reason", default="discarded"): cv.string})
 MOVE_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Required("location"): cv.string})
 INGREDIENT_SCHEMA = vol.Schema(
     {
@@ -206,3 +225,21 @@ ADD_SHOPPING_ITEM_SCHEMA = vol.Schema(
     }
 )
 RECIPE_NAME_SCHEMA = vol.Schema({vol.Required("recipe_name"): cv.string})
+START_COOKING_SCHEMA = vol.Schema(
+    {
+        vol.Optional("recipe_id"): cv.string,
+        vol.Optional("recipe_name"): cv.string,
+        vol.Optional("planned_servings"): _number,
+        vol.Optional("notes"): cv.string,
+    }
+)
+COMPLETE_COOKING_SCHEMA = vol.Schema(
+    {
+        vol.Required("session_id"): cv.string,
+        vol.Optional("actual_servings"): _number,
+        vol.Optional("allocations", default=[]): vol.All(cv.ensure_list, [dict]),
+        vol.Optional("leftovers", default=[]): vol.All(cv.ensure_list, [dict]),
+        vol.Optional("notes"): cv.string,
+    }
+)
+CANCEL_COOKING_SCHEMA = vol.Schema({vol.Required("session_id"): cv.string, vol.Optional("reason", default="cancelled"): cv.string})

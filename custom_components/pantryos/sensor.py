@@ -32,6 +32,8 @@ SENSORS: tuple[PantrySensorDescription, ...] = (
         attributes_fn=lambda summary: {"items": summary["expiring_soon"]},
     ),
     PantrySensorDescription(key="shopping_list_count", translation_key="shopping_list_count", value_fn=lambda summary: summary["shopping_list_count"]),
+    PantrySensorDescription(key="leftover_count", translation_key="leftover_count", value_fn=lambda summary: summary.get("leftover_count", 0)),
+    PantrySensorDescription(key="state_revision", translation_key="state_revision", value_fn=lambda summary: summary.get("state_revision", 0)),
     PantrySensorDescription(
         key="suggested_purchases",
         translation_key="suggested_purchases",

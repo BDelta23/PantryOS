@@ -259,8 +259,11 @@ def legacy_summary(core: PantryCore, dashboard: dict[str, Any]) -> dict[str, Any
     expiring = expiring_soon(dashboard["lots"])
     suggestions = minimum_stock_suggestions(core)
     possible = recipe_matches(core, dashboard["recipes"], max_missing=0)
+    leftovers = [lot for lot in dashboard["lots"] if lot["status"] == "active" and lot["lot_type"] == "leftover"]
     return {
         "total_items": dashboard["summary"]["active_lot_count"],
+        "state_revision": dashboard["revision"],
+        "leftover_count": len(leftovers),
         "expiring_soon": expiring,
         "expiring_soon_count": len(expiring),
         "shopping_list_count": dashboard["summary"]["shopping_count"],

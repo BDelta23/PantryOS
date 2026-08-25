@@ -20,6 +20,8 @@
       "total_items": {"name": "Total items"},
       "expiring_soon": {"name": "Expiring soon"},
       "shopping_list_count": {"name": "Shopping list count"},
+      "leftover_count": {"name": "Leftovers"},
+      "state_revision": {"name": "State revision"},
       "suggested_purchases": {"name": "Suggested purchases"},
       "possible_meals": {"name": "Possible meals"},
       "food_waste_this_month": {"name": "Food waste this month"},

@@ -86,6 +86,8 @@ The integration exposes these sensors:
 - `sensor.pantryos_total_items`
 - `sensor.pantryos_expiring_soon`
 - `sensor.pantryos_shopping_list_count`
+- `sensor.pantryos_leftover_count`
+- `sensor.pantryos_state_revision`
 - `sensor.pantryos_suggested_purchases`
 - `sensor.pantryos_possible_meals`
 - `sensor.pantryos_food_waste_this_month`
@@ -98,6 +100,9 @@ The integration exposes these sensors:
 - `sensor.pantryos_freezer_value`
 - `sensor.pantryos_pantry_value`
 
+### Service Surface
+
+The integration registers API-backed actions for `add_item`, `consume_item`, `delete_item` as a compatibility discard action, `discard_item`, `move_item`, `add_recipe`, `plan_meal`, `add_shopping_item`, `add_missing_to_shopping_list`, `rebuild_shopping`, `promote_suggested_purchases`, `start_cooking`, `complete_cooking`, and `cancel_cooking`.
 ### Example Service Calls
 
 Add chicken to the garage freezer:

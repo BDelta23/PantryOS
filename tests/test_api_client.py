@@ -214,3 +214,50 @@ def test_api_client_completes_cooking_session_with_leftover() -> None:
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+
+def test_api_client_receipt_purchase_price_and_leftover_routes() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "test-token")
+        leftover = await client.async_add_item(
+            {"name": "Client Leftover Beans", "quantity": "2", "unit": "serving", "location": "Kitchen/Refrigerator", "tags": ["leftover"]}
+        )
+        leftovers = await client.async_leftovers()
+        uploaded = await client.async_upload_receipt(
+            {
+                "filename": "ha-receipt.txt",
+                "mime_type": "text/plain",
+                "text": "Store: HA Receipt Market\nDate: 2026-08-25\nHA Receipt Rice,2,count,5.50,444555666777\nTotal: 5.50\n",
+            }
+        )
+        extracted = await client.async_extract_receipt(uploaded["receipt"]["id"])
+        review = extracted["review"]
+        review["location"] = "Kitchen/Pantry"
+        updated = await client.async_update_receipt_review(uploaded["receipt"]["id"], review)
+        committed = await client.async_commit_receipt(uploaded["receipt"]["id"])
+        duplicate = await client.async_commit_receipt(uploaded["receipt"]["id"])
+        purchases = await client.async_purchases()
+        purchase = await client.async_purchase(committed["purchase"]["id"])
+        prices = await client.async_product_prices(purchase["lines"][0]["product_id"])
+        rejected_upload = await client.async_upload_receipt(
+            {
+                "filename": "reject-me.txt",
+                "mime_type": "text/plain",
+                "text": "Store: Reject Market\nReject Crackers,1,count,1.25\nTotal: 1.25\n",
+            }
+        )
+        rejected = await client.async_reject_receipt(rejected_upload["receipt"]["id"], reason="bad scan")
+
+        assert leftover["item"]["name"] == "Client Leftover Beans"
+        assert any(item["name"] == "Client Leftover Beans" for item in leftovers["items"])
+        assert uploaded["receipt"]["status"] == "uploaded"
+        assert updated["review"]["location"] == "Kitchen/Pantry"
+        assert committed["purchase"]["store"] == "HA Receipt Market"
+        assert committed["lots"][0]["name"] == "HA Receipt Rice"
+        assert duplicate["duplicate"] is True
+        assert any(item["id"] == committed["purchase"]["id"] for item in purchases["items"])
+        assert purchase["prices"][0]["unit_price"] == "2.75"
+        assert prices["prices"][0]["comparable_unit"] == "count"
+        assert rejected["receipt"]["status"] == "rejected"
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))
