@@ -467,6 +467,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if parsed.path in ("/api/shopping", "/api/v1/shopping/manual"):
                 self._send_json(add_manual_shopping(self.core, body), HTTPStatus.CREATED)
                 return
+            if parsed.path == "/api/v1/shopping/rebuild":
+                result = self.core.rebuild_shopping_demand()
+                self._send_json({**result, "items": [shopping_to_legacy(row) for row in result["items"]]})
+                return
             if parsed.path in ("/api/shopping/promote-suggestions", "/api/v1/shopping/promote-suggestions"):
                 self._send_json(promote_suggestions(self.core))
                 return

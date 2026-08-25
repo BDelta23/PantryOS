@@ -91,3 +91,33 @@ def test_api_client_maps_auth_failures() -> None:
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+def test_api_client_rebuilds_meal_plan_shopping_idempotently() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "test-token")
+        await client.async_add_item(
+            {"name": "Plan Flour", "quantity": "8", "unit": "oz", "location": "Kitchen/Pantry"}
+        )
+        await client.async_add_recipe(
+            {
+                "name": "Plan Biscuits",
+                "ingredients": [
+                    {"name": "Plan Flour", "quantity": "16", "unit": "oz"},
+                    {"name": "Baking Powder", "quantity": "1", "unit": "tbsp"},
+                ],
+            }
+        )
+        await client.async_plan_meal("Lunch", "Plan Biscuits")
+        await client.async_plan_meal("Dinner", "Plan Biscuits")
+
+        first = await client.async_rebuild_shopping()
+        second = await client.async_rebuild_shopping()
+
+        first_items = {item["name"]: item for item in first["items"] if item["source"].startswith("meal_plan:")}
+        second_items = {item["name"]: item for item in second["items"] if item["source"].startswith("meal_plan:")}
+        assert first_items == second_items
+        assert first_items["Plan Flour"]["quantity"] == "24"
+        assert first_items["Baking Powder"]["quantity"] == "2"
+        assert len(first_items) == 2
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))

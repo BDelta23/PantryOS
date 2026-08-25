@@ -80,6 +80,9 @@ class PantryAPIClient:
         path = f"/api/v1/recipes/{quote(recipe_name, safe='')}/shopping"
         return await self._request("POST", path, data={}, authenticated=True)
 
+    async def async_rebuild_shopping(self) -> dict[str, Any]:
+        return await self._request("POST", "/api/v1/shopping/rebuild", data={}, authenticated=True)
+
     async def async_promote_suggested_purchases(self) -> dict[str, Any]:
         return await self._request("POST", "/api/v1/shopping/promote-suggestions", data={}, authenticated=True)
 

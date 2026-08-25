@@ -9,6 +9,7 @@ import sqlite3
 import uuid
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Iterator
@@ -383,6 +384,112 @@ class PantryCore:
         with closing(self.connect()) as connection:
             return self._dashboard(connection)
 
+    def rebuild_shopping_demand(self) -> dict[str, Any]:
+        """Rebuild idempotent generated shopping demand from active meal plans."""
+        self.migrate()
+        today = date.today()
+        changed_keys: set[str] = set()
+        generated: dict[str, dict[str, Any]] = {}
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT m.id AS meal_plan_id, m.servings, r.name AS recipe_name,
+                       r.yield_servings, i.product_id, i.display_text, i.quantity, i.unit
+                FROM meal_plan_entries m
+                JOIN recipes r ON r.id = m.recipe_id
+                JOIN recipe_ingredients i ON i.recipe_id = r.id
+                WHERE m.status = 'planned'
+                ORDER BY m.plan_date, m.meal_type, i.position
+                """
+            ).fetchall()
+            for row in rows:
+                unit = unit_code(row["unit"])
+                servings = require_positive(row["servings"], "servings")
+                yield_servings = require_positive(row["yield_servings"], "yield_servings")
+                required = require_positive(row["quantity"]) * servings / yield_servings
+                if row["product_id"]:
+                    identity = f"product:{row['product_id']}:{unit}"
+                else:
+                    identity = f"text:{normalize_name(row['display_text'])}:{unit}"
+                entry = generated.setdefault(
+                    identity,
+                    {
+                        "product_id": row["product_id"],
+                        "display_name": row["display_text"],
+                        "quantity": Decimal("0"),
+                        "unit": unit,
+                        "sources": [],
+                    },
+                )
+                entry["quantity"] += required
+                entry["sources"].append({"meal_plan_id": row["meal_plan_id"], "recipe_name": row["recipe_name"]})
+
+            existing_generated = {
+                row["source_key"]
+                for row in connection.execute("SELECT source_key FROM shopping_demands WHERE source_kind = 'meal_plan'")
+            }
+            active_keys: set[str] = set()
+            for identity, entry in generated.items():
+                source_key = f"meal_plan:{identity}"
+                needed = entry["quantity"]
+                if entry["product_id"]:
+                    available = self._usable_product_quantity(connection, entry["product_id"], entry["unit"], today)
+                    needed -= available
+                if needed <= 0:
+                    continue
+                active_keys.add(source_key)
+                self._upsert_shopping_demand(
+                    connection,
+                    source_key=source_key,
+                    product_id=entry["product_id"],
+                    display_name=entry["display_name"],
+                    quantity=decimal_text(needed),
+                    unit=entry["unit"],
+                    source_kind="meal_plan",
+                    source_id="active_plan",
+                    accepted=True,
+                )
+                changed_keys.add(source_key)
+
+            stale_keys = existing_generated - active_keys
+            if stale_keys:
+                connection.executemany(
+                    "UPDATE shopping_demands SET status = 'inactive', recalculated_at = ? WHERE source_key = ?",
+                    [(utc_now(), source_key) for source_key in stale_keys],
+                )
+                changed_keys.update(stale_keys)
+            if changed_keys:
+                revision = self._append_event(connection, "shopping.rebuilt", source="meal_plan")
+            else:
+                revision = int(self._metadata(connection, "state_revision"))
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM shopping_demands WHERE source_kind = 'meal_plan' ORDER BY display_name, unit"
+                )
+            ]
+        return {"items": rows, "changed_source_keys": sorted(changed_keys), "revision": revision}
+
+    def _usable_product_quantity(
+        self,
+        connection: sqlite3.Connection,
+        product_id: str,
+        unit: str,
+        today: date,
+    ) -> Decimal:
+        total = Decimal("0")
+        for lot in connection.execute(
+            """
+            SELECT quantity, unit, expires_at
+            FROM inventory_lots
+            WHERE product_id = ? AND status = 'active' AND CAST(quantity AS REAL) > 0
+            """,
+            (product_id,),
+        ):
+            if lot["expires_at"] and date.fromisoformat(lot["expires_at"][:10]) < today:
+                continue
+            total += convert(require_non_negative(lot["quantity"]), lot["unit"], unit)
+        return total
     def ensure_product(
         self,
         connection: sqlite3.Connection,
@@ -649,6 +756,8 @@ class PantryCore:
               quantity = excluded.quantity,
               unit = excluded.unit,
               display_name = excluded.display_name,
+              status = 'active',
+              accepted = excluded.accepted,
               recalculated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             """,
             (

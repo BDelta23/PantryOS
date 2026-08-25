@@ -132,6 +132,7 @@ Current versioned endpoints:
 - `POST /api/v1/recipes`
 - `POST /api/v1/recipes/{recipe_name}/shopping`
 - `POST /api/v1/meal-plan`
+- `POST /api/v1/shopping/rebuild`
 - `POST /api/v1/shopping/manual`
 - `POST /api/v1/shopping/promote-suggestions`
 
