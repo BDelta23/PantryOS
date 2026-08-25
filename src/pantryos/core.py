@@ -19,6 +19,8 @@ from .units import UNITS, convert, decimal_text, require_non_negative, require_p
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 CURRENT_SCHEMA_VERSION = 4
+MAX_RECEIPT_UPLOAD_BYTES = 64_000
+SUPPORTED_RECEIPT_MIME_TYPES = {"text/plain": ".txt", "text/csv": ".csv"}
 
 
 def utc_now() -> str:
@@ -450,21 +452,33 @@ class PantryCore:
     def upload_receipt(self, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
         self.migrate()
         mime_type = str(data.get("mime_type") or "text/plain").casefold().strip()
-        if mime_type not in {"text/plain", "text/csv"}:
-            raise ValidationError("Unsupported receipt type")
-        filename = Path(str(data.get("filename") or "receipt.txt")).name
-        if not filename or filename in {".", ".."}:
+        storage_suffix = SUPPORTED_RECEIPT_MIME_TYPES.get(mime_type)
+        if storage_suffix is None:
+            raise ValidationError("Unsupported receipt type; supported types are text/plain and text/csv")
+        filename = str(data.get("filename") or f"receipt{storage_suffix}").strip()
+        if not filename:
             raise ValidationError("Receipt filename is required")
-        raw_text = str(data.get("text") or data.get("content") or "")
+        if filename in {".", ".."} or "/" in filename or "\\" in filename:
+            raise ValidationError("Receipt filename must not include a path")
+        suffix = Path(filename).suffix.casefold()
+        if suffix and suffix != storage_suffix:
+            raise ValidationError("Receipt filename extension does not match MIME type")
+        raw_text = data.get("text") if "text" in data else data.get("content")
+        if not isinstance(raw_text, str):
+            raise ValidationError("Receipt content must be text")
         payload = raw_text.encode("utf-8")
         if not payload:
             raise ValidationError("Receipt content is required")
-        if len(payload) > 64_000:
-            raise ValidationError("Receipt upload exceeds 64000 bytes")
+        if "\x00" in raw_text:
+            raise ValidationError("Receipt content must be text")
+        if len(payload) > MAX_RECEIPT_UPLOAD_BYTES:
+            raise ValidationError(f"Receipt upload exceeds {MAX_RECEIPT_UPLOAD_BYTES} bytes")
+        if mime_type == "text/csv" and "," not in raw_text:
+            raise ValidationError("CSV receipt content must contain comma-separated rows")
         content_hash = hashlib.sha256(payload).hexdigest()
-        receipt_dir = self.db_path.parent / "receipts"
+        receipt_dir = (self.db_path.parent / "receipts").resolve()
         receipt_dir.mkdir(parents=True, exist_ok=True)
-        storage_path = receipt_dir / f"{content_hash}.txt"
+        storage_path = receipt_dir / f"{content_hash}{storage_suffix}"
         storage_path.write_bytes(payload)
         with self.transaction() as connection:
             existing = connection.execute("SELECT * FROM receipt_uploads WHERE content_hash = ?", (content_hash,)).fetchone()

@@ -2,11 +2,13 @@ import json
 import os
 import sys
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+from http.client import HTTPConnection
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 _SERVER_PATH = Path(__file__).resolve().parents[1] / "app" / "server.py"
@@ -89,9 +91,10 @@ def request_raw_error(
     *,
     token: str | None = None,
     request_id: str | None = None,
+    content_type: str = "application/json",
 ) -> tuple[int, dict]:
     request = Request(url, data=body, method="POST")
-    request.add_header("Content-Type", "application/json")
+    request.add_header("Content-Type", content_type)
     if token is not None:
         request.add_header("Authorization", f"Bearer {token}")
     if request_id is not None:
@@ -102,6 +105,30 @@ def request_raw_error(
     except HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8"))
     raise AssertionError("Expected request to fail")
+
+
+def request_declared_length_error(
+    url: str,
+    *,
+    content_length: int,
+    token: str | None = None,
+    request_id: str | None = None,
+) -> tuple[int, dict]:
+    parsed = urlparse(url)
+    connection = HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+    try:
+        connection.putrequest("POST", parsed.path)
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Content-Length", str(content_length))
+        if token is not None:
+            connection.putheader("Authorization", f"Bearer {token}")
+        if request_id is not None:
+            connection.putheader("X-Request-ID", request_id)
+        connection.endheaders()
+        response = connection.getresponse()
+        return response.status, json.loads(response.read().decode("utf-8"))
+    finally:
+        connection.close()
 
 
 def test_seed_core_builds_vertical_slice_state() -> None:
@@ -242,6 +269,39 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     assert invalid_json["code"] == "invalid_json"
     assert invalid_json["request_id"] == "bad-json"
 
+
+def test_v1_json_requests_enforce_content_type_and_body_size() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            media_status, media_problem = request_raw_error(
+                f"{base}/api/v1/inventory/lots",
+                b'{"name":"Wrong Media"}',
+                token="test-token",
+                request_id="wrong-media",
+                content_type="text/plain",
+            )
+            oversized_status, oversized_problem = request_declared_length_error(
+                f"{base}/api/v1/inventory/lots",
+                content_length=server_module.MAX_REQUEST_BODY_BYTES + 1,
+                token="test-token",
+                request_id="too-large",
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert media_status == 415
+    assert media_problem["code"] == "unsupported_media_type"
+    assert media_problem["request_id"] == "wrong-media"
+    assert oversized_status == 413
+    assert oversized_problem["code"] == "request_body_too_large"
+    assert oversized_problem["request_id"] == "too-large"
 
 def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
@@ -414,6 +474,92 @@ def test_receipt_api_review_commit_and_price_history() -> None:
     assert purchase_detail["prices"][0]["unit_price"] == "2.00"
     assert prices["product"]["name"] == "API Apples"
     assert prices["prices"][0]["comparable_unit"] == "count"
+
+
+def test_receipt_upload_enforces_limits_and_private_storage() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            unsupported_status, unsupported = request_error(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={"filename": "receipt.png", "mime_type": "image/png", "text": "not an image"},
+                request_id="bad-mime",
+            )
+            path_status, path_problem = request_error(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={"filename": "../receipt.txt", "mime_type": "text/plain", "text": "Store: Bad Path"},
+                request_id="bad-path",
+            )
+            mismatch_status, mismatch = request_error(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={"filename": "receipt.csv", "mime_type": "text/plain", "text": "Store: Wrong Extension"},
+                request_id="bad-extension",
+            )
+            csv_status, csv_problem = request_error(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={"filename": "receipt.csv", "mime_type": "text/csv", "text": "no comma rows here"},
+                request_id="bad-csv",
+            )
+            oversized_status, oversized = request_error(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={"filename": "big.txt", "mime_type": "text/plain", "text": "x" * 64001},
+                request_id="big-receipt",
+            )
+            uploaded = request_json(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={
+                    "filename": "receipt.csv",
+                    "mime_type": "text/csv",
+                    "text": "Store: CSV Market\nDate: 2026-08-25\nCSV Beans,2,count,3.00\n",
+                },
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+        core = server_module.PantryCore(data_path)
+        with closing(core.connect()) as connection:
+            row = connection.execute("SELECT * FROM receipt_uploads WHERE id = ?", (uploaded["receipt"]["id"],)).fetchone()
+        storage_path = Path(row["storage_path"]).resolve()
+        receipt_dir = (data_path.parent / "receipts").resolve()
+        static_dir = server_module.STATIC_DIR.resolve()
+        storage_text = storage_path.read_text(encoding="utf-8")
+
+    assert unsupported_status == 400
+    assert unsupported["code"] == "validation_error"
+    assert unsupported["request_id"] == "bad-mime"
+    assert path_status == 400
+    assert path_problem["detail"] == "Receipt filename must not include a path"
+    assert mismatch_status == 400
+    assert mismatch["detail"] == "Receipt filename extension does not match MIME type"
+    assert csv_status == 400
+    assert csv_problem["detail"] == "CSV receipt content must contain comma-separated rows"
+    assert oversized_status == 400
+    assert oversized["detail"] == "Receipt upload exceeds 64000 bytes"
+    assert uploaded["receipt"]["status"] == "uploaded"
+    assert "storage_path" not in uploaded["receipt"]
+    assert storage_path.suffix == ".csv"
+    assert storage_text.startswith("Store: CSV Market")
+    assert storage_path.parent == receipt_dir
+    assert static_dir not in storage_path.parents
+
 
 def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):

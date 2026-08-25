@@ -369,7 +369,7 @@ Receipt Eggs,12,count,4.50,12345
 Total: 8.49
 """
 
-        uploaded = core.upload_receipt({"filename": "../receipt.txt", "mime_type": "text/plain", "text": receipt_text})
+        uploaded = core.upload_receipt({"filename": "receipt.txt", "mime_type": "text/plain", "text": receipt_text})
         assert uploaded["receipt"]["status"] == "uploaded"
         assert uploaded["receipt"]["original_filename"] == "receipt.txt"
         assert "storage_path" not in uploaded["receipt"]

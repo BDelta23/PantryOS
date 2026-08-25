@@ -36,6 +36,14 @@ PROBLEM_BASE_URL = "https://pantryos.local/problems"
 PUBLIC_V1_ENDPOINTS = {"/api/v1/health/live", "/api/v1/health/ready"}
 
 
+class RequestBodyTooLarge(ValueError):
+    """Request body exceeds the configured API limit."""
+
+
+class UnsupportedMediaType(ValueError):
+    """Request declares a body type PantryOS does not accept."""
+
+
 def demo_seed_document() -> dict[str, Any]:
     return {
         "items": [
@@ -619,6 +627,12 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         except PantryOSError as exc:
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
             return
+        except RequestBodyTooLarge as exc:
+            self._send_problem(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc), code="request_body_too_large", title="Request body too large")
+            return
+        except UnsupportedMediaType as exc:
+            self._send_problem(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, str(exc), code="unsupported_media_type", title="Unsupported media type")
+            return
         except ValueError as exc:
             self._send_problem(HTTPStatus.BAD_REQUEST, str(exc), code="invalid_request", title="Invalid request")
             return
@@ -648,6 +662,12 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         except PantryOSError as exc:
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
             return
+        except RequestBodyTooLarge as exc:
+            self._send_problem(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc), code="request_body_too_large", title="Request body too large")
+            return
+        except UnsupportedMediaType as exc:
+            self._send_problem(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, str(exc), code="unsupported_media_type", title="Unsupported media type")
+            return
         except ValueError as exc:
             self._send_problem(HTTPStatus.BAD_REQUEST, str(exc), code="invalid_request", title="Invalid request")
             return
@@ -674,11 +694,18 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("content-length", "0"))
+        try:
+            length = int(self.headers.get("content-length", "0"))
+        except ValueError as exc:
+            raise ValueError("Content-Length must be an integer") from exc
+        if length < 0:
+            raise ValueError("Content-Length must be non-negative")
         if length == 0:
             return {}
         if length > MAX_REQUEST_BODY_BYTES:
-            raise ValueError("Request body too large")
+            raise RequestBodyTooLarge(f"Request body exceeds {MAX_REQUEST_BODY_BYTES} bytes")
+        if not is_json_content_type(self.headers.get("Content-Type", "")):
+            raise UnsupportedMediaType("Request body must use application/json")
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("Request body must be a JSON object")
@@ -796,6 +823,11 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
 
 def is_versioned_api(path: str) -> bool:
     return path == "/api/v1" or path.startswith("/api/v1/")
+
+
+def is_json_content_type(value: str) -> bool:
+    media_type = value.split(";", 1)[0].strip().casefold()
+    return media_type == "application/json" or media_type.endswith("+json")
 
 
 def problem(
