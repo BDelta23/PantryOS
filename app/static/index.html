@@ -28,6 +28,20 @@
           <p id="tonightMeal" class="primary-line">No meal planned</p>
           <p id="tonightDetails" class="muted">Plan a meal from a recipe below.</p>
           <button id="startCookingButton" type="button">Start Cooking</button>
+          <form id="cookingForm" class="session-panel" hidden>
+            <div id="cookingStatus" class="row-subtitle"></div>
+            <div id="cookingAllocations" class="allocation-list"></div>
+            <div class="row">
+              <label>Leftover servings<input name="leftover_quantity" inputmode="decimal" placeholder="0" /></label>
+              <label>Use by<input name="leftover_use_by" type="date" /></label>
+            </div>
+            <label>Leftover name<input name="leftover_name" placeholder="Dinner leftovers" /></label>
+            <label>Leftover location<input name="leftover_location" placeholder="Kitchen/Refrigerator" /></label>
+            <div class="row">
+              <button type="submit">Complete Cooking</button>
+              <button id="cancelCookingButton" class="quiet" type="button">Cancel</button>
+            </div>
+          </form>
         </article>
 
         <article class="panel">
@@ -44,6 +58,13 @@
             <span id="shoppingCount" class="metric">0</span>
           </div>
           <ul id="shoppingList" class="stack-list"></ul>
+          <form id="purchaseForm" class="purchase-form">
+            <div class="row">
+              <label>Store<input name="store" placeholder="Market" /></label>
+              <label>Location<input name="location" placeholder="Kitchen/Pantry" /></label>
+            </div>
+            <button type="submit">Complete Purchase</button>
+          </form>
           <button id="promoteButton" type="button">Add Suggestions</button>
         </article>
 

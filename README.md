@@ -5,7 +5,7 @@ PantryOS is a home food intelligence system with two surfaces:
 - A runnable local kitchen dashboard in `app/` for the v1 vertical slice.
 - A Home Assistant custom integration in `custom_components/pantryos` for sensors, services, and automation.
 
-Home Assistant is intended to be one interface into the food database, not the database itself. PantryOS Core owns the local SQLite database, and both the web app and Home Assistant integration use the authenticated Core API for current supported v1 workflows.
+Home Assistant is intended to be one interface into the food database, not the database itself. PantryOS Core owns the local SQLite database. The Home Assistant integration uses the authenticated Core API, while the browser still uses temporary `/api/*` compatibility routes until the browser session and CSRF work is complete.
 
 ## V1 Vertical Slice
 
@@ -18,6 +18,8 @@ The local app covers the end-to-end loop that makes the product useful:
 - Plan a recipe for tonight.
 - Compare recipes against current inventory.
 - Add missing recipe ingredients to the shopping list.
+- Check, uncheck, remove, and complete shopping purchases into inventory lots.
+- Start cooking from tonight's planned meal, confirm lot allocations, complete cooking, and create leftovers.
 - Keep suggested purchases separate from the shopping list until explicitly promoted.
 - Persist state to `data/pantryos.sqlite3`, with one-time import support for legacy `data/pantryos.json`.
 
@@ -163,8 +165,16 @@ The browser still uses these temporary compatibility routes while its session/au
 - `POST /api/recipes`
 - `POST /api/recipes/{recipe_name}/shopping`
 - `POST /api/shopping`
+- `POST /api/shopping/{id}/check`
+- `POST /api/shopping/{id}/uncheck`
+- `DELETE /api/shopping/{id}`
+- `POST /api/shopping/complete-purchase`
 - `POST /api/shopping/promote-suggestions`
+- `POST /api/shopping/rebuild`
 - `POST /api/meal-plan`
+- `POST /api/cooking/sessions`
+- `POST /api/cooking/sessions/{id}/complete`
+- `POST /api/cooking/sessions/{id}/cancel`
 
 ## Development
 

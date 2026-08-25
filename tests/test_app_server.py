@@ -222,3 +222,84 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     assert bad_status == 400
     assert invalid_json["code"] == "invalid_json"
     assert invalid_json["request_id"] == "bad-json"
+
+
+def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
+    with TemporaryDirectory() as directory:
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            request_json(f"{base}/api/seed?reset=true", method="POST")
+            shopping = request_json(
+                f"{base}/api/shopping",
+                method="POST",
+                payload={"name": "Browser Oats", "quantity": "2", "unit": "count"},
+            )
+            checked = request_json(f"{base}/api/shopping/{shopping['item']['id']}/check", method="POST")
+            purchase = request_json(
+                f"{base}/api/shopping/complete-purchase",
+                method="POST",
+                payload={
+                    "store": "Browser Market",
+                    "location": "Kitchen/Pantry",
+                    "items": [{"shopping_id": shopping["item"]["id"], "quantity": "2"}],
+                },
+            )
+            rice = request_json(
+                f"{base}/api/items",
+                method="POST",
+                payload={"name": "Browser Rice", "quantity": "2", "unit": "cup", "location": "Kitchen/Pantry"},
+            )
+            request_json(
+                f"{base}/api/recipes",
+                method="POST",
+                payload={
+                    "name": "Browser Rice Bowl",
+                    "ingredients": [{"name": "Browser Rice", "quantity": "1", "unit": "cup"}],
+                },
+            )
+            request_json(f"{base}/api/meal-plan", method="POST", payload={"day": "Tonight", "recipe_name": "Browser Rice Bowl"})
+            started = request_json(
+                f"{base}/api/cooking/sessions",
+                method="POST",
+                payload={"recipe_name": "Browser Rice Bowl", "planned_servings": "1"},
+            )
+            completed = request_json(
+                f"{base}/api/cooking/sessions/{started['session']['id']}/complete",
+                method="POST",
+                payload={
+                    "allocations": [{"lot_id": rice["item"]["id"], "quantity": "1", "unit": "cup"}],
+                    "leftovers": [{"name": "Browser Rice Bowl Leftovers", "quantity": "1", "unit": "serving"}],
+                },
+            )
+            state = request_json(f"{base}/api/state")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert checked["item"]["checked"] is True
+    assert purchase["purchase"]["store"] == "Browser Market"
+    assert purchase["lots"][0]["name"] == "Browser Oats"
+    assert started["session"]["status"] == "cooking"
+    assert completed["session"]["status"] == "completed"
+    assert completed["leftovers"][0]["name"] == "Browser Rice Bowl Leftovers"
+    browser_rice = next(item for item in state["items"] if item["name"] == "Browser Rice")
+    assert browser_rice["quantity"] == "1"
+    assert any(item["name"] == "Browser Rice Bowl Leftovers" for item in state["leftovers"])
+
+
+def test_static_browser_workflows_are_not_stubbed() -> None:
+    app_js = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (Path(__file__).resolve().parents[1] / "app" / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "Cooking mode queued" not in app_js
+    assert "/api/cooking/sessions" in app_js
+    assert "/api/shopping/complete-purchase" in app_js
+    assert "handleStartCooking" in app_js
+    assert "handlePurchaseSubmit" in app_js
+    assert "id=\"cookingForm\"" in index_html
+    assert "id=\"purchaseForm\"" in index_html

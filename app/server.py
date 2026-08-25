@@ -196,6 +196,7 @@ def lot_to_item(lot: dict[str, Any]) -> dict[str, Any]:
         "expires": lot["expires_at"],
         "opened": bool(lot["opened_at"]),
         "minimum_stock": lot["minimum_stock_quantity"],
+        "product_id": lot["product_id"],
         "barcode": None,
         "estimated_cost": lot["total_cost"],
         "estimated_value": lot.get("estimated_value", "0.00"),
@@ -465,7 +466,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 result = self.core.add_inventory_lot(body)
                 self._send_json({"item": lot_to_item(result["lot"]), "revision": result["revision"]}, HTTPStatus.CREATED)
                 return
-            if parsed.path == "/api/v1/cooking/sessions":
+            if parsed.path in ("/api/cooking/sessions", "/api/v1/cooking/sessions"):
                 result = self.core.start_cooking_session(body)
                 self._send_json(result, HTTPStatus.CREATED)
                 return
@@ -517,11 +518,11 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if parsed.path in ("/api/shopping", "/api/v1/shopping/manual"):
                 self._send_json(add_manual_shopping(self.core, body), HTTPStatus.CREATED)
                 return
-            if parsed.path == "/api/v1/shopping/rebuild":
+            if parsed.path in ("/api/shopping/rebuild", "/api/v1/shopping/rebuild"):
                 result = self.core.rebuild_shopping_demand()
                 self._send_json({**result, "items": [shopping_to_legacy(row) for row in result["items"]]})
                 return
-            if parsed.path == "/api/v1/shopping/complete-purchase":
+            if parsed.path in ("/api/shopping/complete-purchase", "/api/v1/shopping/complete-purchase"):
                 result = self.core.complete_purchase(body)
                 self._send_json({**result, "lots": [lot_to_item(row) for row in result["lots"]]}, HTTPStatus.CREATED)
                 return
@@ -765,43 +766,47 @@ def recipe_shopping_path(path: str) -> str | None:
 
 
 def cooking_session_path(path: str) -> str | None:
-    prefix = "/api/v1/cooking/sessions/"
-    if not path.startswith(prefix):
-        return None
-    suffix = path.removeprefix(prefix)
-    if not suffix or "/" in suffix:
-        return None
-    return unquote(suffix)
+    for prefix in ("/api/cooking/sessions/", "/api/v1/cooking/sessions/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix:
+            return None
+        return unquote(suffix)
+    return None
 
 
 def cooking_action_path(path: str) -> tuple[str, str] | None:
-    prefix = "/api/v1/cooking/sessions/"
-    if not path.startswith(prefix):
-        return None
-    parts = path.removeprefix(prefix).split("/")
-    if len(parts) != 2 or parts[1] not in {"complete", "cancel"}:
-        return None
-    return unquote(parts[0]), parts[1]
+    for prefix in ("/api/cooking/sessions/", "/api/v1/cooking/sessions/"):
+        if not path.startswith(prefix):
+            continue
+        parts = path.removeprefix(prefix).split("/")
+        if len(parts) != 2 or not parts[0] or parts[1] not in {"complete", "cancel"}:
+            return None
+        return unquote(parts[0]), parts[1]
+    return None
 
 
 def shopping_item_path(path: str) -> str | None:
-    prefix = "/api/v1/shopping/"
-    if not path.startswith(prefix):
-        return None
-    suffix = path.removeprefix(prefix)
-    if not suffix or "/" in suffix or suffix in {"manual", "rebuild", "complete-purchase", "promote-suggestions"}:
-        return None
-    return unquote(suffix)
+    for prefix in ("/api/shopping/", "/api/v1/shopping/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix or suffix in {"manual", "rebuild", "complete-purchase", "promote-suggestions"}:
+            return None
+        return unquote(suffix)
+    return None
 
 
 def shopping_action_path(path: str) -> tuple[str, str] | None:
-    prefix = "/api/v1/shopping/"
-    if not path.startswith(prefix):
-        return None
-    parts = path.removeprefix(prefix).split("/")
-    if len(parts) != 2 or parts[1] not in {"check", "uncheck"}:
-        return None
-    return unquote(parts[0]), parts[1]
+    for prefix in ("/api/shopping/", "/api/v1/shopping/"):
+        if not path.startswith(prefix):
+            continue
+        parts = path.removeprefix(prefix).split("/")
+        if len(parts) != 2 or not parts[0] or parts[1] not in {"check", "uncheck"}:
+            return None
+        return unquote(parts[0]), parts[1]
+    return None
 
 
 def consume_lot_product(core: PantryCore, lot_id: str, quantity: str, reason: str | None = None) -> dict[str, Any]:

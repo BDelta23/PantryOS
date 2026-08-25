@@ -45,6 +45,11 @@ button:hover {
   background: var(--accent-dark);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button.secondary,
 button.danger,
 button.quiet {
@@ -117,7 +122,8 @@ h2 {
 .actions,
 .row,
 .item-actions,
-.recipe-actions {
+.recipe-actions,
+.row-actions {
   display: flex;
   gap: 8px;
 }
@@ -180,7 +186,8 @@ h2 {
 
 .stack-list,
 .inventory-list,
-.recipe-list {
+.recipe-list,
+.allocation-list {
   display: grid;
   gap: 9px;
   margin: 0;
@@ -190,7 +197,8 @@ h2 {
 
 .list-row,
 .inventory-row,
-.recipe-row {
+.recipe-row,
+.allocation-row {
   display: grid;
   gap: 4px;
   border: 1px solid var(--line);
@@ -209,6 +217,11 @@ h2 {
 .row-subtitle {
   color: var(--muted);
   font-size: 0.86rem;
+}
+
+.is-checked .row-title span:first-child {
+  color: var(--muted);
+  text-decoration: line-through;
 }
 
 .badge {
@@ -276,9 +289,25 @@ h2 {
   padding: 16px;
 }
 
-.form-grid {
+.form-grid,
+.purchase-form,
+.session-panel {
   display: grid;
   gap: 12px;
+}
+
+.session-panel[hidden] {
+  display: none;
+}
+
+.allocation-row {
+  grid-template-columns: minmax(110px, 1fr) minmax(120px, 1fr) 86px;
+  align-items: center;
+  color: var(--ink);
+}
+
+.allocation-row input {
+  min-width: 0;
 }
 
 .checkline {
@@ -336,7 +365,8 @@ h2 {
   .actions,
   .row,
   .item-actions,
-  .recipe-actions {
+  .recipe-actions,
+  .row-actions {
     align-items: stretch;
     flex-direction: column;
   }
@@ -345,7 +375,8 @@ h2 {
     grid-template-columns: 1fr;
   }
 
-  .inventory-row {
+  .inventory-row,
+  .allocation-row {
     grid-template-columns: 1fr;
   }
 
