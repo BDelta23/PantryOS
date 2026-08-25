@@ -441,6 +441,21 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/leftovers":
             self._send_json({"items": [lot_to_item(row) for row in public_state(self.core)["core"]["lots"] if row["status"] == "active" and row["lot_type"] == "leftover"]})
             return
+        receipt_review_id = receipt_review_path(parsed.path)
+        if receipt_review_id is not None:
+            self._send_json(self.core.receipt_review(receipt_review_id))
+            return
+        purchase_id = purchase_path(parsed.path)
+        if purchase_id is not None:
+            self._send_json(self.core.purchase(purchase_id))
+            return
+        product_prices_id = product_prices_path(parsed.path)
+        if product_prices_id is not None:
+            self._send_json(self.core.product_prices(product_prices_id))
+            return
+        if parsed.path in ("/api/purchases", "/api/v1/purchases"):
+            self._send_json({"items": self.core.purchases()})
+            return
         barcode = barcode_lookup_path(parsed.path)
         if barcode is not None:
             self._send_json(self.core.resolve_barcode(barcode))
@@ -473,6 +488,22 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if parsed.path in ("/api/barcodes/mappings", "/api/v1/barcodes/mappings"):
                 self._send_json(self.core.save_barcode_mapping(body), HTTPStatus.CREATED)
                 return
+            if parsed.path in ("/api/receipts", "/api/v1/receipts"):
+                self._send_json(self.core.upload_receipt(body), HTTPStatus.CREATED)
+                return
+            receipt_action = receipt_action_path(parsed.path)
+            if receipt_action is not None:
+                receipt_id, action = receipt_action
+                if action == "extract":
+                    self._send_json(self.core.extract_receipt(receipt_id))
+                    return
+                if action == "commit":
+                    result = self.core.commit_receipt(receipt_id, body)
+                    self._send_json({**result, "lots": [lot_to_item(row) for row in result["lots"]]}, HTTPStatus.CREATED)
+                    return
+                if action == "reject":
+                    self._send_json(self.core.reject_receipt(receipt_id, reason=str(body.get("reason") or "rejected")))
+                    return
             barcode_add = barcode_add_lot_path(parsed.path)
             if barcode_add is not None:
                 result = self.core.add_lot_from_barcode(barcode_add, body)
@@ -582,6 +613,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             body = self._read_json()
+            receipt_id = receipt_review_path(parsed.path)
+            if receipt_id is not None:
+                self._send_json(self.core.update_receipt_review(receipt_id, body))
+                return
             shopping_id = shopping_item_path(parsed.path)
             if shopping_id is not None:
                 result = self.core.update_shopping_item(shopping_id, body)
@@ -775,6 +810,50 @@ def recipe_shopping_path(path: str) -> str | None:
         if path.startswith(prefix) and path.endswith("/shopping"):
             return unquote(path.removeprefix(prefix).removesuffix("/shopping"))
     return None
+
+
+def receipt_review_path(path: str) -> str | None:
+    for prefix in ("/api/receipts/", "/api/v1/receipts/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        parts = suffix.split("/", 1)
+        if len(parts) == 2 and parts[0] and parts[1] == "review":
+            return unquote(parts[0])
+    return None
+
+
+def receipt_action_path(path: str) -> tuple[str, str] | None:
+    for prefix in ("/api/receipts/", "/api/v1/receipts/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        parts = suffix.split("/", 1)
+        if len(parts) != 2 or not parts[0] or parts[1] not in {"extract", "commit", "reject"}:
+            return None
+        return unquote(parts[0]), parts[1]
+    return None
+
+
+def purchase_path(path: str) -> str | None:
+    for prefix in ("/api/purchases/", "/api/v1/purchases/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix:
+            return None
+        return unquote(suffix)
+    return None
+
+
+def product_prices_path(path: str) -> str | None:
+    prefix = "/api/v1/products/"
+    if not path.startswith(prefix) or not path.endswith("/prices"):
+        return None
+    suffix = path.removeprefix(prefix).removesuffix("/prices")
+    if not suffix or "/" in suffix:
+        return None
+    return unquote(suffix)
 
 
 def barcode_lookup_path(path: str) -> str | None:

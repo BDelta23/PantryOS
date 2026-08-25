@@ -2,6 +2,7 @@ const state = {
   data: null,
   filter: "",
   activeCookingSession: null,
+  activeReceipt: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -75,6 +76,19 @@ function render() {
   renderMeals(data.meals_with_two_or_fewer_missing);
   renderInventory(data.items);
   renderRecipes(data.recipes, data.summary.possible_meals);
+  renderReceiptReview();
+}
+
+function renderReceiptReview() {
+  const form = $("#receiptReviewForm");
+  const textarea = form.elements.review_json;
+  if (!state.activeReceipt) {
+    form.hidden = true;
+    textarea.value = "";
+    return;
+  }
+  form.hidden = false;
+  textarea.value = JSON.stringify(state.activeReceipt.review, null, 2);
 }
 
 function renderCooking(recipe) {
@@ -352,6 +366,46 @@ async function handleRecipeSubmit(event) {
   await refresh();
 }
 
+async function handleReceiptSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = compactPayload(formData(form));
+  const uploaded = await api("/api/receipts", {
+    method: "POST",
+    body: JSON.stringify({ filename: "browser-receipt.txt", mime_type: "text/plain", text: payload.text }),
+  });
+  const extracted = await api(`/api/receipts/${encodeURIComponent(uploaded.receipt.id)}/extract`, { method: "POST" });
+  state.activeReceipt = { id: uploaded.receipt.id, review: extracted.review };
+  showToast(`${extracted.review.items.length} receipt item${extracted.review.items.length === 1 ? "" : "s"} extracted`);
+  renderReceiptReview();
+}
+
+async function handleReceiptReviewSubmit(event) {
+  event.preventDefault();
+  if (!state.activeReceipt) return;
+  const review = JSON.parse(event.currentTarget.elements.review_json.value);
+  await api(`/api/receipts/${encodeURIComponent(state.activeReceipt.id)}/review`, {
+    method: "PATCH",
+    body: JSON.stringify(review),
+  });
+  const committed = await api(`/api/receipts/${encodeURIComponent(state.activeReceipt.id)}/commit`, { method: "POST" });
+  state.activeReceipt = null;
+  $("#receiptForm").reset();
+  showToast(`${committed.lots.length} receipt item${committed.lots.length === 1 ? "" : "s"} added`);
+  await refresh();
+}
+
+async function handleRejectReceipt() {
+  if (!state.activeReceipt) return;
+  await api(`/api/receipts/${encodeURIComponent(state.activeReceipt.id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason: "browser reject" }),
+  });
+  state.activeReceipt = null;
+  showToast("Receipt rejected");
+  renderReceiptReview();
+}
+
 async function handlePurchaseSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -521,6 +575,8 @@ async function main() {
   $("#barcodeForm").addEventListener("submit", (event) => handleBarcodeSubmit(event).catch(handleActionError));
   $("#recipeForm").addEventListener("submit", (event) => handleRecipeSubmit(event).catch(handleActionError));
   $("#purchaseForm").addEventListener("submit", (event) => handlePurchaseSubmit(event).catch(handleActionError));
+  $("#receiptForm").addEventListener("submit", (event) => handleReceiptSubmit(event).catch(handleActionError));
+  $("#receiptReviewForm").addEventListener("submit", (event) => handleReceiptReviewSubmit(event).catch(handleActionError));
   $("#cookingForm").addEventListener("submit", (event) => handleCookingSubmit(event).catch(handleActionError));
   $("#inventoryFilter").addEventListener("input", (event) => {
     state.filter = event.target.value;
@@ -538,12 +594,14 @@ async function main() {
   });
   $("#resetButton").addEventListener("click", async () => {
     state.activeCookingSession = null;
+    state.activeReceipt = null;
     await api("/api/seed?reset=true", { method: "POST" });
     showToast("Demo data reset");
     await refresh();
   });
   $("#startCookingButton").addEventListener("click", () => handleStartCooking().catch(handleActionError));
   $("#cancelCookingButton").addEventListener("click", () => handleCancelCooking().catch(handleActionError));
+  $("#rejectReceiptButton").addEventListener("click", () => handleRejectReceipt().catch(handleActionError));
   document.addEventListener("click", (event) => handlePageClick(event).catch(handleActionError));
 
   await refresh();

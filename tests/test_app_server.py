@@ -145,7 +145,7 @@ def test_http_api_serves_state_and_accepts_items() -> None:
     assert created["item"]["name"] == "Heavy Cream"
     assert any(item["name"] == "Heavy Cream" for item in state["items"])
     assert state["summary"]["total_items"] == 8
-    assert instance["schema_version"] == 3
+    assert instance["schema_version"] == 4
     assert instance["state_revision"] >= 1
 
 
@@ -330,6 +330,71 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     assert any(item["name"] == "Browser Rice Bowl Leftovers" for item in state["leftovers"])
 
 
+
+def test_receipt_api_review_commit_and_price_history() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            uploaded = request_json(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={
+                    "filename": "receipt.txt",
+                    "mime_type": "text/plain",
+                    "text": "Store: API Market\nDate: 2026-08-24\nAPI Apples,3,count,6.00,555000111222\nTotal: 6.00\n",
+                },
+            )
+            extracted = request_json(
+                f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/extract",
+                method="POST",
+                token="test-token",
+            )
+            review_snapshot = request_json(f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/review", token="test-token")
+            review = review_snapshot["review"]
+            review["location"] = "Kitchen/Fruit Bowl"
+            updated = request_json(
+                f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/review",
+                method="PATCH",
+                token="test-token",
+                payload=review,
+            )
+            committed = request_json(
+                f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/commit",
+                method="POST",
+                token="test-token",
+            )
+            duplicate = request_json(
+                f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/commit",
+                method="POST",
+                token="test-token",
+            )
+            purchases = request_json(f"{base}/api/v1/purchases", token="test-token")
+            purchase_detail = request_json(f"{base}/api/v1/purchases/{committed['purchase']['id']}", token="test-token")
+            product_id = purchase_detail["lines"][0]["product_id"]
+            prices = request_json(f"{base}/api/v1/products/{product_id}/prices", token="test-token")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert uploaded["receipt"]["status"] == "uploaded"
+    assert "storage_path" not in uploaded["receipt"]
+    assert extracted["receipt"]["status"] == "review"
+    assert extracted["review"]["items"][0]["name"] == "API Apples"
+    assert updated["review"]["location"] == "Kitchen/Fruit Bowl"
+    assert committed["purchase"]["store"] == "API Market"
+    assert committed["lots"][0]["name"] == "API Apples"
+    assert committed["lots"][0]["location"] == "Kitchen/Fruit Bowl"
+    assert duplicate["duplicate"] is True
+    assert purchases["items"][0]["id"] == committed["purchase"]["id"]
+    assert purchase_detail["prices"][0]["unit_price"] == "2.00"
+    assert prices["product"]["name"] == "API Apples"
+    assert prices["prices"][0]["comparable_unit"] == "count"
 def test_static_browser_workflows_are_not_stubbed() -> None:
     app_js = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (Path(__file__).resolve().parents[1] / "app" / "static" / "index.html").read_text(encoding="utf-8")

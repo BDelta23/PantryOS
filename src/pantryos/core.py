@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .errors import InsufficientInventoryError, NotFoundError, ValidationError
-from .units import convert, decimal_text, require_non_negative, require_positive, unit_code
+from .units import UNITS, convert, decimal_text, require_non_negative, require_positive, unit_code
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def utc_now() -> str:
@@ -142,6 +142,8 @@ class PantryCore:
                     "waste_metrics",
                     "location_value",
                     "barcode_mapping",
+                    "receipt_review",
+                    "price_history",
                 ],
             }
 
@@ -431,6 +433,231 @@ class PantryCore:
         self.migrate()
         with closing(self.connect()) as connection:
             return self._dashboard(connection)
+
+    def upload_receipt(self, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        mime_type = str(data.get("mime_type") or "text/plain").casefold().strip()
+        if mime_type not in {"text/plain", "text/csv"}:
+            raise ValidationError("Unsupported receipt type")
+        filename = Path(str(data.get("filename") or "receipt.txt")).name
+        if not filename or filename in {".", ".."}:
+            raise ValidationError("Receipt filename is required")
+        raw_text = str(data.get("text") or data.get("content") or "")
+        payload = raw_text.encode("utf-8")
+        if not payload:
+            raise ValidationError("Receipt content is required")
+        if len(payload) > 64_000:
+            raise ValidationError("Receipt upload exceeds 64000 bytes")
+        content_hash = hashlib.sha256(payload).hexdigest()
+        receipt_dir = self.db_path.parent / "receipts"
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        storage_path = receipt_dir / f"{content_hash}.txt"
+        storage_path.write_bytes(payload)
+        with self.transaction() as connection:
+            existing = connection.execute("SELECT * FROM receipt_uploads WHERE content_hash = ?", (content_hash,)).fetchone()
+            if existing is not None:
+                return {"receipt": self._receipt_snapshot(existing), "duplicate": True, "revision": int(self._metadata(connection, "state_revision"))}
+            receipt_id = new_id("receipt")
+            connection.execute(
+                """
+                INSERT INTO receipt_uploads(id, content_hash, original_filename, mime_type, storage_path)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (receipt_id, content_hash, filename, mime_type, str(storage_path)),
+            )
+            revision = self._append_event(
+                connection,
+                "receipt.uploaded",
+                source=source,
+                metadata={"receipt_id": receipt_id, "mime_type": mime_type, "size_bytes": len(payload)},
+            )
+            receipt = self._receipt_row(connection, receipt_id)
+        return {"receipt": self._receipt_snapshot(receipt), "duplicate": False, "revision": revision}
+
+    def extract_receipt(self, receipt_id: str, *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            receipt = self._receipt_row(connection, receipt_id)
+            if receipt["status"] == "committed":
+                return {
+                    "receipt": self._receipt_snapshot(receipt),
+                    "review": json.loads(receipt["review_json"] or "{}"),
+                    "revision": int(self._metadata(connection, "state_revision")),
+                }
+            if receipt["status"] == "rejected":
+                raise ValidationError("Rejected receipt cannot be extracted")
+            text = Path(receipt["storage_path"]).read_text(encoding="utf-8")
+            extracted = self._extract_receipt_text(text)
+            connection.execute(
+                """
+                UPDATE receipt_uploads
+                SET status = 'review', store = ?, purchased_at = ?, total = ?, currency = ?,
+                    extracted_json = ?, review_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    extracted.get("store"),
+                    extracted.get("purchased_at"),
+                    extracted.get("total"),
+                    extracted.get("currency", "USD"),
+                    json.dumps(extracted, sort_keys=True),
+                    json.dumps(extracted, sort_keys=True),
+                    utc_now(),
+                    receipt_id,
+                ),
+            )
+            revision = self._append_event(
+                connection,
+                "receipt.review_ready",
+                source=source,
+                metadata={"receipt_id": receipt_id, "line_count": len(extracted["items"])},
+            )
+            updated = self._receipt_row(connection, receipt_id)
+        return {"receipt": self._receipt_snapshot(updated), "review": extracted, "revision": revision}
+
+    def receipt_review(self, receipt_id: str) -> dict[str, Any]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            return self._receipt_snapshot(self._receipt_row(connection, receipt_id))
+
+    def update_receipt_review(self, receipt_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        self.migrate()
+        review = self._validate_receipt_review(data)
+        with self.transaction() as connection:
+            receipt = self._receipt_row(connection, receipt_id)
+            if receipt["status"] == "committed":
+                raise ValidationError("Committed receipt review cannot be changed")
+            if receipt["status"] == "rejected":
+                raise ValidationError("Rejected receipt review cannot be changed")
+            connection.execute(
+                """
+                UPDATE receipt_uploads
+                SET status = 'review', store = ?, purchased_at = ?, total = ?, currency = ?,
+                    review_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    review.get("store"),
+                    review.get("purchased_at"),
+                    review.get("total"),
+                    review.get("currency", "USD"),
+                    json.dumps(review, sort_keys=True),
+                    utc_now(),
+                    receipt_id,
+                ),
+            )
+            revision = self._append_event(connection, "receipt.review_updated", source="api", metadata={"receipt_id": receipt_id})
+            updated = self._receipt_row(connection, receipt_id)
+        return {"receipt": self._receipt_snapshot(updated), "review": review, "revision": revision}
+
+    def commit_receipt(self, receipt_id: str, data: dict[str, Any] | None = None, *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            receipt = self._receipt_row(connection, receipt_id)
+            if receipt["committed_purchase_id"]:
+                snapshot = self._purchase_snapshot(connection, receipt["committed_purchase_id"])
+                return {**snapshot, "receipt": self._receipt_snapshot(receipt), "duplicate": True, "revision": int(self._metadata(connection, "state_revision"))}
+            if receipt["status"] == "rejected":
+                raise ValidationError("Rejected receipt cannot be committed")
+            review_source = data.get("review") if data else None
+            if review_source is None:
+                review_source = json.loads(receipt["review_json"] or "{}")
+            review = self._validate_receipt_review(review_source)
+            purchase_id = new_id("purchase")
+            purchased_at = str(review.get("purchased_at") or date.today().isoformat())
+            currency = str(review.get("currency") or "USD")
+            total_text = None if review.get("total") in (None, "") else decimal_text(require_non_negative(review["total"], "total"))
+            connection.execute(
+                """
+                INSERT INTO purchases(id, store, purchased_at, total, currency, source, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (purchase_id, review.get("store"), purchased_at, total_text, currency, "receipt", f"receipt:{receipt_id}"),
+            )
+            purchase_lines: list[dict[str, Any]] = []
+            created_lots: list[dict[str, Any]] = []
+            for item in review["items"]:
+                unit = unit_code(str(item.get("unit") or "count"))
+                quantity = decimal_text(require_positive(item.get("quantity", "1")))
+                line_total_text = decimal_text(require_non_negative(item["total_cost"], "total_cost"))
+                product_id = self.ensure_product(connection, name=str(item["name"]), default_unit=unit, barcode=item.get("barcode"))
+                line_id = new_id("pline")
+                connection.execute(
+                    """
+                    INSERT INTO purchase_lines(
+                      id, purchase_id, product_id, display_name, quantity, unit, total_cost, currency
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (line_id, purchase_id, product_id, item["name"], quantity, unit, line_total_text, currency),
+                )
+                location_id = self.ensure_location_path(connection, str(item.get("location") or review.get("location") or "Unassigned"))
+                lot_id = self._insert_lot(
+                    connection,
+                    product_id,
+                    location_id,
+                    {
+                        "name": item["name"],
+                        "quantity": quantity,
+                        "unit": unit,
+                        "purchased": purchased_at,
+                        "expires": item.get("expires") or item.get("expires_at"),
+                        "estimated_cost": line_total_text,
+                        "notes": item.get("notes"),
+                    },
+                    purchase_line_id=line_id,
+                )
+                line = dict(connection.execute("SELECT * FROM purchase_lines WHERE id = ?", (line_id,)).fetchone())
+                self._record_price_history(connection, line, store=review.get("store"), purchased_at=purchased_at)
+                purchase_lines.append(line)
+                created_lots.append(self.get_lot(connection, lot_id))
+            connection.execute(
+                """
+                UPDATE receipt_uploads
+                SET status = 'committed', committed_purchase_id = ?, store = ?, purchased_at = ?,
+                    total = ?, currency = ?, review_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (purchase_id, review.get("store"), purchased_at, total_text, currency, json.dumps(review, sort_keys=True), utc_now(), receipt_id),
+            )
+            revision = self._append_event(
+                connection,
+                "receipt.committed",
+                source=source,
+                metadata={"receipt_id": receipt_id, "purchase_id": purchase_id, "line_count": len(purchase_lines)},
+            )
+            updated_receipt = self._receipt_row(connection, receipt_id)
+            purchase = dict(connection.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone())
+        return {"purchase": purchase, "lines": purchase_lines, "lots": created_lots, "receipt": self._receipt_snapshot(updated_receipt), "duplicate": False, "revision": revision}
+
+    def reject_receipt(self, receipt_id: str, *, reason: str = "rejected", source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            receipt = self._receipt_row(connection, receipt_id)
+            if receipt["status"] == "committed":
+                raise ValidationError("Committed receipt cannot be rejected")
+            connection.execute("UPDATE receipt_uploads SET status = 'rejected', updated_at = ? WHERE id = ?", (utc_now(), receipt_id))
+            revision = self._append_event(connection, "receipt.rejected", reason=reason, source=source, metadata={"receipt_id": receipt_id})
+            updated = self._receipt_row(connection, receipt_id)
+        return {"receipt": self._receipt_snapshot(updated), "revision": revision}
+
+    def purchases(self) -> list[dict[str, Any]]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            return [self._purchase_snapshot(connection, row["id"])["purchase"] for row in connection.execute("SELECT id FROM purchases ORDER BY purchased_at DESC, created_at DESC")]
+
+    def purchase(self, purchase_id: str) -> dict[str, Any]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            return self._purchase_snapshot(connection, purchase_id)
+
+    def product_prices(self, product_id: str) -> dict[str, Any]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            product = connection.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+            if product is None:
+                raise NotFoundError(f"Product not found: {product_id}")
+            rows = [dict(row) for row in connection.execute("SELECT * FROM price_history WHERE product_id = ? ORDER BY purchased_at DESC, created_at DESC", (product_id,))]
+        return {"product": dict(product), "prices": rows}
 
     def resolve_barcode(self, barcode: str) -> dict[str, Any]:
         self.migrate()
@@ -890,7 +1117,9 @@ class PantryCore:
                     "UPDATE shopping_demands SET checked = 1, status = 'completed', recalculated_at = ? WHERE id = ?",
                     (utc_now(), demand["id"]),
                 )
-                purchase_lines.append(dict(connection.execute("SELECT * FROM purchase_lines WHERE id = ?", (line_id,)).fetchone()))
+                line = dict(connection.execute("SELECT * FROM purchase_lines WHERE id = ?", (line_id,)).fetchone())
+                self._record_price_history(connection, line, store=data.get("store"), purchased_at=purchased_at)
+                purchase_lines.append(line)
                 created_lots.append(self.get_lot(connection, lot_id))
             revision = self._append_event(
                 connection,
@@ -1107,7 +1336,9 @@ class PantryCore:
         ).fetchone()
         if row is None:
             raise NotFoundError(f"Inventory lot not found: {lot_id}")
-        return dict(row)
+        lot = dict(row)
+        lot["location_path"] = self._location_paths(connection).get(lot["location_id"], lot["location_name"])
+        return lot
 
     def _insert_lot(
         self,
@@ -1252,6 +1483,192 @@ class PantryCore:
                 position,
             ),
         )
+
+    def _receipt_row(self, connection: sqlite3.Connection, receipt_id: str) -> sqlite3.Row:
+        row = connection.execute("SELECT * FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"Receipt not found: {receipt_id}")
+        return row
+
+    def _receipt_snapshot(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "content_hash": row["content_hash"],
+            "original_filename": row["original_filename"],
+            "mime_type": row["mime_type"],
+            "status": row["status"],
+            "store": row["store"],
+            "purchased_at": row["purchased_at"],
+            "total": row["total"],
+            "currency": row["currency"],
+            "review": json.loads(row["review_json"] or "{}"),
+            "committed_purchase_id": row["committed_purchase_id"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _extract_receipt_text(self, text: str) -> dict[str, Any]:
+        review: dict[str, Any] = {"store": None, "purchased_at": None, "total": None, "currency": "USD", "items": []}
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            key, separator, value = line.partition(":")
+            normalized_key = normalize_name(key)
+            if separator and normalized_key in {"store", "date", "purchased", "purchased at", "total", "currency"}:
+                value = value.strip()
+                if normalized_key == "store":
+                    review["store"] = value
+                elif normalized_key in {"date", "purchased", "purchased at"}:
+                    review["purchased_at"] = date.fromisoformat(value[:10]).isoformat()
+                elif normalized_key == "total":
+                    review["total"] = decimal_text(require_non_negative(value, "total"))
+                elif normalized_key == "currency":
+                    review["currency"] = value or "USD"
+                continue
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 4:
+                continue
+            item: dict[str, Any] = {
+                "name": parts[0],
+                "quantity": decimal_text(require_positive(parts[1])),
+                "unit": unit_code(parts[2]),
+                "total_cost": decimal_text(require_non_negative(parts[3], "total_cost")),
+            }
+            if len(parts) >= 5 and parts[4]:
+                item["barcode"] = parts[4]
+            review["items"].append(item)
+        return self._validate_receipt_review(review)
+
+    def _validate_receipt_review(self, data: Any) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            raise ValidationError("Receipt review must be an object")
+        items = data.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValidationError("Receipt review requires at least one item")
+        review: dict[str, Any] = {
+            "store": data.get("store"),
+            "purchased_at": date.fromisoformat(str(data.get("purchased_at") or date.today().isoformat())[:10]).isoformat(),
+            "currency": str(data.get("currency") or "USD"),
+            "location": data.get("location"),
+            "items": [],
+        }
+        if data.get("total") not in (None, ""):
+            review["total"] = decimal_text(require_non_negative(data["total"], "total"))
+        else:
+            total = sum(require_non_negative(item.get("total_cost", "0"), "total_cost") for item in items if isinstance(item, dict))
+            review["total"] = decimal_text(total)
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValidationError("Receipt review items must be objects")
+            name = str(item.get("name") or "").strip()
+            if not name:
+                raise ValidationError("Receipt item name is required")
+            normalized_item: dict[str, Any] = {
+                "name": name,
+                "quantity": decimal_text(require_positive(item.get("quantity", "1"))),
+                "unit": unit_code(str(item.get("unit") or "count")),
+                "total_cost": decimal_text(require_non_negative(item.get("total_cost", "0"), "total_cost")),
+            }
+            for key in ("barcode", "location", "expires", "expires_at", "notes"):
+                if item.get(key) not in (None, ""):
+                    normalized_item[key] = item[key]
+            review["items"].append(normalized_item)
+        return review
+
+    def _purchase_snapshot(self, connection: sqlite3.Connection, purchase_id: str) -> dict[str, Any]:
+        purchase = connection.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+        if purchase is None:
+            raise NotFoundError(f"Purchase not found: {purchase_id}")
+        lines = [dict(row) for row in connection.execute("SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY created_at, id", (purchase_id,))]
+        lots: list[dict[str, Any]] = []
+        for line in lines:
+            lots.extend(
+                self.get_lot(connection, row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM inventory_lots WHERE purchase_line_id = ? ORDER BY created_at, id",
+                    (line["id"],),
+                )
+            )
+        prices = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT ph.*
+                FROM price_history ph
+                JOIN purchase_lines pl ON pl.id = ph.purchase_line_id
+                WHERE pl.purchase_id = ?
+                ORDER BY ph.created_at, ph.id
+                """,
+                (purchase_id,),
+            )
+        ]
+        return {"purchase": dict(purchase), "lines": lines, "lots": lots, "prices": prices}
+
+    def _record_price_history(self, connection: sqlite3.Connection, line: dict[str, Any], *, store: Any, purchased_at: str) -> None:
+        if line.get("product_id") is None or line.get("total_cost") in (None, ""):
+            return
+        quantity = require_positive(line["quantity"])
+        unit = unit_code(str(line["unit"]))
+        total_cost = require_non_negative(line["total_cost"], "total_cost")
+        comparable_unit = self._comparable_unit(unit)
+        comparable_quantity = convert(quantity, unit, comparable_unit)
+        unit_price = total_cost / comparable_quantity
+        baseline = connection.execute(
+            "SELECT AVG(CAST(unit_price AS REAL)) FROM price_history WHERE product_id = ? AND comparable_unit = ?",
+            (line["product_id"], comparable_unit),
+        ).fetchone()[0]
+        baseline_text = None
+        anomaly_ratio = None
+        if baseline is None:
+            explanation = f"Baseline initialized at {self._money_text(unit_price)} per {comparable_unit}."
+        else:
+            baseline_decimal = Decimal(str(baseline))
+            baseline_text = self._money_text(baseline_decimal)
+            ratio = unit_price / baseline_decimal if baseline_decimal > 0 else Decimal("1")
+            anomaly_ratio = decimal_text(ratio.quantize(Decimal("0.01")))
+            if ratio >= Decimal("1.25"):
+                explanation = f"Price is {anomaly_ratio}x the prior baseline for compatible {comparable_unit} purchases."
+            elif ratio <= Decimal("0.75"):
+                explanation = f"Price is {anomaly_ratio}x the prior baseline for compatible {comparable_unit} purchases."
+            else:
+                explanation = f"Price is within the prior baseline for compatible {comparable_unit} purchases."
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO price_history(
+              id, purchase_line_id, product_id, store, purchased_at, quantity, unit,
+              total_cost, currency, comparable_quantity, comparable_unit, unit_price,
+              baseline_unit_price, anomaly_ratio, explanation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id("price"),
+                line["id"],
+                line["product_id"],
+                store,
+                purchased_at,
+                line["quantity"],
+                unit,
+                line["total_cost"],
+                line["currency"],
+                decimal_text(comparable_quantity),
+                comparable_unit,
+                self._money_text(unit_price),
+                baseline_text,
+                anomaly_ratio,
+                explanation,
+            ),
+        )
+
+    def _comparable_unit(self, unit: str) -> str:
+        dimension = UNITS[unit_code(unit)].dimension
+        if dimension == "mass":
+            return "oz"
+        if dimension == "volume":
+            return "fl oz"
+        if dimension == "count":
+            return "count"
+        return unit_code(unit)
 
     def _normalize_barcode(self, barcode: str) -> str:
         barcode_text = "".join(str(barcode).strip().split())

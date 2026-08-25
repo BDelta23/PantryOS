@@ -20,6 +20,7 @@ The local app covers the end-to-end loop that makes the product useful:
 - Compare recipes against current inventory.
 - Add missing recipe ingredients to the shopping list.
 - Check, uncheck, remove, and complete shopping purchases into inventory lots.
+- Upload structured receipt text, review extracted lines, commit purchases into lots, and inspect per-product price history.
 - Start cooking from tonight's planned meal, confirm lot allocations, complete cooking, and create leftovers.
 - Keep suggested purchases separate from the shopping list until explicitly promoted.
 - Persist state to `data/pantryos.sqlite3`, with one-time import support for legacy `data/pantryos.json`.
@@ -135,12 +136,21 @@ Current versioned endpoints:
 - `GET /api/v1/barcodes/{barcode}`
 - `GET /api/v1/locations/summary`
 - `GET /api/v1/waste/monthly`
+- `GET /api/v1/purchases`
+- `GET /api/v1/purchases/{id}`
+- `GET /api/v1/products/{id}/prices`
 - `POST /api/v1/inventory/lots`
 - `POST /api/v1/inventory/lots/{id}/consume`
 - `POST /api/v1/inventory/lots/{id}/move`
 - `POST /api/v1/inventory/lots/{id}/discard`
 - `POST /api/v1/barcodes/mappings`
 - `POST /api/v1/barcodes/{barcode}/add-lot`
+- `POST /api/v1/receipts`
+- `POST /api/v1/receipts/{id}/extract`
+- `GET /api/v1/receipts/{id}/review`
+- `PATCH /api/v1/receipts/{id}/review`
+- `POST /api/v1/receipts/{id}/commit`
+- `POST /api/v1/receipts/{id}/reject`
 - `POST /api/v1/recipes`
 - `POST /api/v1/recipes/{recipe_name}/shopping`
 - `POST /api/v1/meal-plan`
@@ -169,6 +179,14 @@ The browser still uses these temporary compatibility routes while its session/au
 - `GET /api/barcodes/{barcode}`
 - `POST /api/barcodes/mappings`
 - `POST /api/barcodes/{barcode}/add-lot`
+- `POST /api/receipts`
+- `POST /api/receipts/{id}/extract`
+- `GET /api/receipts/{id}/review`
+- `PATCH /api/receipts/{id}/review`
+- `POST /api/receipts/{id}/commit`
+- `POST /api/receipts/{id}/reject`
+- `GET /api/purchases`
+- `GET /api/purchases/{id}`
 - `POST /api/recipes`
 - `POST /api/recipes/{recipe_name}/shopping`
 - `POST /api/shopping`

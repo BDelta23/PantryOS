@@ -66,7 +66,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
         refreshed = await client.async_refresh()
 
-        assert instance["schema_version"] == 3
+        assert instance["schema_version"] == 4
         initial_total = initial["summary"]["total_items"]
         assert created["item"]["name"] == "HA Butter"
         assert consumed["allocations"][0]["quantity"] == "0.25"

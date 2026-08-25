@@ -27,7 +27,7 @@ def test_fresh_database_migrates_and_has_instance_metadata() -> None:
         core = make_core(directory)
         instance = core.instance()
 
-        assert instance["schema_version"] == 3
+        assert instance["schema_version"] == 4
         assert instance["state_revision"] == 0
         assert instance["instance_id"].startswith("inst_")
         core.integrity_check()
@@ -358,6 +358,83 @@ def test_barcode_mapping_resolves_adds_lot_and_persists() -> None:
         else:
             raise AssertionError("duplicate barcode mapping should fail")
 
+
+def test_receipt_review_commit_is_idempotent_and_records_price_history() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        receipt_text = """Store: Receipt Market
+Date: 2026-08-24
+Receipt Milk,1,gallon,3.99
+Receipt Eggs,12,count,4.50,12345
+Total: 8.49
+"""
+
+        uploaded = core.upload_receipt({"filename": "../receipt.txt", "mime_type": "text/plain", "text": receipt_text})
+        assert uploaded["receipt"]["status"] == "uploaded"
+        assert uploaded["receipt"]["original_filename"] == "receipt.txt"
+        assert "storage_path" not in uploaded["receipt"]
+        with closing(core.connect()) as connection:
+            storage_path = Path(connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (uploaded["receipt"]["id"],)).fetchone()[0])
+        assert storage_path.exists()
+        assert storage_path.parent == Path(directory) / "receipts"
+        assert core.dashboard()["summary"]["active_lot_count"] == 0
+
+        extracted = core.extract_receipt(uploaded["receipt"]["id"])
+        review = extracted["review"]
+        assert extracted["receipt"]["status"] == "review"
+        assert review["store"] == "Receipt Market"
+        assert len(review["items"]) == 2
+        assert core.dashboard()["summary"]["active_lot_count"] == 0
+
+        review["location"] = "Kitchen/Refrigerator"
+        updated = core.update_receipt_review(uploaded["receipt"]["id"], review)
+        committed = core.commit_receipt(uploaded["receipt"]["id"])
+        duplicate = core.commit_receipt(uploaded["receipt"]["id"])
+        extracted_again = core.extract_receipt(uploaded["receipt"]["id"])
+
+        assert updated["receipt"]["status"] == "review"
+        assert committed["duplicate"] is False
+        assert committed["receipt"]["status"] == "committed"
+        assert committed["purchase"]["source"] == "receipt"
+        assert [lot["product_name"] for lot in committed["lots"]] == ["Receipt Milk", "Receipt Eggs"]
+        assert {lot["location_path"] for lot in committed["lots"]} == {"Kitchen/Refrigerator"}
+        assert duplicate["duplicate"] is True
+        assert len(duplicate["lines"]) == 2
+        assert extracted_again["receipt"]["status"] == "committed"
+        assert count_rows(core, "purchases") == 1
+        assert count_rows(core, "inventory_lots") == 2
+        assert count_rows(core, "price_history") == 2
+
+        purchase = core.purchase(committed["purchase"]["id"])
+        milk_line = next(line for line in purchase["lines"] if line["display_name"] == "Receipt Milk")
+        eggs_line = next(line for line in purchase["lines"] if line["display_name"] == "Receipt Eggs")
+        milk_prices = core.product_prices(milk_line["product_id"])["prices"]
+        eggs_prices = core.product_prices(eggs_line["product_id"])["prices"]
+        assert milk_prices[0]["comparable_unit"] == "fl oz"
+        assert Decimal(milk_prices[0]["comparable_quantity"]) == Decimal("128")
+        assert milk_prices[0]["unit_price"] == "0.03"
+        assert "Baseline initialized" in milk_prices[0]["explanation"]
+        assert eggs_prices[0]["comparable_unit"] == "count"
+        assert eggs_prices[0]["unit_price"] == "0.38"
+        assert core.resolve_barcode("12345")["matched"] is True
+
+
+def test_receipt_upload_rejects_unsupported_type_and_large_text() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        try:
+            core.upload_receipt({"filename": "receipt.png", "mime_type": "image/png", "text": "not supported"})
+        except ValidationError as exc:
+            assert "Unsupported receipt type" in str(exc)
+        else:
+            raise AssertionError("image receipt upload should fail until OCR exists")
+
+        try:
+            core.upload_receipt({"filename": "large.txt", "mime_type": "text/plain", "text": "x" * 64001})
+        except ValidationError as exc:
+            assert "exceeds 64000 bytes" in str(exc)
+        else:
+            raise AssertionError("oversized receipt upload should fail")
 def test_discard_records_monthly_waste_and_location_values() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

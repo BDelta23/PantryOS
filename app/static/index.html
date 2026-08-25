@@ -133,6 +133,21 @@
           </section>
 
           <section class="tool-panel">
+            <h2>Receipt Review</h2>
+            <form id="receiptForm" class="form-grid">
+              <label>Receipt text<textarea name="text" required placeholder="Store: Market&#10;Date: 2026-08-25&#10;Milk,1,gallon,3.99&#10;Eggs,12,count,4.50&#10;Total: 8.49"></textarea></label>
+              <button type="submit">Extract Receipt</button>
+            </form>
+            <form id="receiptReviewForm" class="form-grid split-tool" hidden>
+              <label>Review JSON<textarea name="review_json" required></textarea></label>
+              <div class="row">
+                <button type="submit">Commit Receipt</button>
+                <button id="rejectReceiptButton" class="quiet" type="button">Reject</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="tool-panel">
             <h2>Add Recipe</h2>
             <form id="recipeForm" class="form-grid">
               <label>Name<input name="name" required placeholder="Chicken Alfredo" /></label>
