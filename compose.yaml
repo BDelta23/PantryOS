@@ -1,0 +1,13 @@
+services:
+  pantryos:
+    build:
+      context: .
+    container_name: pantryos
+    ports:
+      - "${PANTRYOS_PORT:-8765}:8765"
+    volumes:
+      - pantryos-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  pantryos-data:

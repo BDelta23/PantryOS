@@ -1,0 +1,21 @@
+{
+  "package": "PantryOS Codex Handoff",
+  "generated_at": "2026-08-25",
+  "baseline_version": "0.1.0",
+  "source_archive": "PantryOS.zip",
+  "source_archive_sha256": "06a0979f982d734b6ff1f7cd8aa95cb2525c9bfb6b98397bd9477be9aade6896",
+  "baseline_checks": {
+    "dependency_free_tests": "11 passed",
+    "python_compileall": "passed",
+    "javascript_syntax": "passed",
+    "docker_compose": "not run; docker unavailable",
+    "json_concurrency": "lost update reproduced"
+  },
+  "entrypoints": {
+    "handoff": "HANDOFF_README.md",
+    "repository_instructions": "AGENTS.md",
+    "completion_goal": "codex/FULL_COMPLETION_GOAL.md",
+    "review_goal": "codex/FULL_REVIEW_GOAL.md",
+    "acceptance_criteria": "docs/handoff/08_ACCEPTANCE_CRITERIA.md"
+  }
+}

@@ -1,0 +1,18 @@
+PantryOS baseline verification — 2026-08-25
+
+$ python scripts/run_tests.py
+11 tests passed
+
+$ python -m compileall -q app custom_components/pantryos scripts tests
+PASS
+
+$ node --check app/static/app.js
+PASS
+
+$ docker compose config
+NOT RUN — docker executable was not installed in the inspection environment
+
+$ python docs/handoff/evidence/json_race_reproducer.py
+errors: []
+items: ['Milk']
+Lost update reproduced: both successful writes were not preserved

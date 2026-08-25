@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PantryOS</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Kitchen</p>
+        <h1>PantryOS</h1>
+      </div>
+      <div class="actions">
+        <button id="seedButton" type="button">Seed Demo</button>
+        <button id="resetButton" type="button">Reset Demo</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="status-grid" aria-label="Kitchen dashboard">
+        <article class="panel tonight-panel">
+          <div class="panel-heading">
+            <h2>Tonight</h2>
+            <span id="tonightTime" class="metric"></span>
+          </div>
+          <p id="tonightMeal" class="primary-line">No meal planned</p>
+          <p id="tonightDetails" class="muted">Plan a meal from a recipe below.</p>
+          <button id="startCookingButton" type="button">Start Cooking</button>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Use Soon</h2>
+            <span id="expiringCount" class="metric">0</span>
+          </div>
+          <ul id="useSoonList" class="stack-list"></ul>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Shopping</h2>
+            <span id="shoppingCount" class="metric">0</span>
+          </div>
+          <ul id="shoppingList" class="stack-list"></ul>
+          <button id="promoteButton" type="button">Add Suggestions</button>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Quick Meals</h2>
+            <span id="mealCount" class="metric">0</span>
+          </div>
+          <ul id="mealList" class="stack-list"></ul>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <div class="workspace-main">
+          <section class="section-band">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Inventory</p>
+                <h2>Food in the House</h2>
+              </div>
+              <input id="inventoryFilter" type="search" placeholder="Filter inventory" />
+            </div>
+            <div id="inventoryList" class="inventory-list"></div>
+          </section>
+
+          <section class="section-band">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Recipes</p>
+                <h2>What Can I Make?</h2>
+              </div>
+            </div>
+            <div id="recipeList" class="recipe-list"></div>
+          </section>
+        </div>
+
+        <aside class="side-rail" aria-label="Add food and recipes">
+          <section class="tool-panel">
+            <h2>Add Food</h2>
+            <form id="itemForm" class="form-grid">
+              <label>Name<input name="name" required placeholder="Chicken Breast" /></label>
+              <div class="row">
+                <label>Qty<input name="quantity" required inputmode="decimal" placeholder="1" /></label>
+                <label>Unit<input name="unit" placeholder="lb" /></label>
+              </div>
+              <label>Location<input name="location" placeholder="Kitchen/Refrigerator" /></label>
+              <div class="row">
+                <label>Expires<input name="expires" type="date" /></label>
+                <label>Min<input name="minimum_stock" inputmode="decimal" placeholder="0" /></label>
+              </div>
+              <label>Cost<input name="estimated_cost" inputmode="decimal" placeholder="3.99" /></label>
+              <label class="checkline"><input name="leftover" type="checkbox" /> Leftover</label>
+              <button type="submit">Add Food</button>
+            </form>
+          </section>
+
+          <section class="tool-panel">
+            <h2>Add Recipe</h2>
+            <form id="recipeForm" class="form-grid">
+              <label>Name<input name="name" required placeholder="Chicken Alfredo" /></label>
+              <label>Minutes<input name="prep_minutes" inputmode="numeric" placeholder="25" /></label>
+              <label>Ingredients<textarea name="ingredients" required placeholder="Chicken Breast,1,lb&#10;Pasta,16,oz"></textarea></label>
+              <button type="submit">Add Recipe</button>
+            </form>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "domain": "pantryos",
+  "name": "PantryOS",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/example/pantryos",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

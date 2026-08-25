@@ -1,0 +1,127 @@
+add_item:
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+    quantity:
+      required: true
+      selector:
+        number:
+          mode: box
+    unit:
+      selector:
+        text:
+    location:
+      selector:
+        text:
+    purchased:
+      selector:
+        date:
+    expires:
+      selector:
+        date:
+    opened:
+      selector:
+        boolean:
+    minimum_stock:
+      selector:
+        number:
+          mode: box
+    barcode:
+      selector:
+        text:
+    estimated_cost:
+      selector:
+        number:
+          mode: box
+    tags:
+      selector:
+        object:
+    notes:
+      selector:
+        text:
+delete_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+consume_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+    quantity:
+      required: true
+      selector:
+        number:
+          mode: box
+move_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+    location:
+      required: true
+      selector:
+        text:
+add_recipe:
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+    prep_minutes:
+      selector:
+        number:
+          mode: box
+    ingredients:
+      required: true
+      selector:
+        object:
+    instructions:
+      selector:
+        text:
+          multiline: true
+    tags:
+      selector:
+        object:
+plan_meal:
+  fields:
+    day:
+      required: true
+      selector:
+        text:
+    recipe_name:
+      required: true
+      selector:
+        text:
+add_shopping_item:
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+    quantity:
+      required: true
+      selector:
+        number:
+          mode: box
+    unit:
+      selector:
+        text:
+    source:
+      selector:
+        text:
+add_missing_to_shopping_list:
+  fields:
+    recipe_name:
+      required: true
+      selector:
+        text:
+promote_suggested_purchases:
+  fields: {}
+
