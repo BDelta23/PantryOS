@@ -25,6 +25,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pantryos.core import PantryCore, normalize_name  # noqa: E402
+from pantryos.openapi import openapi_document  # noqa: E402
 from pantryos.errors import PantryOSError  # noqa: E402
 from pantryos.units import convert, decimal_text, require_non_negative, unit_code  # noqa: E402
 
@@ -427,6 +428,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if not self._authorize(parsed.path):
+            return
+        if parsed.path == "/api/v1/openapi.json":
+            self._send_json(openapi_document())
             return
         if parsed.path == "/api/v1/events":
             self._send_event_stream(parsed)
