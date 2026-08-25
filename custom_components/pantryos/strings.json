@@ -3,8 +3,16 @@
     "step": {
       "user": {
         "title": "Set up PantryOS",
-        "description": "Create a local PantryOS inventory store in Home Assistant."
+        "description": "Connect Home Assistant to a PantryOS Core API.",
+        "data": {
+          "base_url": "PantryOS Core URL",
+          "api_token": "API token"
+        }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to PantryOS Core.",
+      "invalid_auth": "The PantryOS API token was rejected."
     }
   },
   "entity": {

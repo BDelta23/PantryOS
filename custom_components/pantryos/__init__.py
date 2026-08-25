@@ -8,19 +8,22 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, PLATFORMS
-from .store import PantryStore
+from .api_client import PantryAPIClient, PantryAPIError
+from .const import CONF_API_TOKEN, CONF_BASE_URL, DOMAIN, PLATFORMS
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PantryOS from a config entry."""
-    pantry = PantryStore(hass)
-    await pantry.async_load()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = pantry
+    pantry = PantryAPIClient(entry.data[CONF_BASE_URL], entry.data[CONF_API_TOKEN])
+    try:
+        await pantry.async_refresh()
+    except PantryAPIError as exc:
+        raise ConfigEntryNotReady(str(exc)) from exc
 
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = pantry
     _register_services(hass, pantry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -37,71 +40,86 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unloaded
 
 
-def _register_services(hass: HomeAssistant, pantry: PantryStore) -> None:
+def _register_services(hass: HomeAssistant, pantry: PantryAPIClient) -> None:
     if hass.services.has_service(DOMAIN, "add_item"):
         return
 
     async def add_item(call: ServiceCall) -> None:
         try:
-            pantry.manager.add_item(dict(call.data))
-            await _save_and_refresh(hass, pantry)
-        except (KeyError, ValueError) as exc:
+            await pantry.async_add_item(dict(call.data))
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def consume_item(call: ServiceCall) -> None:
         try:
-            pantry.manager.consume_item(str(call.data["item_id"]), Decimal(str(call.data["quantity"])))
-            await _save_and_refresh(hass, pantry)
-        except (KeyError, ValueError) as exc:
+            await pantry.async_consume_item(
+                str(call.data["item_id"]),
+                str(call.data["quantity"]),
+                reason="Home Assistant consume_item service",
+            )
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def delete_item(call: ServiceCall) -> None:
         try:
-            pantry.manager.delete_item(str(call.data["item_id"]))
-            await _save_and_refresh(hass, pantry)
-        except KeyError as exc:
+            await pantry.async_discard_item(
+                str(call.data["item_id"]),
+                reason="Home Assistant delete_item service",
+            )
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def move_item(call: ServiceCall) -> None:
         try:
-            pantry.manager.move_item(str(call.data["item_id"]), str(call.data["location"]))
-            await _save_and_refresh(hass, pantry)
-        except KeyError as exc:
+            await pantry.async_move_item(str(call.data["item_id"]), str(call.data["location"]))
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def add_recipe(call: ServiceCall) -> None:
         try:
-            pantry.manager.add_recipe(dict(call.data))
-            await _save_and_refresh(hass, pantry)
-        except ValueError as exc:
+            await pantry.async_add_recipe(dict(call.data))
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def plan_meal(call: ServiceCall) -> None:
         try:
-            pantry.manager.plan_meal(str(call.data["day"]), str(call.data["recipe_name"]))
-            await _save_and_refresh(hass, pantry)
-        except KeyError as exc:
+            await pantry.async_plan_meal(str(call.data["day"]), str(call.data["recipe_name"]))
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def add_shopping_item(call: ServiceCall) -> None:
-        pantry.manager.add_shopping_item(
-            str(call.data["name"]),
-            Decimal(str(call.data["quantity"])),
-            str(call.data.get("unit") or "count"),
-            source=str(call.data.get("source") or "manual"),
-        )
-        await _save_and_refresh(hass, pantry)
+        try:
+            await pantry.async_add_shopping_item(
+                {
+                    "name": str(call.data["name"]),
+                    "quantity": str(call.data["quantity"]),
+                    "unit": str(call.data.get("unit") or "count"),
+                    "source": str(call.data.get("source") or "manual"),
+                }
+            )
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
+            raise HomeAssistantError(str(exc)) from exc
 
     async def add_missing_to_shopping_list(call: ServiceCall) -> None:
         try:
-            pantry.manager.add_missing_to_shopping_list(str(call.data["recipe_name"]))
-            await _save_and_refresh(hass, pantry)
-        except KeyError as exc:
+            await pantry.async_add_missing_to_shopping_list(str(call.data["recipe_name"]))
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
     async def promote_suggested_purchases(call: ServiceCall) -> None:
-        pantry.manager.promote_suggested_purchases()
-        await _save_and_refresh(hass, pantry)
+        try:
+            await pantry.async_promote_suggested_purchases()
+            await _refresh_entities(hass, pantry)
+        except PantryAPIError as exc:
+            raise HomeAssistantError(str(exc)) from exc
 
     registrations = {
         "add_item": (add_item, ADD_ITEM_SCHEMA),
@@ -118,8 +136,8 @@ def _register_services(hass: HomeAssistant, pantry: PantryStore) -> None:
         hass.services.async_register(DOMAIN, name, handler, schema=schema)
 
 
-async def _save_and_refresh(hass: HomeAssistant, pantry: PantryStore) -> None:
-    await pantry.async_save()
+async def _refresh_entities(hass: HomeAssistant, pantry: PantryAPIClient) -> None:
+    await pantry.async_refresh()
     hass.bus.async_fire(f"{DOMAIN}_updated")
 
 

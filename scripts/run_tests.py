@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 TEST_MODULES = (
     "tests.test_inventory",
     "tests.test_app_server",
+    "tests.test_api_client",
     "tests.core.test_sqlite_core",
 )
 

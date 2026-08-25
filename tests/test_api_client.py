@@ -1,0 +1,93 @@
+import asyncio
+import os
+import sys
+import threading
+from contextlib import contextmanager
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+_SERVER_PATH = Path(__file__).resolve().parents[1] / "app" / "server.py"
+_SPEC = spec_from_file_location("pantryos_server_for_client_tests", _SERVER_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+server_module = module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = server_module
+_SPEC.loader.exec_module(server_module)
+
+_CLIENT_PATH = Path(__file__).resolve().parents[1] / "custom_components" / "pantryos" / "api_client.py"
+_CLIENT_SPEC = spec_from_file_location("pantryos_api_client", _CLIENT_PATH)
+assert _CLIENT_SPEC is not None and _CLIENT_SPEC.loader is not None
+client_module = module_from_spec(_CLIENT_SPEC)
+sys.modules[_CLIENT_SPEC.name] = client_module
+_CLIENT_SPEC.loader.exec_module(client_module)
+PantryAPIAuthError = client_module.PantryAPIAuthError
+PantryAPIClient = client_module.PantryAPIClient
+
+
+@contextmanager
+def api_token(value: str):
+    original = os.environ.get("PANTRYOS_API_TOKEN")
+    os.environ["PANTRYOS_API_TOKEN"] = value
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("PANTRYOS_API_TOKEN", None)
+        else:
+            os.environ["PANTRYOS_API_TOKEN"] = original
+
+
+@contextmanager
+def running_server():
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{httpd.server_port}"
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+
+def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "test-token")
+
+        instance = await client.async_instance()
+        initial = await client.async_refresh()
+        created = await client.async_add_item(
+            {"name": "HA Butter", "quantity": "1", "unit": "lb", "location": "Kitchen/Refrigerator"}
+        )
+        consumed = await client.async_consume_item(created["item"]["id"], "0.25", reason="client test")
+        shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
+        refreshed = await client.async_refresh()
+
+        assert instance["schema_version"] == 1
+        initial_total = initial["summary"]["total_items"]
+        assert created["item"]["name"] == "HA Butter"
+        assert consumed["allocations"][0]["quantity"] == "0.25"
+        assert shopping["item"]["name"] == "Oats"
+        assert refreshed["summary"]["total_items"] == initial_total + 1
+        assert client.available is True
+        assert client.summary()["total_items"] == initial_total + 1
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))
+
+
+def test_api_client_maps_auth_failures() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "wrong-token")
+        try:
+            await client.async_instance()
+        except PantryAPIAuthError as exc:
+            assert exc.status == 401
+            assert exc.code == "unauthorized"
+            return
+        raise AssertionError("Expected an auth failure")
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))

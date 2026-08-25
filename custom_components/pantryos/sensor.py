@@ -12,7 +12,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .store import PantryStore
+from .api_client import PantryAPIClient, PantryAPIError
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,7 +59,7 @@ SENSORS: tuple[PantrySensorDescription, ...] = (
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up PantryOS sensor entities."""
-    pantry: PantryStore = hass.data[DOMAIN][entry.entry_id]
+    pantry: PantryAPIClient = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(PantrySensor(pantry, description, entry.entry_id) for description in SENSORS)
 
 
@@ -69,7 +69,7 @@ class PantrySensor(SensorEntity):
     entity_description: PantrySensorDescription
     _attr_has_entity_name = True
 
-    def __init__(self, pantry: PantryStore, description: PantrySensorDescription, entry_id: str) -> None:
+    def __init__(self, pantry: PantryAPIClient, description: PantrySensorDescription, entry_id: str) -> None:
         self._pantry = pantry
         self.entity_description = description
         self._attr_unique_id = f"{entry_id}_{description.key}"
@@ -83,15 +83,25 @@ class PantrySensor(SensorEntity):
             self._remove_listener()
             self._remove_listener = None
 
+    async def async_update(self) -> None:
+        try:
+            await self._pantry.async_refresh()
+        except PantryAPIError:
+            return
+
+    @property
+    def available(self) -> bool:
+        return self._pantry.available
+
     @property
     def native_value(self) -> Any:
-        return self.entity_description.value_fn(self._pantry.manager.summary())
+        return self.entity_description.value_fn(self._pantry.summary())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         if self.entity_description.attributes_fn is None:
             return None
-        return self.entity_description.attributes_fn(self._pantry.manager.summary())
+        return self.entity_description.attributes_fn(self._pantry.summary())
 
     @callback
     def _handle_update(self, event: Any) -> None:

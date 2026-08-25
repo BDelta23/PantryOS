@@ -73,7 +73,7 @@ Copy `custom_components/pantryos` into your Home Assistant config directory:
 <config>/custom_components/pantryos
 ```
 
-Restart Home Assistant, then go to **Settings > Devices & services > Add integration** and search for `PantryOS`.
+Restart Home Assistant, then go to **Settings > Devices & services > Add integration** and search for `PantryOS`. Enter the PantryOS Core URL, for example `http://127.0.0.1:8765`, and the same `PANTRYOS_API_TOKEN` used by the Core server.
 
 ### Main Entities
 
@@ -143,7 +143,7 @@ The browser still uses these temporary compatibility routes while its session/au
 
 ## Development
 
-The pure inventory engine lives in `custom_components/pantryos/inventory.py` and is covered by tests in `tests/`.
+The authoritative inventory engine lives in `src/pantryos` and is exposed through the local Core API. The older pure inventory engine in `custom_components/pantryos/inventory.py` is retained temporarily as baseline coverage for the original proof of concept.
 
 Run tests when `pytest` is installed:
 

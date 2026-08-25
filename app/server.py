@@ -464,6 +464,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 recipe_name = unquote(parsed.path.removeprefix("/api/recipes/").removesuffix("/shopping"))
                 self._send_json(add_missing_to_shopping(self.core, recipe_name))
                 return
+            if parsed.path in ("/api/shopping", "/api/v1/shopping/manual"):
+                self._send_json(add_manual_shopping(self.core, body), HTTPStatus.CREATED)
+                return
             if parsed.path == "/api/shopping/promote-suggestions":
                 self._send_json(promote_suggestions(self.core))
                 return
@@ -785,6 +788,38 @@ def add_missing_to_shopping(core: PantryCore, recipe_name: str) -> dict[str, Any
             )
         rows = [dict(item) for item in connection.execute("SELECT * FROM shopping_demands WHERE source_id = ?", (recipe["id"],))]
     return {"items": [shopping_to_legacy(row) for row in rows]}
+
+
+def add_manual_shopping(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:
+    core.migrate()
+    source_key = str(body.get("source_key") or f"manual:{uuid.uuid4().hex}")
+    with core.transaction() as connection:
+        product = connection.execute(
+            "SELECT id FROM products WHERE normalized_name = ?",
+            (normalize_name(body["name"]),),
+        ).fetchone()
+        core._upsert_shopping_demand(
+            connection,
+            source_key=source_key,
+            product_id=product["id"] if product else None,
+            display_name=body["name"],
+            quantity=str(body["quantity"]),
+            unit=str(body.get("unit") or "count"),
+            source_kind=str(body.get("source") or "manual"),
+            source_id=None,
+            accepted=True,
+        )
+        revision = core._append_event(
+            connection,
+            "SHOPPING_MANUAL",
+            product_id=product["id"] if product else None,
+            quantity=str(body["quantity"]),
+            unit=str(body.get("unit") or "count"),
+            reason="manual shopping demand",
+            source="api",
+        )
+        row = connection.execute("SELECT * FROM shopping_demands WHERE source_key = ?", (source_key,)).fetchone()
+    return {"item": shopping_to_legacy(dict(row)), "revision": revision}
 
 
 def promote_suggestions(core: PantryCore) -> dict[str, Any]:
