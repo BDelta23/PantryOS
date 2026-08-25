@@ -18,7 +18,7 @@ from .errors import InsufficientInventoryError, NotFoundError, ValidationError
 from .units import convert, decimal_text, require_non_negative, require_positive, unit_code
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def utc_now() -> str:
@@ -130,7 +130,7 @@ class PantryCore:
                 "api_version": "v1",
                 "schema_version": CURRENT_SCHEMA_VERSION,
                 "state_revision": int(self._metadata(connection, "state_revision")),
-                "capabilities": ["sqlite_core", "legacy_import", "inventory_lots", "events", "shopping_lifecycle", "purchase_ledger"],
+                "capabilities": ["sqlite_core", "legacy_import", "inventory_lots", "events", "shopping_lifecycle", "purchase_ledger", "cooking_sessions", "leftovers"],
             }
 
     def add_inventory_lot(self, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
@@ -384,6 +384,177 @@ class PantryCore:
         with closing(self.connect()) as connection:
             return self._dashboard(connection)
 
+    def start_cooking_session(self, data: dict[str, Any]) -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            recipe = self._find_recipe(connection, data.get("recipe_id"), data.get("recipe_name"))
+            planned_servings = decimal_text(require_positive(data.get("planned_servings", data.get("servings", "1")), "servings"))
+            meal_plan_entry_id = data.get("meal_plan_entry_id")
+            if meal_plan_entry_id is not None:
+                meal_plan = connection.execute("SELECT id FROM meal_plan_entries WHERE id = ?", (meal_plan_entry_id,)).fetchone()
+                if meal_plan is None:
+                    raise NotFoundError(f"Unknown meal plan entry: {meal_plan_entry_id}")
+            session_id = new_id("cook")
+            connection.execute(
+                """
+                INSERT INTO cooking_sessions(
+                  id, recipe_id, meal_plan_entry_id, planned_servings,
+                  ha_correlation_id, notes
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, recipe["id"], meal_plan_entry_id, planned_servings, data.get("ha_correlation_id"), data.get("notes")),
+            )
+            if meal_plan_entry_id is not None:
+                connection.execute(
+                    "UPDATE meal_plan_entries SET status = 'cooking', updated_at = ?, version = version + 1 WHERE id = ?",
+                    (utc_now(), meal_plan_entry_id),
+                )
+            revision = self._append_event(
+                connection,
+                "cooking.started",
+                source="api",
+                metadata={"cooking_session_id": session_id, "recipe_id": recipe["id"]},
+            )
+            session = self._cooking_session_snapshot(connection, session_id)
+        return {"session": session, "revision": revision}
+
+    def complete_cooking_session(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            session = self._cooking_session_row(connection, session_id)
+            if session["status"] != "cooking":
+                raise ValidationError("Cooking session is not active")
+            allocations = data.get("allocations")
+            if not isinstance(allocations, list) or not allocations:
+                raise ValidationError("Cooking completion requires confirmed allocations")
+            applied_allocations: list[dict[str, str]] = []
+            for allocation in allocations:
+                if not isinstance(allocation, dict):
+                    raise ValidationError("Cooking allocations must be objects")
+                lot_id = str(allocation["lot_id"])
+                amount = require_positive(allocation["quantity"])
+                requested_unit = unit_code(str(allocation.get("unit") or "count"))
+                lot = connection.execute("SELECT * FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+                if lot is None:
+                    raise NotFoundError(f"Unknown inventory lot: {lot_id}")
+                if lot["status"] != "active":
+                    raise ValidationError(f"Inventory lot is not active: {lot_id}")
+                take_lot_unit = convert(amount, requested_unit, lot["unit"])
+                available = require_non_negative(lot["quantity"])
+                if take_lot_unit > available:
+                    raise InsufficientInventoryError(decimal_text(take_lot_unit), decimal_text(available), lot["unit"])
+                remaining = available - take_lot_unit
+                status = "closed" if remaining == 0 else "active"
+                connection.execute(
+                    "UPDATE inventory_lots SET quantity = ?, status = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+                    (decimal_text(remaining), status, utc_now(), lot_id),
+                )
+                self._append_event(
+                    connection,
+                    "COOK",
+                    product_id=lot["product_id"],
+                    lot_id=lot_id,
+                    quantity=decimal_text(take_lot_unit),
+                    unit=lot["unit"],
+                    reason="cooking allocation",
+                    source="api",
+                    metadata={"cooking_session_id": session_id},
+                )
+                applied_allocations.append({"lot_id": lot_id, "quantity": decimal_text(take_lot_unit), "unit": lot["unit"]})
+
+            leftover_lots: list[dict[str, Any]] = []
+            for leftover in data.get("leftovers", []):
+                if not isinstance(leftover, dict):
+                    raise ValidationError("Leftovers must be objects")
+                product_id = self.ensure_product(
+                    connection,
+                    name=str(leftover["name"]),
+                    default_unit=str(leftover.get("unit") or "serving"),
+                )
+                location_id = self.ensure_location_path(connection, str(leftover.get("location") or "Unassigned"))
+                lot_id = self._insert_lot(
+                    connection,
+                    product_id,
+                    location_id,
+                    {
+                        "name": leftover["name"],
+                        "quantity": leftover.get("quantity", "1"),
+                        "unit": leftover.get("unit") or "serving",
+                        "purchased": leftover.get("made_at") or utc_now(),
+                        "expires": leftover.get("use_by") or leftover.get("expires_at"),
+                        "tags": ["leftover"],
+                        "notes": leftover.get("notes"),
+                    },
+                    cooking_session_id=session_id,
+                )
+                self._append_event(
+                    connection,
+                    "LEFTOVER_CREATE",
+                    product_id=product_id,
+                    lot_id=lot_id,
+                    quantity=str(leftover.get("quantity", "1")),
+                    unit=str(leftover.get("unit") or "serving"),
+                    reason="cooking leftover",
+                    source="api",
+                    metadata={"cooking_session_id": session_id},
+                )
+                leftover_lots.append(self.get_lot(connection, lot_id))
+
+            actual_servings = data.get("actual_servings", session["planned_servings"])
+            completed_at = utc_now()
+            connection.execute(
+                """
+                UPDATE cooking_sessions
+                SET status = 'completed', actual_servings = ?, completed_at = ?,
+                    allocations_json = ?, version = version + 1
+                WHERE id = ?
+                """,
+                (decimal_text(require_positive(actual_servings, "actual_servings")), completed_at, json.dumps(applied_allocations), session_id),
+            )
+            if session["meal_plan_entry_id"]:
+                connection.execute(
+                    "UPDATE meal_plan_entries SET status = 'completed', updated_at = ?, version = version + 1 WHERE id = ?",
+                    (completed_at, session["meal_plan_entry_id"]),
+                )
+            revision = self._append_event(
+                connection,
+                "cooking.completed",
+                source="api",
+                metadata={"cooking_session_id": session_id, "leftover_lot_ids": [lot["id"] for lot in leftover_lots]},
+            )
+            session_snapshot = self._cooking_session_snapshot(connection, session_id)
+        return {"session": session_snapshot, "allocations": applied_allocations, "leftovers": leftover_lots, "revision": revision}
+
+    def cancel_cooking_session(self, session_id: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            session = self._cooking_session_row(connection, session_id)
+            if session["status"] != "cooking":
+                raise ValidationError("Cooking session is not active")
+            cancelled_at = utc_now()
+            connection.execute(
+                "UPDATE cooking_sessions SET status = 'cancelled', cancelled_at = ?, notes = COALESCE(?, notes), version = version + 1 WHERE id = ?",
+                (cancelled_at, (data or {}).get("reason"), session_id),
+            )
+            if session["meal_plan_entry_id"]:
+                connection.execute(
+                    "UPDATE meal_plan_entries SET status = 'planned', updated_at = ?, version = version + 1 WHERE id = ?",
+                    (cancelled_at, session["meal_plan_entry_id"]),
+                )
+            revision = self._append_event(
+                connection,
+                "cooking.cancelled",
+                reason=(data or {}).get("reason"),
+                source="api",
+                metadata={"cooking_session_id": session_id},
+            )
+            snapshot = self._cooking_session_snapshot(connection, session_id)
+        return {"session": snapshot, "revision": revision}
+
+    def cooking_session(self, session_id: str) -> dict[str, Any]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            return self._cooking_session_snapshot(connection, session_id)
     def shopping_items(self) -> list[dict[str, Any]]:
         self.migrate()
         with closing(self.connect()) as connection:
@@ -786,6 +957,7 @@ class PantryCore:
         *,
         source_legacy_id: str | None = None,
         purchase_line_id: str | None = None,
+        cooking_session_id: str | None = None,
     ) -> str:
         quantity = require_non_negative(data.get("quantity", "0"))
         unit = unit_code(str(data.get("unit") or "count"))
@@ -800,8 +972,8 @@ class PantryCore:
             """
             INSERT INTO inventory_lots(
               id, product_id, quantity, unit, location_id, acquired_at,
-              expires_at, opened_at, lot_type, purchase_line_id, total_cost, notes, source_legacy_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              expires_at, opened_at, lot_type, purchase_line_id, cooking_session_id, total_cost, notes, source_legacy_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 lot_id,
@@ -814,6 +986,7 @@ class PantryCore:
                 data.get("opened_at"),
                 lot_type,
                 purchase_line_id,
+                cooking_session_id,
                 total_cost_text,
                 data.get("notes"),
                 source_legacy_id,
@@ -919,6 +1092,33 @@ class PantryCore:
             ),
         )
 
+    def _find_recipe(
+        self,
+        connection: sqlite3.Connection,
+        recipe_id: str | None,
+        recipe_name: str | None,
+    ) -> sqlite3.Row:
+        if recipe_id:
+            row = connection.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+        elif recipe_name:
+            row = connection.execute("SELECT * FROM recipes WHERE normalized_name = ?", (normalize_name(str(recipe_name)),)).fetchone()
+        else:
+            raise ValidationError("Cooking session requires recipe_id or recipe_name")
+        if row is None:
+            raise NotFoundError("Unknown recipe")
+        return row
+
+    def _cooking_session_row(self, connection: sqlite3.Connection, session_id: str) -> sqlite3.Row:
+        row = connection.execute("SELECT * FROM cooking_sessions WHERE id = ?", (session_id,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"Unknown cooking session: {session_id}")
+        return row
+
+    def _cooking_session_snapshot(self, connection: sqlite3.Connection, session_id: str) -> dict[str, Any]:
+        row = self._cooking_session_row(connection, session_id)
+        session = dict(row)
+        session["allocations"] = json.loads(session.pop("allocations_json") or "[]")
+        return session
     def _shopping_row(self, connection: sqlite3.Connection, demand_id: str) -> sqlite3.Row:
         row = connection.execute("SELECT * FROM shopping_demands WHERE id = ?", (demand_id,)).fetchone()
         if row is None:

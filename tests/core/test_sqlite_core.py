@@ -27,7 +27,7 @@ def test_fresh_database_migrates_and_has_instance_metadata() -> None:
         core = make_core(directory)
         instance = core.instance()
 
-        assert instance["schema_version"] == 2
+        assert instance["schema_version"] == 3
         assert instance["state_revision"] == 0
         assert instance["instance_id"].startswith("inst_")
         core.integrity_check()
@@ -323,3 +323,89 @@ def test_shopping_items_can_be_removed_or_suppressed_without_deleting_history() 
         assert rows["Rice"]["status"] == "removed"
         assert rows["Beans"]["status"] == "suppressed"
         assert rows["Beans"]["accepted"] == 0
+def test_cooking_session_start_complete_leftover_and_rollback() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        lot = core.add_inventory_lot(
+            {"name": "Soup Base", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"}
+        )["lot"]
+        with core.transaction() as connection:
+            core._upsert_recipe(connection, {"name": "Soup Night", "ingredients": []})
+
+        started = core.start_cooking_session({"recipe_name": "Soup Night", "planned_servings": "2"})
+        after_start = core.dashboard()
+        started_lot = next(row for row in after_start["lots"] if row["id"] == lot["id"])
+        assert started["session"]["status"] == "cooking"
+        assert started_lot["quantity"] == "2"
+
+        completed = core.complete_cooking_session(
+            started["session"]["id"],
+            {
+                "actual_servings": "2",
+                "allocations": [{"lot_id": lot["id"], "quantity": "1", "unit": "cup"}],
+                "leftovers": [
+                    {
+                        "name": "Soup Night Leftovers",
+                        "quantity": "2",
+                        "unit": "serving",
+                        "location": "Kitchen/Refrigerator",
+                        "use_by": "2026-08-30",
+                    }
+                ],
+            },
+        )
+        after_complete = core.dashboard()
+        consumed_lot = next(row for row in after_complete["lots"] if row["id"] == lot["id"])
+        leftover = completed["leftovers"][0]
+
+        assert completed["session"]["status"] == "completed"
+        assert completed["allocations"] == [{"lot_id": lot["id"], "quantity": "1", "unit": "cup"}]
+        assert consumed_lot["quantity"] == "1"
+        assert leftover["lot_type"] == "leftover"
+        assert leftover["cooking_session_id"] == started["session"]["id"]
+        assert any(event["event_type"] == "cooking.completed" for event in after_complete["events"])
+        assert any(event["event_type"] == "LEFTOVER_CREATE" for event in after_complete["events"])
+
+        second_lot = core.add_inventory_lot(
+            {"name": "Sauce", "quantity": "1", "unit": "cup", "location": "Kitchen/Refrigerator"}
+        )["lot"]
+        failed_session = core.start_cooking_session({"recipe_name": "Soup Night"})["session"]
+        before_failed = core.dashboard()
+        try:
+            core.complete_cooking_session(
+                failed_session["id"],
+                {
+                    "allocations": [{"lot_id": second_lot["id"], "quantity": "5", "unit": "cup"}],
+                    "leftovers": [{"name": "Should Not Exist", "quantity": "1", "unit": "serving"}],
+                },
+            )
+        except InsufficientInventoryError:
+            pass
+        else:
+            raise AssertionError("over-allocated cooking completion should fail")
+
+        after_failed = core.dashboard()
+        unchanged_lot = next(row for row in after_failed["lots"] if row["id"] == second_lot["id"])
+        session_after_failure = core.cooking_session(failed_session["id"])
+        assert unchanged_lot["quantity"] == "1"
+        assert session_after_failure["status"] == "cooking"
+        assert after_failed["summary"] == before_failed["summary"]
+        assert not any(row["product_name"] == "Should Not Exist" for row in after_failed["lots"])
+
+
+def test_cooking_session_cancel_does_not_consume_inventory() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        lot = core.add_inventory_lot(
+            {"name": "Rice", "quantity": "3", "unit": "cup", "location": "Kitchen/Pantry"}
+        )["lot"]
+        with core.transaction() as connection:
+            core._upsert_recipe(connection, {"name": "Rice Bowls", "ingredients": []})
+        session = core.start_cooking_session({"recipe_name": "Rice Bowls"})["session"]
+        cancelled = core.cancel_cooking_session(session["id"], {"reason": "changed plans"})
+        snapshot = core.dashboard()
+        rice_lot = next(row for row in snapshot["lots"] if row["id"] == lot["id"])
+
+        assert cancelled["session"]["status"] == "cancelled"
+        assert rice_lot["quantity"] == "3"
+        assert any(event["event_type"] == "cooking.cancelled" for event in snapshot["events"])

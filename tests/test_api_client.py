@@ -65,7 +65,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
         refreshed = await client.async_refresh()
 
-        assert instance["schema_version"] == 2
+        assert instance["schema_version"] == 3
         initial_total = initial["summary"]["total_items"]
         assert created["item"]["name"] == "HA Butter"
         assert consumed["allocations"][0]["quantity"] == "0.25"
@@ -153,6 +153,37 @@ def test_api_client_manages_shopping_lifecycle_and_purchase_completion() -> None
         removed = await client.async_add_shopping_item({"name": "Napkins", "quantity": "1", "unit": "count"})
         result = await client.async_remove_shopping_item(removed["item"]["id"])
         assert result["ok"] is True
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))
+def test_api_client_completes_cooking_session_with_leftover() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "test-token")
+        lot = await client.async_add_item(
+            {"name": "Client Sauce", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"}
+        )
+        await client.async_add_recipe({"name": "Client Pasta", "ingredients": []})
+        started = await client.async_start_cooking_session({"recipe_name": "Client Pasta", "planned_servings": "2"})
+        snapshot_after_start = await client.async_refresh()
+        sauce_after_start = next(item for item in snapshot_after_start["items"] if item["id"] == lot["item"]["id"])
+        completed = await client.async_complete_cooking_session(
+            started["session"]["id"],
+            {
+                "allocations": [{"lot_id": lot["item"]["id"], "quantity": "1", "unit": "cup"}],
+                "leftovers": [
+                    {"name": "Client Pasta Leftovers", "quantity": "1", "unit": "serving", "location": "Kitchen/Refrigerator"}
+                ],
+            },
+        )
+        snapshot_after_complete = await client.async_refresh()
+        sauce_after_complete = next(item for item in snapshot_after_complete["items"] if item["id"] == lot["item"]["id"])
+
+        assert started["session"]["status"] == "cooking"
+        assert sauce_after_start["quantity"] == "2"
+        assert completed["session"]["status"] == "completed"
+        assert completed["leftovers"][0]["name"] == "Client Pasta Leftovers"
+        assert sauce_after_complete["quantity"] == "1"
+        assert any(item["name"] == "Client Pasta Leftovers" for item in snapshot_after_complete["leftovers"])
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))

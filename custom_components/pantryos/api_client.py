@@ -76,6 +76,17 @@ class PantryAPIClient:
     async def async_add_shopping_item(self, data: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/api/v1/shopping/manual", data=data, authenticated=True)
 
+    async def async_start_cooking_session(self, data: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", "/api/v1/cooking/sessions", data=data, authenticated=True)
+
+    async def async_complete_cooking_session(self, session_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        path = f"/api/v1/cooking/sessions/{quote(session_id, safe='')}/complete"
+        return await self._request("POST", path, data=data, authenticated=True)
+
+    async def async_cancel_cooking_session(self, session_id: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        path = f"/api/v1/cooking/sessions/{quote(session_id, safe='')}/cancel"
+        return await self._request("POST", path, data=data or {}, authenticated=True)
+
     async def async_add_missing_to_shopping_list(self, recipe_name: str) -> dict[str, Any]:
         path = f"/api/v1/recipes/{quote(recipe_name, safe='')}/shopping"
         return await self._request("POST", path, data={}, authenticated=True)

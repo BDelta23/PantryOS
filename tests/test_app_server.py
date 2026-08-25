@@ -145,7 +145,7 @@ def test_http_api_serves_state_and_accepts_items() -> None:
     assert created["item"]["name"] == "Heavy Cream"
     assert any(item["name"] == "Heavy Cream" for item in state["items"])
     assert state["summary"]["total_items"] == 8
-    assert instance["schema_version"] == 2
+    assert instance["schema_version"] == 3
     assert instance["state_revision"] >= 1
 
 

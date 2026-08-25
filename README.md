@@ -140,6 +140,11 @@ Current versioned endpoints:
 - `POST /api/v1/shopping/{id}/uncheck`
 - `POST /api/v1/shopping/complete-purchase`
 - `POST /api/v1/shopping/promote-suggestions`
+- `POST /api/v1/cooking/sessions`
+- `GET /api/v1/cooking/sessions/{id}`
+- `POST /api/v1/cooking/sessions/{id}/complete`
+- `POST /api/v1/cooking/sessions/{id}/cancel`
+- `GET /api/v1/leftovers`
 
 The browser still uses these temporary compatibility routes while its session/auth flow is built:
 

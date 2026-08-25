@@ -413,6 +413,13 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/state", "/api/v1/dashboard"):
             self._send_json(public_state(self.core))
             return
+        cooking_session_id = cooking_session_path(parsed.path)
+        if cooking_session_id is not None:
+            self._send_json(self.core.cooking_session(cooking_session_id))
+            return
+        if parsed.path == "/api/v1/leftovers":
+            self._send_json({"items": [lot_to_item(row) for row in public_state(self.core)["core"]["lots"] if row["status"] == "active" and row["lot_type"] == "leftover"]})
+            return
         if parsed.path == "/api/v1/shopping":
             self._send_json({"items": [shopping_to_legacy(row) for row in self.core.shopping_items()]})
             return
@@ -438,6 +445,20 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 result = self.core.add_inventory_lot(body)
                 self._send_json({"item": lot_to_item(result["lot"]), "revision": result["revision"]}, HTTPStatus.CREATED)
                 return
+            if parsed.path == "/api/v1/cooking/sessions":
+                result = self.core.start_cooking_session(body)
+                self._send_json(result, HTTPStatus.CREATED)
+                return
+            cooking_action = cooking_action_path(parsed.path)
+            if cooking_action is not None:
+                session_id, action = cooking_action
+                if action == "complete":
+                    result = self.core.complete_cooking_session(session_id, body)
+                    self._send_json({**result, "leftovers": [lot_to_item(row) for row in result["leftovers"]]})
+                    return
+                if action == "cancel":
+                    self._send_json(self.core.cancel_cooking_session(session_id, body))
+                    return
             versioned_lot_action = versioned_lot_action_path(parsed.path)
             if versioned_lot_action is not None:
                 lot_id, action = versioned_lot_action
@@ -721,6 +742,26 @@ def recipe_shopping_path(path: str) -> str | None:
         if path.startswith(prefix) and path.endswith("/shopping"):
             return unquote(path.removeprefix(prefix).removesuffix("/shopping"))
     return None
+
+
+def cooking_session_path(path: str) -> str | None:
+    prefix = "/api/v1/cooking/sessions/"
+    if not path.startswith(prefix):
+        return None
+    suffix = path.removeprefix(prefix)
+    if not suffix or "/" in suffix:
+        return None
+    return unquote(suffix)
+
+
+def cooking_action_path(path: str) -> tuple[str, str] | None:
+    prefix = "/api/v1/cooking/sessions/"
+    if not path.startswith(prefix):
+        return None
+    parts = path.removeprefix(prefix).split("/")
+    if len(parts) != 2 or parts[1] not in {"complete", "cancel"}:
+        return None
+    return unquote(parts[0]), parts[1]
 
 
 def shopping_item_path(path: str) -> str | None:
