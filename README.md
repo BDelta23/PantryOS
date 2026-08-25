@@ -56,7 +56,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The container writes the SQLite database to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. Change the host port with `PANTRYOS_PORT`:
+The container writes the SQLite database to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. The entrypoint repairs `/app/data` ownership for named volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the app writes only under `/app/data`. Change the host port with `PANTRYOS_PORT`:
 
 ```powershell
 $env:PANTRYOS_PORT = "8770"
