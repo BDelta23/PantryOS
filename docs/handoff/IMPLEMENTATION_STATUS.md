@@ -13,7 +13,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 ## Phase gates
 
 - [x] Phase 0 — baseline regression tests and engineering tooling
-- [ ] Phase 1 — SQLite, migrations, legacy import, package extraction
+- [ ] Phase 1 — SQLite, migrations, legacy import, package extraction (in progress; Core package and migration tests added)
 - [ ] Phase 2 — inventory domain and authenticated API foundation
 - [ ] Phase 3 — web + Home Assistant one-source-of-truth proof
 - [ ] Phase 4 — recipes, use-soon, meal plan, idempotent shopping
@@ -32,6 +32,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 
 | 2026-08-25 | Phase 0 | Handoff controls installed into repo root; Git repository initialized for baseline checkpoint | `python scripts/run_tests.py` -> 11 tests passed; `python -m compileall -q app custom_components/pantryos scripts tests` -> passed; `node --check app/static/app.js` -> passed; `docker compose config` -> passed; baseline commit `98078e3` created | Formatter/lint/type/CI commands still need final v1 tooling; SQLite Core not started |
 | 2026-08-25 | Phase 0 | Deterministic baseline defect reproducer added for JSON lost update and additive shopping demand | `python scripts/reproduce_baseline_defects.py` -> P0/P1 baseline defects reproduced; surviving JSON item list was `['Eggs']`; repeated recipe demand quantity was `6` | Final invariant tests will replace this reproducer after SQLite/idempotent shopping implementation |
+| 2026-08-25 | Phase 1 | Added `src/pantryos` Core with SQLite migrations, unit registry, transaction wrapper, product/location/lot/event records, FEFO product consumption, legacy JSON import with backup/import marker, and backup/restore helpers | `python scripts/check.py` -> python compile: 18 files passed; 18 tests passed; javascript syntax passed | Web server still uses JSON repository; Home Assistant still uses HA Store until later phase |
 ## Architectural decisions
 
 Record ADR paths here as they are created.
@@ -47,5 +48,6 @@ Record ADR paths here as they are created.
 - No API authentication or migrations.
 - Product/lot/location/event model not implemented.
 - Completion acceptance criteria not yet evidenced.
+
 
 

@@ -7,12 +7,16 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 TEST_MODULES = (
     "tests.test_inventory",
     "tests.test_app_server",
+    "tests.core.test_sqlite_core",
 )
 
 
@@ -41,3 +45,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

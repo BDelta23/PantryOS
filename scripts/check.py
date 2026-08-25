@@ -8,9 +8,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 PYTHON_FILES = [
+    *ROOT.glob("src/**/*.py"),
     *ROOT.glob("app/**/*.py"),
     *ROOT.glob("custom_components/pantryos/**/*.py"),
     *ROOT.glob("scripts/**/*.py"),
@@ -57,4 +61,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
