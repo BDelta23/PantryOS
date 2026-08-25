@@ -18,7 +18,7 @@ from .errors import InsufficientInventoryError, NotFoundError, ValidationError
 from .units import convert, decimal_text, require_non_negative, require_positive, unit_code
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def utc_now() -> str:
@@ -130,7 +130,7 @@ class PantryCore:
                 "api_version": "v1",
                 "schema_version": CURRENT_SCHEMA_VERSION,
                 "state_revision": int(self._metadata(connection, "state_revision")),
-                "capabilities": ["sqlite_core", "legacy_import", "inventory_lots", "events"],
+                "capabilities": ["sqlite_core", "legacy_import", "inventory_lots", "events", "shopping_lifecycle", "purchase_ledger"],
             }
 
     def add_inventory_lot(self, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
@@ -384,6 +384,191 @@ class PantryCore:
         with closing(self.connect()) as connection:
             return self._dashboard(connection)
 
+    def shopping_items(self) -> list[dict[str, Any]]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            return [dict(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name, unit")]
+
+    def update_shopping_item(self, demand_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            self._shopping_row(connection, demand_id)
+            updates: list[str] = []
+            values: list[Any] = []
+            if "name" in data:
+                name = str(data["name"]).strip()
+                if not name:
+                    raise ValidationError("Shopping item name is required")
+                updates.append("display_name = ?")
+                values.append(name)
+            if "quantity" in data:
+                updates.append("quantity = ?")
+                values.append(decimal_text(require_positive(data["quantity"])))
+            if "unit" in data:
+                updates.append("unit = ?")
+                values.append(unit_code(str(data["unit"])))
+            if "note" in data:
+                updates.append("note = ?")
+                values.append(data["note"])
+            if "store" in data:
+                updates.append("store = ?")
+                values.append(data["store"])
+            if "status" in data:
+                status = str(data["status"])
+                if status not in {"active", "suppressed", "removed"}:
+                    raise ValidationError("Shopping status must be active, suppressed, or removed")
+                updates.append("status = ?")
+                values.append(status)
+                if status == "suppressed":
+                    updates.append("accepted = 0")
+            if not updates:
+                row = self._shopping_row(connection, demand_id)
+                return {"item": dict(row), "revision": int(self._metadata(connection, "state_revision"))}
+            updates.append("recalculated_at = ?")
+            values.append(utc_now())
+            values.append(demand_id)
+            connection.execute(f"UPDATE shopping_demands SET {', '.join(updates)} WHERE id = ?", values)
+            row = self._shopping_row(connection, demand_id)
+            revision = self._append_event(
+                connection,
+                "shopping.updated",
+                product_id=row["product_id"],
+                quantity=row["quantity"],
+                unit=row["unit"],
+                reason="shopping item updated",
+                source="api",
+                metadata={"shopping_demand_id": demand_id},
+            )
+        return {"item": dict(row), "revision": revision}
+
+    def set_shopping_checked(self, demand_id: str, checked: bool) -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            self._shopping_row(connection, demand_id)
+            connection.execute(
+                "UPDATE shopping_demands SET checked = ?, recalculated_at = ? WHERE id = ?",
+                (1 if checked else 0, utc_now(), demand_id),
+            )
+            row = self._shopping_row(connection, demand_id)
+            revision = self._append_event(
+                connection,
+                "shopping.checked" if checked else "shopping.unchecked",
+                product_id=row["product_id"],
+                quantity=row["quantity"],
+                unit=row["unit"],
+                source="api",
+                metadata={"shopping_demand_id": demand_id},
+            )
+        return {"item": dict(row), "revision": revision}
+
+    def remove_shopping_item(self, demand_id: str, *, status: str = "removed") -> dict[str, Any]:
+        self.migrate()
+        if status not in {"removed", "suppressed"}:
+            raise ValidationError("Removed shopping status must be removed or suppressed")
+        with self.transaction() as connection:
+            row = self._shopping_row(connection, demand_id)
+            connection.execute(
+                "UPDATE shopping_demands SET status = ?, accepted = 0, checked = 0, recalculated_at = ? WHERE id = ?",
+                (status, utc_now(), demand_id),
+            )
+            revision = self._append_event(
+                connection,
+                "shopping.removed" if status == "removed" else "shopping.suppressed",
+                product_id=row["product_id"],
+                quantity=row["quantity"],
+                unit=row["unit"],
+                source="api",
+                metadata={"shopping_demand_id": demand_id},
+            )
+        return {"ok": True, "revision": revision}
+
+    def complete_purchase(self, data: dict[str, Any]) -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            items = data.get("items")
+            if items is None:
+                rows = [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT * FROM shopping_demands WHERE status = 'active' AND checked = 1 ORDER BY display_name, unit"
+                    )
+                ]
+                items = [{"shopping_id": row["id"]} for row in rows]
+            if not isinstance(items, list) or not items:
+                raise ValidationError("Purchase completion requires at least one item")
+            purchase_id = new_id("purchase")
+            purchased_at = str(data.get("purchased_at") or date.today().isoformat())
+            total = data.get("total")
+            total_text = None if total in (None, "") else decimal_text(require_non_negative(total, "total"))
+            currency = str(data.get("currency") or "USD")
+            connection.execute(
+                """
+                INSERT INTO purchases(id, store, purchased_at, total, currency, source, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (purchase_id, data.get("store"), purchased_at, total_text, currency, data.get("source") or "api", data.get("notes")),
+            )
+            created_lots: list[dict[str, Any]] = []
+            purchase_lines: list[dict[str, Any]] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ValidationError("Purchase items must be objects")
+                demand = self._shopping_row(connection, str(item["shopping_id"]))
+                quantity = decimal_text(require_positive(item.get("quantity", demand["quantity"])))
+                unit = unit_code(str(item.get("unit") or demand["unit"]))
+                line_total = item.get("total_cost")
+                line_total_text = None if line_total in (None, "") else decimal_text(require_non_negative(line_total, "total_cost"))
+                product_id = demand["product_id"] or self.ensure_product(connection, name=demand["display_name"], default_unit=unit)
+                line_id = new_id("pline")
+                connection.execute(
+                    """
+                    INSERT INTO purchase_lines(
+                      id, purchase_id, shopping_demand_id, product_id, display_name,
+                      quantity, unit, total_cost, currency
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        line_id,
+                        purchase_id,
+                        demand["id"],
+                        product_id,
+                        demand["display_name"],
+                        quantity,
+                        unit,
+                        line_total_text,
+                        currency,
+                    ),
+                )
+                location_id = self.ensure_location_path(connection, str(item.get("location") or data.get("location") or "Unassigned"))
+                lot_id = self._insert_lot(
+                    connection,
+                    product_id,
+                    location_id,
+                    {
+                        "name": demand["display_name"],
+                        "quantity": quantity,
+                        "unit": unit,
+                        "purchased": purchased_at,
+                        "estimated_cost": line_total_text,
+                        "notes": item.get("notes"),
+                    },
+                    purchase_line_id=line_id,
+                )
+                connection.execute(
+                    "UPDATE shopping_demands SET checked = 1, status = 'completed', recalculated_at = ? WHERE id = ?",
+                    (utc_now(), demand["id"]),
+                )
+                purchase_lines.append(dict(connection.execute("SELECT * FROM purchase_lines WHERE id = ?", (line_id,)).fetchone()))
+                created_lots.append(self.get_lot(connection, lot_id))
+            revision = self._append_event(
+                connection,
+                "purchase.completed",
+                reason="shopping purchase completed",
+                source="api",
+                metadata={"purchase_id": purchase_id, "shopping_demand_ids": [item["shopping_demand_id"] for item in purchase_lines]},
+            )
+            purchase = dict(connection.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone())
+        return {"purchase": purchase, "lines": purchase_lines, "lots": created_lots, "revision": revision}
     def rebuild_shopping_demand(self) -> dict[str, Any]:
         """Rebuild idempotent generated shopping demand from active meal plans."""
         self.migrate()
@@ -600,6 +785,7 @@ class PantryCore:
         data: dict[str, Any],
         *,
         source_legacy_id: str | None = None,
+        purchase_line_id: str | None = None,
     ) -> str:
         quantity = require_non_negative(data.get("quantity", "0"))
         unit = unit_code(str(data.get("unit") or "count"))
@@ -614,8 +800,8 @@ class PantryCore:
             """
             INSERT INTO inventory_lots(
               id, product_id, quantity, unit, location_id, acquired_at,
-              expires_at, opened_at, lot_type, total_cost, notes, source_legacy_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              expires_at, opened_at, lot_type, purchase_line_id, total_cost, notes, source_legacy_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 lot_id,
@@ -627,6 +813,7 @@ class PantryCore:
                 data.get("expires") or data.get("expires_at"),
                 data.get("opened_at"),
                 lot_type,
+                purchase_line_id,
                 total_cost_text,
                 data.get("notes"),
                 source_legacy_id,
@@ -731,6 +918,12 @@ class PantryCore:
                 position,
             ),
         )
+
+    def _shopping_row(self, connection: sqlite3.Connection, demand_id: str) -> sqlite3.Row:
+        row = connection.execute("SELECT * FROM shopping_demands WHERE id = ?", (demand_id,)).fetchone()
+        if row is None:
+            raise NotFoundError(f"Unknown shopping item: {demand_id}")
+        return row
 
     def _upsert_shopping_demand(
         self,

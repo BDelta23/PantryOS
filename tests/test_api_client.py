@@ -65,7 +65,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
         refreshed = await client.async_refresh()
 
-        assert instance["schema_version"] == 1
+        assert instance["schema_version"] == 2
         initial_total = initial["summary"]["total_items"]
         assert created["item"]["name"] == "HA Butter"
         assert consumed["allocations"][0]["quantity"] == "0.25"
@@ -118,6 +118,41 @@ def test_api_client_rebuilds_meal_plan_shopping_idempotently() -> None:
         assert first_items["Plan Flour"]["quantity"] == "24"
         assert first_items["Baking Powder"]["quantity"] == "2"
         assert len(first_items) == 2
+
+    with running_server() as base_url:
+        asyncio.run(scenario(base_url))
+def test_api_client_manages_shopping_lifecycle_and_purchase_completion() -> None:
+    async def scenario(base_url: str) -> None:
+        client = PantryAPIClient(base_url, "test-token")
+        added = await client.async_add_shopping_item({"name": "Pears", "quantity": "3", "unit": "count"})
+        shopping_id = added["item"]["id"]
+
+        updated = await client.async_update_shopping_item(shopping_id, {"quantity": "4", "note": "ripe", "store": "Market"})
+        checked = await client.async_check_shopping_item(shopping_id)
+        uncheck = await client.async_uncheck_shopping_item(shopping_id)
+        checked_again = await client.async_check_shopping_item(shopping_id)
+        purchase = await client.async_complete_purchase(
+            {
+                "store": "Market",
+                "location": "Kitchen/Fruit Bowl",
+                "items": [{"shopping_id": shopping_id, "quantity": "4", "total_cost": "5.25"}],
+            }
+        )
+        await client.async_refresh()
+
+        assert updated["item"]["quantity"] == "4"
+        assert updated["item"]["note"] == "ripe"
+        assert checked["item"]["checked"] is True
+        assert uncheck["item"]["checked"] is False
+        assert checked_again["item"]["checked"] is True
+        assert purchase["purchase"]["store"] == "Market"
+        assert purchase["lines"][0]["display_name"] == "Pears"
+        assert purchase["lots"][0]["name"] == "Pears"
+        assert any(item["name"] == "Pears" for item in client._dashboard["items"])
+
+        removed = await client.async_add_shopping_item({"name": "Napkins", "quantity": "1", "unit": "count"})
+        result = await client.async_remove_shopping_item(removed["item"]["id"])
+        assert result["ok"] is True
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))

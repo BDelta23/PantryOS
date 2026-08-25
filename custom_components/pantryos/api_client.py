@@ -83,6 +83,25 @@ class PantryAPIClient:
     async def async_rebuild_shopping(self) -> dict[str, Any]:
         return await self._request("POST", "/api/v1/shopping/rebuild", data={}, authenticated=True)
 
+    async def async_update_shopping_item(self, item_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        path = f"/api/v1/shopping/{quote(item_id, safe='')}"
+        return await self._request("PATCH", path, data=data, authenticated=True)
+
+    async def async_check_shopping_item(self, item_id: str) -> dict[str, Any]:
+        path = f"/api/v1/shopping/{quote(item_id, safe='')}/check"
+        return await self._request("POST", path, data={}, authenticated=True)
+
+    async def async_uncheck_shopping_item(self, item_id: str) -> dict[str, Any]:
+        path = f"/api/v1/shopping/{quote(item_id, safe='')}/uncheck"
+        return await self._request("POST", path, data={}, authenticated=True)
+
+    async def async_remove_shopping_item(self, item_id: str) -> dict[str, Any]:
+        path = f"/api/v1/shopping/{quote(item_id, safe='')}"
+        return await self._request("DELETE", path, authenticated=True)
+
+    async def async_complete_purchase(self, data: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", "/api/v1/shopping/complete-purchase", data=data, authenticated=True)
+
     async def async_promote_suggested_purchases(self) -> dict[str, Any]:
         return await self._request("POST", "/api/v1/shopping/promote-suggestions", data={}, authenticated=True)
 

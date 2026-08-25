@@ -27,7 +27,7 @@ def test_fresh_database_migrates_and_has_instance_metadata() -> None:
         core = make_core(directory)
         instance = core.instance()
 
-        assert instance["schema_version"] == 1
+        assert instance["schema_version"] == 2
         assert instance["state_revision"] == 0
         assert instance["instance_id"].startswith("inst_")
         core.integrity_check()
@@ -210,3 +210,116 @@ def test_backup_restore_round_trips_core_state() -> None:
         assert restored.dashboard()["summary"] == core.dashboard()["summary"]
         restored.integrity_check()
 
+
+def test_shopping_lifecycle_and_purchase_completion_are_transactional() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        with core.transaction() as connection:
+            core._upsert_shopping_demand(
+                connection,
+                source_key="manual:coffee",
+                product_id=None,
+                display_name="Coffee",
+                quantity="1",
+                unit="count",
+                source_kind="manual",
+                source_id=None,
+                accepted=True,
+            )
+            shopping_id = connection.execute(
+                "SELECT id FROM shopping_demands WHERE source_key = 'manual:coffee'"
+            ).fetchone()[0]
+
+        updated = core.update_shopping_item(shopping_id, {"quantity": "2", "note": "whole bean", "store": "Market"})
+        checked = core.set_shopping_checked(shopping_id, True)
+        unchecked = core.set_shopping_checked(shopping_id, False)
+        purchase = core.complete_purchase(
+            {
+                "store": "Market",
+                "location": "Kitchen/Pantry",
+                "items": [{"shopping_id": shopping_id, "quantity": "2", "total_cost": "14.50"}],
+            }
+        )
+
+        assert updated["item"]["quantity"] == "2"
+        assert updated["item"]["note"] == "whole bean"
+        assert updated["item"]["store"] == "Market"
+        assert checked["item"]["checked"] == 1
+        assert unchecked["item"]["checked"] == 0
+        assert purchase["purchase"]["store"] == "Market"
+        assert purchase["lines"][0]["display_name"] == "Coffee"
+        assert purchase["lots"][0]["product_name"] == "Coffee"
+        assert purchase["lots"][0]["purchase_line_id"] == purchase["lines"][0]["id"]
+
+        with closing(core.connect()) as connection:
+            completed = connection.execute("SELECT status, checked FROM shopping_demands WHERE id = ?", (shopping_id,)).fetchone()
+        assert dict(completed) == {"status": "completed", "checked": 1}
+
+        with core.transaction() as connection:
+            core._upsert_shopping_demand(
+                connection,
+                source_key="manual:tea",
+                product_id=None,
+                display_name="Tea",
+                quantity="1",
+                unit="count",
+                source_kind="manual",
+                source_id=None,
+                accepted=True,
+            )
+            tea_id = connection.execute("SELECT id FROM shopping_demands WHERE source_key = 'manual:tea'").fetchone()[0]
+        before_summary = core.dashboard()["summary"]
+        try:
+            core.complete_purchase(
+                {
+                    "store": "Market",
+                    "items": [{"shopping_id": tea_id}, {"shopping_id": "missing"}],
+                }
+            )
+        except Exception:
+            pass
+        else:
+            raise AssertionError("invalid purchase completion should fail")
+
+        assert core.dashboard()["summary"] == before_summary
+        with closing(core.connect()) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM purchases WHERE store = 'Market'").fetchone()[0] == 1
+            assert connection.execute("SELECT status FROM shopping_demands WHERE id = ?", (tea_id,)).fetchone()[0] == "active"
+
+
+def test_shopping_items_can_be_removed_or_suppressed_without_deleting_history() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        with core.transaction() as connection:
+            core._upsert_shopping_demand(
+                connection,
+                source_key="manual:rice",
+                product_id=None,
+                display_name="Rice",
+                quantity="1",
+                unit="count",
+                source_kind="manual",
+                source_id=None,
+                accepted=True,
+            )
+            rice_id = connection.execute("SELECT id FROM shopping_demands WHERE source_key = 'manual:rice'").fetchone()[0]
+            core._upsert_shopping_demand(
+                connection,
+                source_key="meal_plan:beans",
+                product_id=None,
+                display_name="Beans",
+                quantity="1",
+                unit="count",
+                source_kind="meal_plan",
+                source_id="active_plan",
+                accepted=True,
+            )
+            beans_id = connection.execute("SELECT id FROM shopping_demands WHERE source_key = 'meal_plan:beans'").fetchone()[0]
+
+        core.remove_shopping_item(rice_id)
+        core.update_shopping_item(beans_id, {"status": "suppressed"})
+
+        rows = {row["display_name"]: row for row in core.shopping_items()}
+        assert rows["Rice"]["status"] == "removed"
+        assert rows["Beans"]["status"] == "suppressed"
+        assert rows["Beans"]["accepted"] == 0

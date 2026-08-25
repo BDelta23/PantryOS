@@ -16,7 +16,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 - [x] Phase 1 — SQLite, migrations, legacy import, package extraction
 - [ ] Phase 2 — inventory domain and authenticated API foundation (in progress; current HA-used routes are authenticated under `/api/v1`)
 - [ ] Phase 3 — web + Home Assistant one-source-of-truth proof (in progress; automated web/API-to-HA-client sync proof added)
-- [ ] Phase 4 — recipes, use-soon, meal plan, idempotent shopping (in progress; meal-plan shopping rebuild is idempotent for current API path)
+- [ ] Phase 4 — recipes, use-soon, meal plan, idempotent shopping (in progress; shopping rebuild, edit/check/remove, and complete-purchase API slice added)
 - [ ] Phase 5 — cooking, leftovers, waste, and location value
 - [ ] Phase 6 — barcode, receipts, purchases, and price history
 - [ ] Phase 7 — complete Home Assistant surface
@@ -38,6 +38,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 | 2026-08-25 | Phase 3 | Added Home Assistant `PantryAPIClient`, config flow URL/token validation against `/api/v1/instance`, API-backed polling sensor cache, and API-backed service calls for item add/consume/discard/move plus current recipe/shopping compatibility actions; removed HA Store from setup path | `python scripts/check.py` -> python compile: 20 files passed; 21 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 21 tests passed | Full HA runtime test harness is not installed; event push/coordinator, auth recovery diagnostics, and live HA-to-web/browser sync proof remain pending |
 | 2026-08-25 | Phase 3 | Moved HA client recipe/meal/shopping calls onto authenticated `/api/v1` routes and added automated cross-surface proof: browser compatibility route add is visible through HA API client refresh; HA API client consume is visible through browser state without restarting either surface | `python scripts/check.py` -> python compile: 21 files passed; 22 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 22 tests passed; Docker readiness `GET /api/v1/health/ready` -> `{"status":"ready"}` | Full HA runtime test harness, Home Assistant entity lifecycle proof, and event push/coordinator remain pending |
 | 2026-08-25 | Phase 4 | Added Core meal-plan shopping rebuild that aggregates active planned recipe ingredients, subtracts usable inventory, uses stable generated source keys, inactivates stale generated meal-plan demand, and exposes it through authenticated `POST /api/v1/shopping/rebuild` plus HA client method | `python scripts/check.py` -> python compile: 21 files passed; 23 tests passed; javascript syntax passed; API client test proves two planned meals rebuild to stable generated rows (`Plan Flour` 24 oz after inventory subtraction and `Baking Powder` 2 tbsp) across repeated rebuilds | Full shopping editing/checking/suppression/purchase workflow, manual/generated source breakdown UI, and user override reconciliation remain pending |
+| 2026-08-25 | Phase 4 | Added schema migration 002 for purchase/purchase-line history; implemented shopping line list/edit/check/uncheck/remove and transactional purchase completion that creates purchase records, purchase lines, inventory lots linked by `purchase_line_id`, and completes shopping demand | `python scripts/check.py` -> python compile: 21 files passed; 26 tests passed; javascript syntax passed; `docker compose build` -> built; `docker compose run --rm pantryos python scripts/run_tests.py` -> 26 tests passed; Docker smoke `GET /api/v1/instance` with bearer token -> schema_version 2 | Purchase UI, user override reconciliation, price history comparison, and complete browser workflow are still pending |
 ## Architectural decisions
 
 Record ADR paths here as they are created.
@@ -52,7 +53,7 @@ Record ADR paths here as they are created.
 - Browser compatibility routes remain unauthenticated until browser session, CSRF, CORS/origin, and UI token/session work are implemented; current HA client no longer depends on those routes.
 - OpenAPI generation/validation is not implemented yet.
 - Events are persisted but no authenticated SSE/WebSocket subscription exists yet.
-- Advanced product/location/recipe/shopping editing, cooking, barcode, receipt, and purchase workflows are still incomplete.
+- Advanced product/location/recipe UI, cooking, barcode, receipt, price history, and browser purchase workflows are still incomplete.
 - Completion acceptance criteria are not fully evidenced.
 
 

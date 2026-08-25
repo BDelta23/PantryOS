@@ -229,7 +229,13 @@ def shopping_to_legacy(row: dict[str, Any]) -> dict[str, Any]:
         "quantity": row["quantity"],
         "unit": row["unit"],
         "source": row["source_key"],
+        "source_kind": row["source_kind"],
+        "source_id": row["source_id"],
+        "status": row["status"],
+        "accepted": bool(row["accepted"]),
         "checked": bool(row["checked"]),
+        "note": row["note"],
+        "store": row["store"],
     }
 
 
@@ -407,6 +413,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/state", "/api/v1/dashboard"):
             self._send_json(public_state(self.core))
             return
+        if parsed.path == "/api/v1/shopping":
+            self._send_json({"items": [shopping_to_legacy(row) for row in self.core.shopping_items()]})
+            return
         if parsed.path == "/api/v1/instance":
             self._send_json(self.core.instance())
             return
@@ -471,6 +480,21 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 result = self.core.rebuild_shopping_demand()
                 self._send_json({**result, "items": [shopping_to_legacy(row) for row in result["items"]]})
                 return
+            if parsed.path == "/api/v1/shopping/complete-purchase":
+                result = self.core.complete_purchase(body)
+                self._send_json({**result, "lots": [lot_to_item(row) for row in result["lots"]]}, HTTPStatus.CREATED)
+                return
+            shopping_action = shopping_action_path(parsed.path)
+            if shopping_action is not None:
+                item_id, action = shopping_action
+                if action == "check":
+                    result = self.core.set_shopping_checked(item_id, True)
+                    self._send_json({**result, "item": shopping_to_legacy(result["item"])})
+                    return
+                if action == "uncheck":
+                    result = self.core.set_shopping_checked(item_id, False)
+                    self._send_json({**result, "item": shopping_to_legacy(result["item"])})
+                    return
             if parsed.path in ("/api/shopping/promote-suggestions", "/api/v1/shopping/promote-suggestions"):
                 self._send_json(promote_suggestions(self.core))
                 return
@@ -498,11 +522,40 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
 
+    def do_PATCH(self) -> None:
+        parsed = urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
+        try:
+            body = self._read_json()
+            shopping_id = shopping_item_path(parsed.path)
+            if shopping_id is not None:
+                result = self.core.update_shopping_item(shopping_id, body)
+                self._send_json({**result, "item": shopping_to_legacy(result["item"])})
+                return
+        except json.JSONDecodeError:
+            self._send_problem(HTTPStatus.BAD_REQUEST, "Request body must be valid JSON.", code="invalid_json", title="Invalid JSON")
+            return
+        except KeyError as exc:
+            self._send_problem(HTTPStatus.BAD_REQUEST, f"Missing required field: {exc.args[0]}", code="missing_field", title="Missing field")
+            return
+        except PantryOSError as exc:
+            self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
+            return
+        except ValueError as exc:
+            self._send_problem(HTTPStatus.BAD_REQUEST, str(exc), code="invalid_request", title="Invalid request")
+            return
+        self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
+
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
         if not self._authorize(parsed.path):
             return
         try:
+            shopping_id = shopping_item_path(parsed.path)
+            if shopping_id is not None:
+                self._send_json(self.core.remove_shopping_item(shopping_id))
+                return
             if parsed.path.startswith("/api/items/"):
                 lot_id = parsed.path.removeprefix("/api/items/")
                 self._send_json(discard_lot(self.core, lot_id))
@@ -511,7 +564,6 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
             return
         self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
-
     def log_message(self, format: str, *args: Any) -> None:
         return
 
@@ -669,6 +721,26 @@ def recipe_shopping_path(path: str) -> str | None:
         if path.startswith(prefix) and path.endswith("/shopping"):
             return unquote(path.removeprefix(prefix).removesuffix("/shopping"))
     return None
+
+
+def shopping_item_path(path: str) -> str | None:
+    prefix = "/api/v1/shopping/"
+    if not path.startswith(prefix):
+        return None
+    suffix = path.removeprefix(prefix)
+    if not suffix or "/" in suffix or suffix in {"manual", "rebuild", "complete-purchase", "promote-suggestions"}:
+        return None
+    return unquote(suffix)
+
+
+def shopping_action_path(path: str) -> tuple[str, str] | None:
+    prefix = "/api/v1/shopping/"
+    if not path.startswith(prefix):
+        return None
+    parts = path.removeprefix(prefix).split("/")
+    if len(parts) != 2 or parts[1] not in {"check", "uncheck"}:
+        return None
+    return unquote(parts[0]), parts[1]
 
 
 def consume_lot_product(core: PantryCore, lot_id: str, quantity: str, reason: str | None = None) -> dict[str, Any]:
