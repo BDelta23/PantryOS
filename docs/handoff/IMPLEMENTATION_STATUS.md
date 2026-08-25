@@ -12,7 +12,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 
 ## Phase gates
 
-- [ ] Phase 0 — baseline regression tests and engineering tooling (in progress; baseline evidence and P0 reproducer added)
+- [x] Phase 0 — baseline regression tests and engineering tooling
 - [ ] Phase 1 — SQLite, migrations, legacy import, package extraction
 - [ ] Phase 2 — inventory domain and authenticated API foundation
 - [ ] Phase 3 — web + Home Assistant one-source-of-truth proof
@@ -30,7 +30,7 @@ Codex should update this file throughout the completion goal. Record exact comma
 |---|---|---|---|---|
 | 2026-08-25 | Baseline | Handoff created from v0.1.0 prototype | 11 tests pass; compileall pass; node syntax pass | Docker unavailable in inspection environment |
 
-| 2026-08-25 | Phase 0 | Handoff controls installed into repo root; Git repository initialized for baseline checkpoint | `python scripts/run_tests.py` -> 11 tests passed; `python -m compileall -q app custom_components/pantryos scripts tests` -> passed; `node --check app/static/app.js` -> passed; `docker compose config` -> passed | Formatter/lint/type/CI commands not yet established; SQLite Core not started |
+| 2026-08-25 | Phase 0 | Handoff controls installed into repo root; Git repository initialized for baseline checkpoint | `python scripts/run_tests.py` -> 11 tests passed; `python -m compileall -q app custom_components/pantryos scripts tests` -> passed; `node --check app/static/app.js` -> passed; `docker compose config` -> passed; baseline commit `98078e3` created | Formatter/lint/type/CI commands still need final v1 tooling; SQLite Core not started |
 | 2026-08-25 | Phase 0 | Deterministic baseline defect reproducer added for JSON lost update and additive shopping demand | `python scripts/reproduce_baseline_defects.py` -> P0/P1 baseline defects reproduced; surviving JSON item list was `['Eggs']`; repeated recipe demand quantity was `6` | Final invariant tests will replace this reproducer after SQLite/idempotent shopping implementation |
 ## Architectural decisions
 
@@ -38,7 +38,7 @@ Record ADR paths here as they are created.
 
 | ADR | Status | Summary |
 |---|---|---|
-| — | — | — |
+| docs/adr/0001-stdlib-core-foundation.md | Accepted | Use Python stdlib sqlite3 and explicit SQL migrations for the Phase 1 Core extraction; final API/auth/OpenAPI gates remain required |
 
 ## Open blockers
 
@@ -47,4 +47,5 @@ Record ADR paths here as they are created.
 - No API authentication or migrations.
 - Product/lot/location/event model not implemented.
 - Completion acceptance criteria not yet evidenced.
+
 
