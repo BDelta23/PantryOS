@@ -1038,6 +1038,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self._send_json(
             {
                 "authenticated": authenticated,
+                "setup_token_configured": bool(self.api_token),
                 "csrf_token": str(current["csrf_token"]) if current else "",
                 "expires_in_seconds": max(0, int(float(current["expires_at"]) - time.time())) if current else 0,
                 "cookie": {

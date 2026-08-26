@@ -139,13 +139,63 @@ h2 {
 
 .login-form {
   display: grid;
-  width: min(100%, 380px);
+  width: min(100%, 420px);
   gap: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 18px;
   background: var(--panel);
   box-shadow: var(--shadow);
+}
+
+.login-status,
+.login-help {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.token-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.token-entry button {
+  min-width: 70px;
+}
+
+.session-policy {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.session-policy div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-policy dt,
+.session-policy dd {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.session-policy dt {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.session-policy dd {
+  color: var(--ink);
+  text-align: right;
 }
 
 .form-error {

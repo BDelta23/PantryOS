@@ -222,6 +222,16 @@ async function runViewport(browser, baseUrl, viewport) {
   });
 
   await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await expectVisibleText(page, "Local setup token required.");
+  const tokenInput = page.locator("#setupTokenInput");
+  await page.getByRole("button", { name: "Show" }).click();
+  if ((await tokenInput.getAttribute("type")) !== "text") {
+    throw new Error("Setup token visibility toggle did not reveal the input");
+  }
+  await page.getByRole("button", { name: "Hide" }).click();
+  if ((await tokenInput.getAttribute("type")) !== "password") {
+    throw new Error("Setup token visibility toggle did not restore password masking");
+  }
   await page.getByLabel("Setup token").fill(TOKEN);
   await clickButton(page, "Sign In");
   await page.locator("#appShell").waitFor({ state: "visible" });

@@ -356,6 +356,7 @@ def test_browser_routes_require_session_csrf_and_same_origin() -> None:
             httpd.server_close()
 
     assert anonymous_session["authenticated"] is False
+    assert anonymous_session["setup_token_configured"] is True
     assert anonymous_session["csrf_token"] == ""
     assert status == 401
     assert unauth["code"] == "browser_session_required"
@@ -366,6 +367,7 @@ def test_browser_routes_require_session_csrf_and_same_origin() -> None:
     assert "HttpOnly" in set_cookie
     assert "SameSite=Lax" in set_cookie
     assert session["authenticated"] is True
+    assert session["setup_token_configured"] is True
     assert session["csrf_token"] == csrf_token
     assert csrf_status == 403
     assert csrf_problem["code"] == "csrf_required"
@@ -377,6 +379,39 @@ def test_browser_routes_require_session_csrf_and_same_origin() -> None:
     assert preflight_headers["Access-Control-Allow-Origin"] == base
     assert preflight_headers["Access-Control-Allow-Credentials"] == "true"
     assert created["item"]["name"] == "Session Apples"
+
+
+def test_browser_session_status_reports_missing_setup_token() -> None:
+    original = os.environ.pop("PANTRYOS_API_TOKEN", None)
+    try:
+        with TemporaryDirectory() as directory:
+            data_path = Path(directory) / "pantryos.sqlite3"
+            httpd = server_module.make_server("127.0.0.1", 0, data_path)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{httpd.server_port}"
+                session = request_json(f"{base}/api/session")
+                status, problem = request_error(
+                    f"{base}/api/session/login",
+                    method="POST",
+                    payload={"token": "anything"},
+                    origin=base,
+                )
+            finally:
+                httpd.shutdown()
+                thread.join(timeout=5)
+                httpd.server_close()
+    finally:
+        if original is not None:
+            os.environ["PANTRYOS_API_TOKEN"] = original
+
+    assert session["authenticated"] is False
+    assert session["setup_token_configured"] is False
+    assert session["csrf_token"] == ""
+    assert session["cookie"]["name"] == "pantryos_session"
+    assert status == 503
+    assert problem["code"] == "auth_not_configured"
 
 def test_browser_session_persists_across_server_restart_and_logout_removes_it() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
@@ -418,6 +453,7 @@ def test_browser_session_persists_across_server_restart_and_logout_removes_it() 
             restarted.server_close()
 
     assert session["authenticated"] is True
+    assert session["setup_token_configured"] is True
     assert session["csrf_token"] == csrf_token
     assert created["item"]["name"] == "Restart Session Rice"
     assert logout == {"ok": True, "authenticated": False}
@@ -1233,6 +1269,14 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     service_worker = (static_dir / "service-worker.js").read_text(encoding="utf-8")
 
     assert "Cooking mode queued" not in app_js
+    assert "loginStatus" in index_html
+    assert "loginCookiePolicy" in index_html
+    assert "setupTokenInput" in index_html
+    assert "toggleTokenButton" in index_html
+    assert "setup_token_configured" in app_js
+    assert "loginFailureMessage" in app_js
+    assert "toggleSetupTokenVisibility" in app_js
+    assert "auth_not_configured" in app_js
     assert "/api/cooking/sessions" in app_js
     assert "/api/shopping/complete-purchase" in app_js
     assert "/api/purchases" in app_js

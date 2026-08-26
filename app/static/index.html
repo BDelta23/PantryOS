@@ -23,11 +23,27 @@
     </header>
 
     <section id="loginPanel" class="login-panel">
-      <form id="loginForm" class="login-form">
-        <h2>Sign In</h2>
-        <label>Setup token<input name="token" type="password" required autocomplete="current-password" /></label>
-        <button type="submit">Sign In</button>
-        <p id="loginError" class="form-error" role="alert"></p>
+      <form id="loginForm" class="login-form" aria-describedby="loginStatus tokenHelp">
+        <h2>Unlock PantryOS</h2>
+        <p id="loginStatus" class="login-status" role="status">Checking local session settings...</p>
+        <label for="setupTokenInput">Setup token</label>
+        <div class="token-entry">
+          <input id="setupTokenInput" name="token" type="password" required autocomplete="current-password" autocapitalize="none" spellcheck="false" aria-describedby="tokenHelp loginStatus loginError" disabled />
+          <button id="toggleTokenButton" class="quiet" type="button" aria-pressed="false" disabled>Show</button>
+        </div>
+        <p id="tokenHelp" class="login-help">Starts a local browser session; the token is exchanged for an HttpOnly same-site cookie.</p>
+        <button id="loginSubmitButton" type="submit" disabled>Sign In</button>
+        <dl class="session-policy" aria-label="Browser session policy">
+          <div>
+            <dt>Cookie</dt>
+            <dd id="loginCookiePolicy">PantryOS session cookie</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd id="loginConfigStatus">Checking</dd>
+          </div>
+        </dl>
+        <p id="loginError" class="form-error" role="alert" tabindex="-1"></p>
       </form>
     </section>
 

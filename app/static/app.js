@@ -10,6 +10,7 @@ const state = {
   editingRecipeId: null,
   authenticated: false,
   csrfToken: "",
+  sessionInfo: null,
   barcodeScanner: {
     active: false,
     detector: null,
@@ -42,7 +43,11 @@ async function api(path, options = {}) {
   }
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.detail || data.error || data.title || "Request failed");
+    const error = new Error(data.detail || data.error || data.title || "Request failed");
+    error.status = response.status;
+    error.code = data.code || "request_failed";
+    error.problem = data;
+    throw error;
   }
   return data;
 }
@@ -1118,6 +1123,61 @@ async function handlePageClick(event) {
   }
 }
 
+function renderLoginSessionInfo(session = state.sessionInfo || {}) {
+  const configured = session.setup_token_configured !== false;
+  const cookie = session.cookie || {};
+  const cookieName = cookie.name || "pantryos_session";
+  const sameSite = cookie.same_site || "Lax";
+  const secureLabel = cookie.secure ? "Secure" : "Local HTTP";
+  const input = $("#setupTokenInput");
+  const submit = $("#loginSubmitButton");
+  const toggle = $("#toggleTokenButton");
+
+  $("#loginStatus").textContent = configured
+    ? "Local setup token required."
+    : "Setup token is not configured on this PantryOS server.";
+  $("#loginCookiePolicy").textContent = `${cookieName} | HttpOnly | SameSite=${sameSite} | ${secureLabel}`;
+  $("#loginConfigStatus").textContent = configured ? "Ready" : "PANTRYOS_API_TOKEN missing";
+  input.type = "password";
+  toggle.textContent = "Show";
+  toggle.setAttribute("aria-pressed", "false");
+  input.disabled = !configured;
+  submit.disabled = !configured;
+  toggle.disabled = !configured;
+}
+
+function setLoginBusy(busy) {
+  const configured = state.sessionInfo?.setup_token_configured !== false;
+  const input = $("#setupTokenInput");
+  const submit = $("#loginSubmitButton");
+  const toggle = $("#toggleTokenButton");
+  input.disabled = busy || !configured;
+  submit.disabled = busy || !configured;
+  toggle.disabled = busy || !configured;
+  submit.textContent = busy ? "Signing In" : "Sign In";
+  $("#loginForm").setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function loginFailureMessage(error) {
+  if (error.code === "auth_not_configured") {
+    return "Set PANTRYOS_API_TOKEN on the PantryOS server, then restart PantryOS.";
+  }
+  if (error.code === "unauthorized") {
+    return "Setup token did not match this PantryOS server.";
+  }
+  return error.message;
+}
+
+function toggleSetupTokenVisibility() {
+  const input = $("#setupTokenInput");
+  const toggle = $("#toggleTokenButton");
+  const visible = input.type === "password";
+  input.type = visible ? "text" : "password";
+  toggle.textContent = visible ? "Hide" : "Show";
+  toggle.setAttribute("aria-pressed", visible ? "true" : "false");
+  input.focus();
+}
+
 function setAuthenticated(authenticated) {
   state.authenticated = authenticated;
   $("#loginPanel").hidden = authenticated;
@@ -1125,6 +1185,9 @@ function setAuthenticated(authenticated) {
   $("#seedButton").hidden = !authenticated;
   $("#resetButton").hidden = !authenticated;
   $("#logoutButton").hidden = !authenticated;
+  if (!authenticated && state.sessionInfo) {
+    renderLoginSessionInfo();
+  }
 }
 
 async function bootstrapApp() {
@@ -1137,6 +1200,7 @@ async function bootstrapApp() {
 
 async function loadSession() {
   const session = await api("/api/session");
+  state.sessionInfo = session;
   state.csrfToken = session.csrf_token || "";
   setAuthenticated(Boolean(session.authenticated));
   if (state.authenticated) {
@@ -1149,17 +1213,24 @@ async function handleLogin(event) {
   const form = event.currentTarget;
   const error = $("#loginError");
   error.textContent = "";
+  setLoginBusy(true);
   try {
     const session = await api("/api/session/login", {
       method: "POST",
       body: JSON.stringify({ token: form.elements.token.value }),
     });
+    state.sessionInfo = session;
     state.csrfToken = session.csrf_token || "";
     form.reset();
     setAuthenticated(true);
     await bootstrapApp();
   } catch (loginError) {
-    error.textContent = loginError.message;
+    error.textContent = loginFailureMessage(loginError);
+    error.focus();
+  } finally {
+    if (!state.authenticated) {
+      setLoginBusy(false);
+    }
   }
 }
 
@@ -1195,6 +1266,7 @@ async function main() {
   setupBarcodeScanner();
   setAuthenticated(false);
   $("#loginForm").addEventListener("submit", (event) => handleLogin(event).catch(handleActionError));
+  $("#toggleTokenButton").addEventListener("click", toggleSetupTokenVisibility);
   $("#logoutButton").addEventListener("click", () => handleLogout().catch(handleActionError));
   $("#itemForm").addEventListener("submit", (event) => handleItemSubmit(event).catch(handleActionError));
   $("#barcodeForm").addEventListener("submit", (event) => handleBarcodeSubmit(event).catch(handleActionError));
