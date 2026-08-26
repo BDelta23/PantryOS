@@ -1267,6 +1267,8 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     index_html = (static_dir / "index.html").read_text(encoding="utf-8")
     manifest = json.loads((static_dir / "manifest.webmanifest").read_text(encoding="utf-8"))
     service_worker = (static_dir / "service-worker.js").read_text(encoding="utf-8")
+    browser_smoke = (Path(__file__).resolve().parents[1] / "scripts" / "browser_smoke.cjs").read_text(encoding="utf-8")
+    styles = (static_dir / "styles.css").read_text(encoding="utf-8")
 
     assert "Cooking mode queued" not in app_js
     assert "loginStatus" in index_html
@@ -1275,6 +1277,17 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "toggleTokenButton" in index_html
     assert "setup_token_configured" in app_js
     assert "loginFailureMessage" in app_js
+    assert '<main id="loginPanel"' in index_html
+    assert "</form>\n    </main>\n\n    <main id=\"appShell\"" in index_html
+    assert '<main id="appShell"' in index_html
+    assert 'aria-label="Barcode camera preview"' in index_html
+    assert "--amber: #8a4b10" in styles
+    assert "contrastRatio" in browser_smoke
+    assert "Document language must be set" in browser_smoke
+    assert "references missing" in browser_smoke
+    assert "Focusable target is smaller than 24px" in browser_smoke
+    assert "completed workflow" in browser_smoke
+    assert 'serviceWorkers: "block"' in browser_smoke
     assert "toggleSetupTokenVisibility" in app_js
     assert "auth_not_configured" in app_js
     assert "/api/cooking/sessions" in app_js

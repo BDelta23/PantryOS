@@ -103,7 +103,7 @@ async function expectVisibleText(page, text) {
   await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 });
 }
 
-async function assertNoCriticalA11yIssues(page) {
+async function assertNoCriticalA11yIssues(page, label) {
   const issues = await page.evaluate(() => {
     const failures = [];
     const visible = (element) => {
@@ -112,9 +112,18 @@ async function assertNoCriticalA11yIssues(page) {
       const rect = element.getBoundingClientRect();
       return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
     };
-    const text = (element) => (element.innerText || element.textContent || "").trim();
+    const text = (element) => (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+    const describe = (element) => {
+      const id = element.id ? `#${element.id}` : "";
+      const classes = [...element.classList].slice(0, 3).map((value) => `.${value}`).join("");
+      return `${element.tagName.toLowerCase()}${id}${classes}`;
+    };
     const labelText = (control) => {
       if (control.getAttribute("aria-label")) return control.getAttribute("aria-label").trim();
+      if (control.getAttribute("aria-labelledby")) {
+        const labelled = control.getAttribute("aria-labelledby").split(/\s+/).map((id) => document.getElementById(id)).filter(Boolean).map(text).join(" ").trim();
+        if (labelled) return labelled;
+      }
       if (control.id) {
         const explicit = document.querySelector(`label[for="${CSS.escape(control.id)}"]`);
         if (explicit && text(explicit)) return text(explicit);
@@ -122,6 +131,54 @@ async function assertNoCriticalA11yIssues(page) {
       const parent = control.closest("label");
       return parent ? text(parent) : "";
     };
+    const accessibleName = (element) => {
+      if (element.getAttribute("aria-label")) return element.getAttribute("aria-label").trim();
+      if (element.getAttribute("aria-labelledby")) {
+        const labelled = element.getAttribute("aria-labelledby").split(/\s+/).map((id) => document.getElementById(id)).filter(Boolean).map(text).join(" ").trim();
+        if (labelled) return labelled;
+      }
+      return text(element);
+    };
+    const parseColor = (value) => {
+      const match = value.match(/rgba?\(([^)]+)\)/);
+      if (!match) return null;
+      const parts = match[1].split(",").map((part) => Number.parseFloat(part.trim()));
+      if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return null;
+      const alpha = parts.length > 3 ? parts[3] : 1;
+      return { r: parts[0], g: parts[1], b: parts[2], a: Number.isNaN(alpha) ? 1 : alpha };
+    };
+    const blend = (foreground, background) => ({
+      r: foreground.r * foreground.a + background.r * (1 - foreground.a),
+      g: foreground.g * foreground.a + background.g * (1 - foreground.a),
+      b: foreground.b * foreground.a + background.b * (1 - foreground.a),
+      a: 1,
+    });
+    const luminance = (color) => {
+      const channel = (value) => {
+        const normalized = value / 255;
+        return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+    };
+    const contrastRatio = (foreground, background) => {
+      const front = foreground.a < 1 ? blend(foreground, background) : foreground;
+      const lighter = Math.max(luminance(front), luminance(background));
+      const darker = Math.min(luminance(front), luminance(background));
+      return (lighter + 0.05) / (darker + 0.05);
+    };
+    const effectiveBackground = (element) => {
+      for (let current = element; current; current = current.parentElement) {
+        const color = parseColor(window.getComputedStyle(current).backgroundColor);
+        if (color && color.a > 0) return color;
+      }
+      return { r: 255, g: 255, b: 255, a: 1 };
+    };
+
+    if (document.documentElement.lang !== "en") failures.push("Document language must be set to en");
+    if (!document.title.trim()) failures.push("Document title is empty");
+    if (document.querySelectorAll("main:not([hidden])").length !== 1) failures.push("Exactly one visible main landmark is required");
+    if (!document.querySelector("header")) failures.push("Header landmark is missing");
+    if (document.querySelectorAll("h1").length !== 1) failures.push("Exactly one h1 is required");
 
     const ids = new Map();
     for (const element of document.querySelectorAll("[id]")) {
@@ -131,15 +188,35 @@ async function assertNoCriticalA11yIssues(page) {
       if (count > 1) failures.push(`Duplicate id ${id}`);
     }
 
+    for (const element of document.querySelectorAll("[aria-controls], [aria-describedby], [aria-labelledby]")) {
+      for (const attr of ["aria-controls", "aria-describedby", "aria-labelledby"]) {
+        const value = element.getAttribute(attr);
+        if (!value) continue;
+        for (const id of value.split(/\s+/).filter(Boolean)) {
+          if (!document.getElementById(id)) failures.push(`${describe(element)} references missing ${attr} target ${id}`);
+        }
+      }
+    }
+
+    for (const element of document.querySelectorAll("[role]")) {
+      const role = element.getAttribute("role");
+      if (!["alert", "status", "button", "list", "listitem", "dialog", "switch", "checkbox", "group"].includes(role)) {
+        failures.push(`${describe(element)} uses unexpected role ${role}`);
+      }
+    }
+
     for (const control of document.querySelectorAll("input, textarea, select")) {
       if (!visible(control)) continue;
       if (control.type === "hidden") continue;
-      if (!labelText(control)) failures.push(`Visible form control missing label: ${control.outerHTML.slice(0, 120)}`);
+      if (!labelText(control)) failures.push(`Visible form control missing label: ${describe(control)}`);
+      if (control.hasAttribute("required") && control.getAttribute("aria-invalid") === "true" && !control.getAttribute("aria-describedby")) {
+        failures.push(`Invalid required control lacks described error: ${describe(control)}`);
+      }
     }
 
-    for (const button of document.querySelectorAll("button")) {
+    for (const button of document.querySelectorAll("button, [role='button']")) {
       if (!visible(button)) continue;
-      if (!text(button) && !button.getAttribute("aria-label")) failures.push("Visible button missing accessible name");
+      if (!accessibleName(button)) failures.push(`Visible button missing accessible name: ${describe(button)}`);
     }
 
     for (const form of document.querySelectorAll("form")) {
@@ -148,10 +225,58 @@ async function assertNoCriticalA11yIssues(page) {
       if (!submit) failures.push(`Visible form missing submit control: ${form.id || "unnamed"}`);
     }
 
+    for (const image of document.querySelectorAll("img")) {
+      if (visible(image) && !image.hasAttribute("alt")) failures.push(`Visible image missing alt text: ${describe(image)}`);
+    }
+
+    for (const media of document.querySelectorAll("video, audio")) {
+      if (visible(media) && !media.hasAttribute("aria-label") && !media.hasAttribute("aria-labelledby") && !media.closest("figure")) {
+        failures.push(`Visible media lacks an accessible label: ${describe(media)}`);
+      }
+    }
+
+    const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    for (const element of document.querySelectorAll(focusableSelector)) {
+      if (!visible(element)) continue;
+      const rect = element.getBoundingClientRect();
+      if ((rect.width < 24 || rect.height < 24) && element.type !== "checkbox") {
+        failures.push(`Focusable target is smaller than 24px: ${describe(element)} ${Math.round(rect.width)}x${Math.round(rect.height)}`);
+      }
+      const outline = window.getComputedStyle(element, ":focus").outlineStyle;
+      if (outline === "none" && !window.getComputedStyle(element, ":focus").boxShadow) {
+        failures.push(`Focusable target lacks visible focus styling: ${describe(element)}`);
+      }
+    }
+
+    const checkedContrast = new Set();
+    for (const element of document.querySelectorAll("body *")) {
+      if (!visible(element) || !text(element)) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) continue;
+      const key = `${window.getComputedStyle(element).color}|${window.getComputedStyle(element).backgroundColor}|${window.getComputedStyle(element).fontSize}|${window.getComputedStyle(element).fontWeight}`;
+      if (checkedContrast.has(key)) continue;
+      checkedContrast.add(key);
+      const color = parseColor(window.getComputedStyle(element).color);
+      const background = effectiveBackground(element);
+      if (!color || !background) continue;
+      const ratio = contrastRatio(color, background);
+      const fontSize = Number.parseFloat(window.getComputedStyle(element).fontSize);
+      const fontWeight = Number.parseInt(window.getComputedStyle(element).fontWeight, 10) || 400;
+      const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);
+      const minimum = largeText ? 3 : 4.5;
+      if (ratio < minimum) {
+        failures.push(`Insufficient contrast ${ratio.toFixed(2)}:1 on ${describe(element)}; required ${minimum}:1`);
+      }
+      if (checkedContrast.size > 60) break;
+    }
+
+    const liveStatus = [...document.querySelectorAll('[role="status"], [aria-live]')].filter(visible);
+    if (!liveStatus.length) failures.push("At least one visible live status region is required");
+
     return failures;
   });
   if (issues.length) {
-    throw new Error(`Critical accessibility checks failed:\n- ${issues.join("\n- ")}`);
+    throw new Error(`${label} accessibility checks failed:\n- ${issues.join("\n- ")}`);
   }
 }
 
@@ -175,7 +300,8 @@ async function assertNoHorizontalOverflow(page, viewportName) {
 }
 
 async function runViewport(browser, baseUrl, viewport) {
-  const page = await browser.newPage({ viewport: viewport.size });
+  const context = await browser.newContext({ viewport: viewport.size, serviceWorkers: "block" });
+  const page = await context.newPage();
   const cameraBarcode = `990${Math.floor(100000000 + Math.random() * 899999999)}`;
   await page.addInitScript((barcode) => {
     window.__pantryosBarcodeScannerSmoke = { attached: false, detected: false, stopped: false };
@@ -223,6 +349,8 @@ async function runViewport(browser, baseUrl, viewport) {
 
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await expectVisibleText(page, "Local setup token required.");
+  await assertNoCriticalA11yIssues(page, `${viewport.name} login`);
+
   const tokenInput = page.locator("#setupTokenInput");
   await page.getByRole("button", { name: "Show" }).click();
   if ((await tokenInput.getAttribute("type")) !== "text") {
@@ -238,7 +366,7 @@ async function runViewport(browser, baseUrl, viewport) {
   await expectVisibleText(page, "Chicken Breast");
 
   await assertNoHorizontalOverflow(page, viewport.name);
-  await assertNoCriticalA11yIssues(page);
+  await assertNoCriticalA11yIssues(page, `${viewport.name} initial app`);
 
   const suffix = `${viewport.name}-${Date.now()}`;
   await page.locator('#barcodeForm [name="barcode"]').fill("");
@@ -341,7 +469,7 @@ async function runViewport(browser, baseUrl, viewport) {
   await page.waitForTimeout(100);
 
   await assertNoHorizontalOverflow(page, viewport.name);
-  await assertNoCriticalA11yIssues(page);
+  await assertNoCriticalA11yIssues(page, `${viewport.name} completed workflow`);
 
   if (httpErrors.length) {
     throw new Error(`${viewport.name} unexpected HTTP errors:\n- ${httpErrors.join("\n- ")}`);
@@ -349,7 +477,7 @@ async function runViewport(browser, baseUrl, viewport) {
   if (consoleErrors.length) {
     throw new Error(`${viewport.name} console errors:\n- ${consoleErrors.join("\n- ")}`);
   }
-  await page.close();
+  await context.close();
   return { viewport: viewport.name, itemName, recipeName, barcodeItem, receiptItem };
 }
 

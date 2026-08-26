@@ -269,7 +269,7 @@ In the Codex bundled Python runtime, `pytest` may not be installed. The dependen
 python scripts/check.py
 ```
 
-Run the browser viewport/accessibility smoke with Playwright available to Node and a Chromium browser installed for that Playwright runtime:
+Run the browser viewport/accessibility smoke with Playwright available to Node and a Chromium browser installed for that Playwright runtime. The smoke starts a temporary PantryOS server, blocks service workers for online workflow checks, runs phone and kitchen-tablet viewports, exercises the primary browser workflows, and audits login/app/completed states for landmarks, labels, ARIA references, media labels, live regions, focusable target sizing, focus styling, duplicate IDs, and text contrast:
 
 ```powershell
 $env:PYTHON = "C:\Users\Kronus\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"

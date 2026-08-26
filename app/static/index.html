@@ -22,7 +22,7 @@
       </div>
     </header>
 
-    <section id="loginPanel" class="login-panel">
+    <main id="loginPanel" class="login-panel">
       <form id="loginForm" class="login-form" aria-describedby="loginStatus tokenHelp">
         <h2>Unlock PantryOS</h2>
         <p id="loginStatus" class="login-status" role="status">Checking local session settings...</p>
@@ -45,7 +45,7 @@
         </dl>
         <p id="loginError" class="form-error" role="alert" tabindex="-1"></p>
       </form>
-    </section>
+    </main>
 
     <main id="appShell" class="shell" hidden>
       <section class="status-grid" aria-label="Kitchen dashboard">
@@ -152,7 +152,7 @@
             <form id="barcodeForm" class="form-grid split-tool">
               <label>Barcode<input name="barcode" inputmode="numeric" placeholder="012345678905" required /></label>
               <div id="barcodeScannerPanel" class="scanner-panel" hidden>
-                <video id="barcodeVideo" playsinline muted></video>
+                <video id="barcodeVideo" playsinline muted aria-label="Barcode camera preview"></video>
                 <p id="barcodeScannerStatus" class="row-subtitle" role="status"></p>
                 <div class="row">
                   <button id="barcodeCameraButton" class="secondary" type="button">Use Camera</button>
