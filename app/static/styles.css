@@ -307,6 +307,10 @@ h2 {
   width: 74px;
 }
 
+.item-actions .location-input {
+  width: 132px;
+}
+
 .tool-panel {
   display: grid;
   gap: 14px;
@@ -462,7 +466,10 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .item-actions input,
+  .item-actions .location-input,
   .section-heading input {
     max-width: none;
+    width: 100%;
   }
 }

@@ -612,6 +612,13 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
                 csrf_token=csrf_token,
                 payload={"name": "Browser Rice", "quantity": "2", "unit": "cup", "location": "Kitchen/Pantry"},
             )
+            moved = request_json(
+                f"{base}/api/items/{rice['item']['id']}/move",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"location": "Kitchen/Refrigerator/Top Shelf"},
+            )
             request_json(
                 f"{base}/api/recipes",
                 method="POST",
@@ -655,6 +662,8 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     assert checked["item"]["checked"] is True
     assert purchase["purchase"]["store"] == "Browser Market"
     assert purchase["lots"][0]["name"] == "Browser Oats"
+    assert moved["item"]["location"] == "Kitchen/Refrigerator/Top Shelf"
+    assert moved["revision"] > rice["revision"]
     assert started["session"]["status"] == "cooking"
     assert completed["session"]["status"] == "completed"
     assert completed["leftovers"][0]["name"] == "Browser Rice Bowl Leftovers"
@@ -939,6 +948,9 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "Manual barcode entry is available" in app_js
     assert "handleStartCooking" in app_js
     assert "handlePurchaseSubmit" in app_js
+    assert "renderKnownLocations" in app_js
+    assert "data-move-location" in app_js
+    assert "/move" in app_js
     assert "renderPurchases" in app_js
     assert "handlePurchaseDetail" in app_js
     assert "handlePriceAnalysis" in app_js
@@ -948,6 +960,7 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "rel=\"manifest\" href=\"/manifest.webmanifest\"" in index_html
     assert "name=\"theme-color\"" in index_html
     assert "id=\"cookingForm\"" in index_html
+    assert "id=\"knownLocations\"" in index_html
     assert "id=\"purchaseForm\"" in index_html
     assert "id=\"purchaseHistoryList\"" in index_html
     assert "id=\"purchaseDetail\"" in index_html

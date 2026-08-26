@@ -124,6 +124,7 @@ function render() {
   renderShopping(data.shopping_list, summary.suggested_purchases);
   renderMeals(data.meals_with_two_or_fewer_missing);
   renderInventory(data.items);
+  renderKnownLocations(data.summary.locations || []);
   renderRecipes(data.recipes, data.summary.possible_meals);
   renderReceiptReview();
   renderPurchases();
@@ -377,6 +378,14 @@ function renderMeals(meals) {
     .join("");
 }
 
+function renderKnownLocations(locations) {
+  const datalist = $("#knownLocations");
+  if (!datalist) return;
+  datalist.innerHTML = locations
+    .map((location) => `<option value="${escapeHtml(location.path || location.name || location)}"></option>`)
+    .join("");
+}
+
 function renderInventory(items) {
   const list = $("#inventoryList");
   const filter = state.filter.trim().toLowerCase();
@@ -401,6 +410,8 @@ function renderInventory(items) {
           <div class="item-actions">
             <input aria-label="Consume quantity for ${escapeHtml(item.name)}" value="1" inputmode="decimal" data-consume-qty="${escapeHtml(item.id)}" />
             <button class="secondary" type="button" data-consume="${escapeHtml(item.id)}">Consume</button>
+            <input class="location-input" aria-label="Move ${escapeHtml(item.name)} to location" list="knownLocations" placeholder="Move to" value="${escapeHtml(item.location)}" data-move-location="${escapeHtml(item.id)}" />
+            <button class="secondary" type="button" data-move="${escapeHtml(item.id)}">Move</button>
             <button class="danger" type="button" data-delete="${escapeHtml(item.id)}">Delete</button>
           </div>
         </article>`
@@ -794,6 +805,22 @@ async function handlePageClick(event) {
       body: JSON.stringify({ quantity: qty }),
     });
     showToast("Inventory updated");
+    await refresh();
+    return;
+  }
+
+  const moveId = target.dataset.move;
+  if (moveId) {
+    const location = document.querySelector(`[data-move-location="${moveId}"]`)?.value?.trim();
+    if (!location) {
+      showToast("Choose a destination location");
+      return;
+    }
+    await api(`/api/items/${encodeURIComponent(moveId)}/move`, {
+      method: "POST",
+      body: JSON.stringify({ location }),
+    });
+    showToast("Food moved");
     await refresh();
     return;
   }
