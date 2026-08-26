@@ -573,6 +573,38 @@ def test_manual_release_evidence_rejects_tracked_review_without_target_commit() 
     } in result["problems"]
 
 
+def test_manual_release_evidence_rejects_future_pass_timestamps() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "b" * 40
+        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        checks[0]["timestamp_utc"] = "2999-01-01T00:00:00Z"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[physical-barcode-camera].timestamp_utc",
+        "problem": "must not be in the future",
+    } in result["problems"]
+
+
 def test_manual_release_evidence_rejects_incomplete_records() -> None:
     from scripts import manual_release_evidence
 

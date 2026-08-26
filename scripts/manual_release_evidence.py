@@ -368,6 +368,9 @@ def _validate_timestamp(value: Any, field: str, problems: list[dict[str, str]]) 
         return
     if parsed.tzinfo is None or parsed.astimezone(UTC).isoformat().endswith("+00:00") is False:
         problems.append({"field": field, "problem": "must include UTC timezone"})
+        return
+    if parsed.astimezone(UTC) > datetime.now(UTC):
+        problems.append({"field": field, "problem": "must not be in the future"})
 
 
 def _require_clean_string(value: Any, field: str, problems: list[dict[str, str]]) -> None:
