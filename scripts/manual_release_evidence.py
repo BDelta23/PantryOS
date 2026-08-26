@@ -59,6 +59,9 @@ SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 BARCODE_RE = re.compile(r"^\d{8,14}$")
+SYNTHETIC_RECEIPT_SOURCE_TERMS = ("synthetic", "fixture", "generated", "mock", "sample", "test")
+OCR_CAPTURE_TERMS = ("ocr", "tesseract")
+IMAGE_CAPTURE_TERMS = ("photo", "image", "camera", "scan", "scanned", "jpeg", "jpg", "png")
 
 
 class ManualReleaseEvidenceError(AssertionError):
@@ -320,6 +323,24 @@ def _validate_check_specific_details(
         if fallback_result and "manual" not in fallback_result:
             problems.append({"field": f"{prefix}.details.manual_fallback_result", "problem": "must describe the manual fallback"})
     elif check_id == "real-receipt-ocr":
+        receipt_source = str(details.get("receipt_source", "")).strip().lower()
+        if receipt_source and any(term in receipt_source for term in SYNTHETIC_RECEIPT_SOURCE_TERMS):
+            problems.append(
+                {
+                    "field": f"{prefix}.details.receipt_source",
+                    "problem": "must describe a representative real receipt, not synthetic or test data",
+                }
+            )
+        capture_method = str(details.get("capture_method", "")).strip().lower()
+        if capture_method and (
+            not any(term in capture_method for term in OCR_CAPTURE_TERMS) or not any(term in capture_method for term in IMAGE_CAPTURE_TERMS)
+        ):
+            problems.append(
+                {
+                    "field": f"{prefix}.details.capture_method",
+                    "problem": "must describe OCR extraction from a receipt image, photo, camera capture, or scan",
+                }
+            )
         receipt_id = details.get("receipt_id")
         if not isinstance(receipt_id, str) or not receipt_id.strip().startswith("receipt_"):
             problems.append({"field": f"{prefix}.details.receipt_id", "problem": "must be a committed receipt_ identifier"})

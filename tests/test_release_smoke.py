@@ -48,6 +48,8 @@ def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -
         elif check_id == "real-receipt-ocr":
             details.update(
                 {
+                    "receipt_source": "Real grocery receipt from Example Market",
+                    "capture_method": "Phone photo image processed through PantryOS OCR",
                     "receipt_id": "receipt_123",
                     "purchase_id": "purchase_123",
                     "committed_lot_count": "2",
@@ -486,6 +488,8 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
             elif check_id == "real-receipt-ocr":
                 details.update(
                     {
+                        "receipt_source": "Real grocery receipt from Example Market",
+                        "capture_method": "Phone photo image processed through PantryOS OCR",
                         "receipt_id": "receipt_123",
                         "purchase_id": "purchase_123",
                         "committed_lot_count": "2",
@@ -1231,6 +1235,46 @@ def test_manual_release_evidence_rejects_invalid_physical_barcode_check_digits()
     assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be a valid 8 to 14 digit GTIN"
 
 
+def test_manual_release_evidence_rejects_synthetic_receipt_source_and_manual_capture() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "real-receipt-ocr":
+                check["details"]["receipt_source"] = "Generated synthetic test receipt fixture"
+                check["details"]["capture_method"] = "Manual text entry from the receipt"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    fields = {problem["field"]: problem["problem"] for problem in result["problems"]}
+    assert (
+        fields["checks[real-receipt-ocr].details.receipt_source"]
+        == "must describe a representative real receipt, not synthetic or test data"
+    )
+    assert (
+        fields["checks[real-receipt-ocr].details.capture_method"]
+        == "must describe OCR extraction from a receipt image, photo, camera capture, or scan"
+    )
+
+
 def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> None:
     from scripts import manual_release_evidence
 
@@ -1262,6 +1306,8 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
             elif check_id == "real-receipt-ocr":
                 details.update(
                     {
+                        "receipt_source": "Real grocery receipt from Example Market",
+                        "capture_method": "Phone photo image processed through PantryOS OCR",
                         "receipt_id": "123",
                         "purchase_id": "123",
                         "committed_lot_count": "0",
@@ -1357,6 +1403,8 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
             elif check_id == "real-receipt-ocr":
                 details.update(
                     {
+                        "receipt_source": "Real grocery receipt from Example Market",
+                        "capture_method": "Phone photo image processed through PantryOS OCR",
                         "receipt_id": "receipt_123",
                         "purchase_id": "purchase_123",
                         "committed_lot_count": "2",
@@ -1585,6 +1633,8 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
             elif check_id == "real-receipt-ocr":
                 details.update(
                     {
+                        "receipt_source": "Real grocery receipt from Example Market",
+                        "capture_method": "Phone photo image processed through PantryOS OCR",
                         "receipt_id": "receipt_123",
                         "purchase_id": "purchase_123",
                         "committed_lot_count": "2",
