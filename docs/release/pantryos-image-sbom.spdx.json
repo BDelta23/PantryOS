@@ -42,7 +42,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "4af0397320fd933ca3b9a10f80b97b40e14770a7560c7647a8b9aa734bed6d4c"
+          "checksumValue": "5d5ad0af488a366547f6adb0582691a089c4d7cc216d2d74aa73b4c9b2c334f6"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -410,6 +410,18 @@
       "licenseConcluded": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-File-scripts-receipt-ocr-corpus-smoke.py",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "10ab4635484836e97ff9d07ddd5416afcfa8f5fce2f0fa13de0d01e8d3ad2b50"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "fileName": "scripts/receipt_ocr_corpus_smoke.py",
+      "licenseConcluded": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-File-scripts-release-artifact-audit.py",
       "checksums": [
         {
@@ -426,7 +438,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "a500ca66487b23179c56e4c856c1aab8dc1fd6c7f78b53eb4aa3313b9dd9b08c"
+          "checksumValue": "6cc6d1a19dea4ad38aa0caa0a4391f41b5b93b765bffa87074fb12d25a9c89d4"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -750,7 +762,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "c751d13e3b597f8dc6bc01102e4ca53b06089449a7a1a7ddaf2cd09576331857"
+          "checksumValue": "0dc0b7e35b4209e5ee44240883bfd80c28db157f1c5e471eda2c68bcfb2edeb0"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -777,7 +789,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "34054a2a70f8433c489f0eb5750de3f0d7a155bdcca1388a0a656de7e926ab06"
+          "checksumValue": "2a6288663703bd1dfde724be8096368d992f370e5edf9ebe50fabdf2f22d8ffd"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -3635,8 +3647,8 @@
     "sbom_path": "docs/release/pantryos-image-sbom.spdx.json",
     "schema_version": 1,
     "signing_policy": "docs/release/SUPPLY_CHAIN.md",
-    "source_file_count": 63,
-    "source_tree_sha256": "34054a2a70f8433c489f0eb5750de3f0d7a155bdcca1388a0a656de7e926ab06"
+    "source_file_count": 64,
+    "source_tree_sha256": "2a6288663703bd1dfde724be8096368d992f370e5edf9ebe50fabdf2f22d8ffd"
   },
   "relationships": [
     {

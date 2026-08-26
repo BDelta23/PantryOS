@@ -66,6 +66,23 @@ def test_home_assistant_installed_smoke_runner_is_documented_and_scoped() -> Non
     assert "PANTRYOS_HA_IMAGE" in readme
     assert "installed Home Assistant" in readme
 
+
+def test_receipt_ocr_corpus_smoke_runner_is_documented_and_scoped() -> None:
+    from scripts import receipt_ocr_corpus_smoke
+
+    args = receipt_ocr_corpus_smoke.build_parser().parse_args(["--container", "pantryos-test", "--timeout", "15"])
+    assert args.container == "pantryos-test"
+    assert args.timeout == 15
+    assert len(receipt_ocr_corpus_smoke.CORPUS_CASES) == 3
+    assert "text2image" in receipt_ocr_corpus_smoke.CONTAINER_RUNNER
+    assert "_extract_receipt_image" in receipt_ocr_corpus_smoke.CONTAINER_RUNNER
+    assert "upload_receipt" in receipt_ocr_corpus_smoke.CONTAINER_RUNNER
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "python scripts/receipt_ocr_corpus_smoke.py" in readme
+    assert "temporary SQLite database" in readme
+    assert "does not mutate your PantryOS database" in readme
+
 def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     from scripts import release_readiness
 

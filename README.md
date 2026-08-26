@@ -80,6 +80,14 @@ python scripts/container_smoke.py
 
 The container smoke builds and starts the Compose service, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/app/data`, compares source/restored counts, and runs the dependency-free verifier inside the image.
 
+Run the deterministic receipt OCR corpus smoke against the running PantryOS container:
+
+```powershell
+python scripts/receipt_ocr_corpus_smoke.py
+```
+
+The OCR corpus smoke generates multiple receipt images inside the container with `text2image`, extracts them through the same local `tesseract` boundary PantryOS uses for image receipts, parses the OCR text through PantryOS Core, and commits the result into a temporary SQLite database. It does not mutate your PantryOS database.
+
 Run the image/container hardening audit when Docker Desktop is started:
 
 ```powershell
