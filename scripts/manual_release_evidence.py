@@ -331,8 +331,13 @@ def _validate_check_specific_details(
         if known_result and "product" not in known_result and "lot" not in known_result:
             problems.append({"field": f"{prefix}.details.known_result", "problem": "must describe the resolved product or lot"})
         fallback_result = str(details.get("manual_fallback_result", "")).strip().lower()
-        if fallback_result and "manual" not in fallback_result:
-            problems.append({"field": f"{prefix}.details.manual_fallback_result", "problem": "must describe the manual fallback"})
+        if fallback_result and ("manual" not in fallback_result or ("product" not in fallback_result and "lot" not in fallback_result)):
+            problems.append(
+                {
+                    "field": f"{prefix}.details.manual_fallback_result",
+                    "problem": "must describe the manual fallback product or lot outcome",
+                }
+            )
     elif check_id == "real-receipt-ocr":
         receipt_source = str(details.get("receipt_source", "")).strip().lower()
         if receipt_source and any(term in receipt_source for term in SYNTHETIC_RECEIPT_SOURCE_TERMS):

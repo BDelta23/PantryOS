@@ -42,7 +42,7 @@ def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -
                     "known_barcode": "012345678905",
                     "known_result": "Resolved known product and created lot lot_known",
                     "unknown_barcode": "4006381333931",
-                    "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                    "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
                 }
             )
         elif check_id == "real-receipt-ocr":
@@ -482,7 +482,7 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
                         "known_barcode": "012345678905",
                         "known_result": "Resolved known product and created lot lot_known",
                         "unknown_barcode": "4006381333931",
-                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
                     }
                 )
             elif check_id == "real-receipt-ocr":
@@ -884,7 +884,7 @@ def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir(
                                 "known_barcode": "012345678905",
                                 "known_result": "Resolved known product and created lot lot_known",
                                 "unknown_barcode": "4006381333931",
-                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
                             },
                             "evidence": {
                                 "summary": "Physical barcode evidence artifact is in the wrong committed folder.",
@@ -1127,7 +1127,7 @@ def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
                                 "known_barcode": "012345678905",
                                 "known_result": "Resolved known product and created lot lot_known",
                                 "unknown_barcode": "4006381333931",
-                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
                             },
                             "evidence": {
                                 "summary": "Physical barcode evidence artifact is not tracked by git.",
@@ -1233,6 +1233,40 @@ def test_manual_release_evidence_rejects_invalid_physical_barcode_check_digits()
     fields = {problem["field"]: problem["problem"] for problem in result["problems"]}
     assert fields["checks[physical-barcode-camera].details.known_barcode"] == "must be a valid 8 to 14 digit GTIN"
     assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be a valid 8 to 14 digit GTIN"
+
+
+def test_manual_release_evidence_rejects_manual_barcode_fallback_without_product_or_lot() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "physical-barcode-camera":
+                check["details"]["manual_fallback_result"] = "Manual fallback form opened"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[physical-barcode-camera].details.manual_fallback_result",
+        "problem": "must describe the manual fallback product or lot outcome",
+    } in result["problems"]
 
 
 def test_manual_release_evidence_rejects_incomplete_price_history_result() -> None:
@@ -1431,7 +1465,7 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
                         "known_barcode": "012345678905",
                         "known_result": "Resolved known product and created lot lot_known",
                         "unknown_barcode": "4006381333931",
-                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
                     }
                 )
             elif check_id == "real-receipt-ocr":
@@ -1879,7 +1913,7 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
                         "known_barcode": "012345678905",
                         "known_result": "Resolved known product and created lot lot_known",
                         "unknown_barcode": "4006381333931",
-                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
                     }
                 )
             elif check_id == "real-receipt-ocr":
