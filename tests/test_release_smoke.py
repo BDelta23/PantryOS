@@ -968,6 +968,61 @@ def test_manual_release_evidence_rejects_artifact_without_check_id() -> None:
     )
 
 
+def test_manual_release_evidence_rejects_artifact_that_is_not_utf8_text() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.bin"
+        artifact.write_bytes(b"physical-barcode-camera evidence\xff\xfe\xfd")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        commit = "d" * 40
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_commit": commit,
+                    "checks": [
+                        {
+                            "id": "physical-barcode-camera",
+                            "result": "PASS",
+                            "operator": "release-operator",
+                            "timestamp_utc": "2026-08-26T12:00:00Z",
+                            "acceptance": ["F1", "F2", "G5", "G6"],
+                            "details": {
+                                "device": "Pixel 8",
+                                "os": "Android 16",
+                                "browser": "Chrome",
+                                "app_url": "http://127.0.0.1:8765",
+                                "known_barcode": "012345678905",
+                                "known_result": "Resolved known product and created lot lot_known",
+                                "unknown_barcode": "4006381333931",
+                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
+                            },
+                            "evidence": {
+                                "summary": "Physical barcode evidence artifact is not UTF-8 text.",
+                                "artifact_paths": ["docs/release/evidence/manual-check.bin"],
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert any(
+        problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]"
+        and problem["problem"].startswith("must be readable UTF-8 text")
+        for problem in result["problems"]
+    )
+
+
 def test_manual_release_evidence_rejects_non_release_evidence_path() -> None:
     from scripts import manual_release_evidence
 

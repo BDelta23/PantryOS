@@ -661,8 +661,8 @@ def _is_git_clean(path: Path, *, root: Path) -> bool:
 
 def _validate_evidence_artifact_mentions_check(path: Path, *, check_id: str, field: str, problems: list[dict[str, str]]) -> None:
     try:
-        contents = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
+        contents = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
         problems.append({"field": field, "problem": f"must be readable UTF-8 text: {exc}"})
         return
     if check_id not in contents:
