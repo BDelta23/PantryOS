@@ -6,6 +6,7 @@ import py_compile
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -23,8 +24,10 @@ PYTHON_FILES = [
 
 
 def run_python_compile() -> None:
-    for path in PYTHON_FILES:
-        py_compile.compile(str(path), doraise=True)
+    with TemporaryDirectory() as directory:
+        cache_dir = Path(directory)
+        for index, path in enumerate(PYTHON_FILES):
+            py_compile.compile(str(path), cfile=str(cache_dir / f"{index}-{path.stem}.pyc"), doraise=True)
     print(f"python compile: {len(PYTHON_FILES)} files passed")
 
 

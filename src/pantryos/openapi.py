@@ -21,6 +21,7 @@ API_PATHS: tuple[str, ...] = (
     "/api/v1/waste/monthly",
     "/api/v1/purchases",
     "/api/v1/purchases/{id}",
+    "/api/v1/products/{id}",
     "/api/v1/products/{id}/prices",
     "/api/v1/inventory/lots",
     "/api/v1/inventory/lots/{id}/consume",
@@ -99,6 +100,7 @@ POST_METHODS: dict[str, tuple[str, str, str]] = {
 }
 
 PATCH_METHODS: dict[str, tuple[str, str, str]] = {
+    "/api/v1/products/{id}": ("Products", "Update product settings", "ProductUpdateRequest"),
     "/api/v1/receipts/{id}/review": ("Receipts", "Update editable receipt review", "ReceiptReviewRequest"),
     "/api/v1/recipes/{id}": ("Recipes", "Update recipe", "RecipeRequest"),
     "/api/v1/shopping/{id}": ("Shopping", "Update shopping item", "ShoppingUpdateRequest"),
@@ -253,6 +255,7 @@ def _components() -> dict[str, Any]:
             "ReceiptUploadRequest": _object_schema(["filename", "mime_type", "text"], filename="string", mime_type="string", text="string", content="string"),
             "RejectReceiptRequest": _object_schema([], reason="string"),
             "ReceiptReviewRequest": {"type": "object", "additionalProperties": True},
+            "ProductUpdateRequest": _object_schema([], category="string", default_unit="string", minimum_stock_quantity="string", minimum_stock_unit="string", preferred_location="string", default_shelf_life_days="integer", opened_shelf_life_days="integer"),
             "RecipeRequest": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "prep_minutes": {"type": "integer"}, "instructions": {"type": "string"}, "ingredients": {"type": "array", "items": {"type": "object", "additionalProperties": True}}}, "additionalProperties": True},
             "MealPlanRequest": _object_schema(["day", "recipe_name"], day="string", recipe_name="string"),
             "ShoppingRequest": _object_schema(["name", "quantity"], name="string", quantity="string", unit="string", note="string", store="string", source_key="string"),

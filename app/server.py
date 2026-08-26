@@ -788,6 +788,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if recipe_id is not None:
                 self._send_json(update_recipe(self.core, recipe_id, body))
                 return
+            product_id = product_path(parsed.path)
+            if product_id is not None:
+                self._send_json(update_product(self.core, product_id, body))
+                return
             shopping_id = shopping_item_path(parsed.path)
             if shopping_id is not None:
                 result = self.core.update_shopping_item(shopping_id, body)
@@ -1292,6 +1296,17 @@ def product_prices_path(path: str) -> str | None:
     return None
 
 
+def product_path(path: str) -> str | None:
+    for prefix in ("/api/products/", "/api/v1/products/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix:
+            return None
+        return unquote(suffix)
+    return None
+
+
 def barcode_lookup_path(path: str) -> str | None:
     for prefix in ("/api/barcodes/", "/api/v1/barcodes/"):
         if not path.startswith(prefix):
@@ -1421,6 +1436,10 @@ def add_recipe(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:
 def update_recipe(core: PantryCore, recipe_id: str, body: dict[str, Any]) -> dict[str, Any]:
     result = core.update_recipe(recipe_id, body, source="api")
     return {"recipe": recipe_to_legacy(result["recipe"]), "revision": result["revision"]}
+
+
+def update_product(core: PantryCore, product_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return core.update_product(product_id, body, source="api")
 
 
 def delete_recipe(core: PantryCore, recipe_id: str) -> dict[str, Any]:

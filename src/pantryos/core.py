@@ -1053,6 +1053,104 @@ class PantryCore:
         with closing(self.connect()) as connection:
             return self._purchase_snapshot(connection, purchase_id)
 
+    def update_product(self, product_id: str, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            existing = connection.execute("SELECT * FROM products WHERE id = ? AND active = 1", (product_id,)).fetchone()
+            if existing is None:
+                raise NotFoundError(f"Product not found: {product_id}")
+
+            category = existing["category"]
+            default_unit = existing["default_unit"]
+            minimum_stock_quantity = existing["minimum_stock_quantity"]
+            minimum_stock_unit = existing["minimum_stock_unit"]
+            preferred_location_id = existing["preferred_location_id"]
+            default_shelf_life_days = existing["default_shelf_life_days"]
+            opened_shelf_life_days = existing["opened_shelf_life_days"]
+
+            def nullable_text(key: str, current: str | None) -> str | None:
+                if key not in data:
+                    return current
+                value = data[key]
+                if value is None:
+                    return None
+                text = str(value).strip()
+                return text or None
+
+            def nullable_days(key: str, current: int | None) -> int | None:
+                if key not in data:
+                    return current
+                value = data[key]
+                if value is None or str(value).strip() == "":
+                    return None
+                try:
+                    days = int(value)
+                except (TypeError, ValueError) as exc:
+                    raise ValidationError(f"{key} must be an integer") from exc
+                if days < 0:
+                    raise ValidationError(f"{key} must be non-negative")
+                return days
+
+            category = nullable_text("category", category)
+            if "default_unit" in data:
+                default_unit_text = str(data["default_unit"]).strip()
+                if not default_unit_text:
+                    raise ValidationError("default_unit is required")
+                default_unit = unit_code(default_unit_text)
+            minimum_key = "minimum_stock_quantity" if "minimum_stock_quantity" in data else "minimum_stock"
+            if minimum_key in data:
+                minimum_value = data[minimum_key]
+                if minimum_value is None or str(minimum_value).strip() == "":
+                    minimum_stock_quantity = None
+                    minimum_stock_unit = None
+                else:
+                    minimum_stock_quantity = decimal_text(require_non_negative(minimum_value, "minimum_stock_quantity"))
+                    minimum_stock_unit = unit_code(str(data.get("minimum_stock_unit") or minimum_stock_unit or default_unit))
+            elif "minimum_stock_unit" in data and minimum_stock_quantity is not None:
+                minimum_stock_unit = unit_code(str(data.get("minimum_stock_unit") or default_unit))
+            preferred_location = nullable_text("preferred_location", None)
+            if preferred_location is not None:
+                preferred_location_id = self.ensure_location_path(connection, preferred_location)
+            elif "preferred_location" in data or data.get("preferred_location_id") is None and "preferred_location_id" in data:
+                preferred_location_id = None
+            elif "preferred_location_id" in data:
+                location_id = str(data["preferred_location_id"]).strip()
+                location = connection.execute("SELECT id FROM locations WHERE id = ? AND active = 1", (location_id,)).fetchone()
+                if location is None:
+                    raise NotFoundError(f"Location not found: {location_id}")
+                preferred_location_id = location["id"]
+            default_shelf_life_days = nullable_days("default_shelf_life_days", default_shelf_life_days)
+            opened_shelf_life_days = nullable_days("opened_shelf_life_days", opened_shelf_life_days)
+
+            connection.execute(
+                """
+                UPDATE products
+                SET category = ?, default_unit = ?, minimum_stock_quantity = ?, minimum_stock_unit = ?,
+                    preferred_location_id = ?, default_shelf_life_days = ?, opened_shelf_life_days = ?,
+                    updated_at = ?, version = version + 1
+                WHERE id = ?
+                """,
+                (
+                    category,
+                    default_unit,
+                    minimum_stock_quantity,
+                    minimum_stock_unit,
+                    preferred_location_id,
+                    default_shelf_life_days,
+                    opened_shelf_life_days,
+                    utc_now(),
+                    product_id,
+                ),
+            )
+            revision = self._append_event(
+                connection,
+                "product.changed",
+                product_id=product_id,
+                source=source,
+                metadata={"fields": sorted(data.keys())},
+            )
+            product = connection.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+            return {"product": dict(product), "revision": revision}
     def product_prices(self, product_id: str) -> dict[str, Any]:
         self.migrate()
         with closing(self.connect()) as connection:

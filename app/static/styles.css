@@ -311,6 +311,31 @@ h2 {
   width: 132px;
 }
 
+.product-settings-row {
+  gap: 10px;
+}
+
+.product-settings-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.product-settings-grid label {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.product-settings-grid input {
+  min-width: 0;
+  width: 100%;
+}
+
+.product-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .tool-panel {
   display: grid;
   gap: 14px;
@@ -463,6 +488,10 @@ h2 {
   .allocation-row,
   .detail-row,
   .price-row {
+    grid-template-columns: 1fr;
+  }
+
+  .product-settings-grid {
     grid-template-columns: 1fr;
   }
 

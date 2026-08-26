@@ -619,6 +619,31 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
                 csrf_token=csrf_token,
                 payload={"location": "Kitchen/Refrigerator/Top Shelf"},
             )
+            seeded_state = request_json(f"{base}/api/state", cookie=cookie)
+            eggs_product = next(product for product in seeded_state["core"]["products"] if product["name"] == "Eggs")
+            eggs_lot = next(item for item in seeded_state["items"] if item["name"] == "Eggs")
+            product_settings = request_json(
+                f"{base}/api/products/{eggs_product['id']}",
+                method="PATCH",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={
+                    "category": "Protein",
+                    "default_unit": "count",
+                    "minimum_stock_quantity": "18",
+                    "minimum_stock_unit": "count",
+                    "preferred_location": "Kitchen/Refrigerator/Top Shelf",
+                    "default_shelf_life_days": 21,
+                    "opened_shelf_life_days": 7,
+                },
+            )
+            request_json(
+                f"{base}/api/items/{eggs_lot['id']}/consume",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"quantity": eggs_lot["quantity"]},
+            )
             recipe = request_json(
                 f"{base}/api/recipes",
                 method="POST",
@@ -698,6 +723,9 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     assert purchase["lots"][0]["name"] == "Browser Oats"
     assert moved["item"]["location"] == "Kitchen/Refrigerator/Top Shelf"
     assert moved["revision"] > rice["revision"]
+    assert product_settings["product"]["category"] == "Protein"
+    assert product_settings["product"]["minimum_stock_quantity"] == "18"
+    assert product_settings["product"]["default_shelf_life_days"] == 21
     assert updated_recipe["recipe"]["id"] == recipe["recipe"]["id"]
     assert updated_recipe["recipe"]["name"] == "Browser Rice Bowl Deluxe"
     assert updated_recipe["recipe"]["prep_minutes"] == 18
@@ -710,6 +738,9 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     assert completed["leftovers"][0]["name"] == "Browser Rice Bowl Leftovers"
     browser_rice = next(item for item in state["items"] if item["name"] == "Browser Rice")
     assert browser_rice["quantity"] == "1"
+    eggs_suggestion = next(item for item in state["summary"]["suggested_purchases"] if item["name"] == "Eggs")
+    assert eggs_suggestion["quantity"] == "18"
+    assert eggs_suggestion["unit"] == "count"
     recipe_names = [recipe["name"] for recipe in state["recipes"]]
     assert "Browser Rice Bowl Deluxe" in recipe_names
     assert "Browser Rice Bowl" not in recipe_names
@@ -1005,6 +1036,9 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "renderPurchases" in app_js
     assert "handlePurchaseDetail" in app_js
     assert "handlePriceAnalysis" in app_js
+    assert "renderProductSettings" in app_js
+    assert "data-product-save" in app_js
+    assert "minimum_stock_quantity" in app_js
     assert "recent_median_compatible_unit" not in app_js
     assert "navigator.serviceWorker.register(\"/service-worker.js\")" in app_js
     assert "PantryOS Core is offline; the request was not committed." in app_js
@@ -1020,6 +1054,7 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "id=\"purchaseHistoryList\"" in index_html
     assert "id=\"purchaseDetail\"" in index_html
     assert "id=\"priceAnalysis\"" in index_html
+    assert "id=\"productSettingsList\"" in index_html
     assert "id=\"barcodeForm\"" in index_html
     assert "id=\"barcodeScannerPanel\"" in index_html
     assert "id=\"barcodeVideo\"" in index_html

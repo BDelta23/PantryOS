@@ -126,6 +126,7 @@ function render() {
   renderMeals(data.meals_with_two_or_fewer_missing);
   renderInventory(data.items);
   renderKnownLocations(data.summary.locations || []);
+  renderProductSettings(data.core.products || []);
   renderRecipes(data.recipes, data.summary.possible_meals);
   renderReceiptReview();
   renderPurchases();
@@ -385,6 +386,50 @@ function renderKnownLocations(locations) {
   datalist.innerHTML = locations
     .map((location) => `<option value="${escapeHtml(location.path || location.name || location)}"></option>`)
     .join("");
+}
+
+function renderProductSettings(products) {
+  const list = $("#productSettingsList");
+  if (!list) return;
+  const activeProducts = products.filter((product) => product.active !== 0).slice(0, 12);
+  if (!activeProducts.length) {
+    list.innerHTML = `<li class="empty">Add food to configure product defaults.</li>`;
+    return;
+  }
+  list.innerHTML = activeProducts
+    .map((product) => {
+      const productId = escapeHtml(product.id);
+      return `
+        <li class="list-row product-settings-row">
+          <div class="row-title">
+            <span>${escapeHtml(product.name)}</span>
+            <span class="badge">${escapeHtml(product.default_unit || "count")}</span>
+          </div>
+          <div class="product-settings-grid">
+            <label>Category<input value="${escapeHtml(product.category || "")}" data-product-category="${productId}" /></label>
+            <label>Default unit<input value="${escapeHtml(product.default_unit || "count")}" data-product-unit="${productId}" /></label>
+            <label>Min<input inputmode="decimal" value="${escapeHtml(product.minimum_stock_quantity || "")}" data-product-minimum="${productId}" /></label>
+            <label>Min unit<input value="${escapeHtml(product.minimum_stock_unit || product.default_unit || "count")}" data-product-minimum-unit="${productId}" /></label>
+            <label>Location<input list="knownLocations" value="${escapeHtml(productPreferredLocation(product))}" data-product-location="${productId}" /></label>
+            <label>Shelf days<input inputmode="numeric" value="${escapeHtml(product.default_shelf_life_days ?? "")}" data-product-shelf="${productId}" /></label>
+            <label>Opened days<input inputmode="numeric" value="${escapeHtml(product.opened_shelf_life_days ?? "")}" data-product-opened-shelf="${productId}" /></label>
+          </div>
+          <div class="product-settings-actions">
+            <button class="secondary" type="button" data-product-save="${productId}">Save</button>
+          </div>
+        </li>`;
+    })
+    .join("");
+}
+
+function productPreferredLocation(product) {
+  const locations = state.data?.summary?.locations || [];
+  const match = locations.find((location) => location.id === product.preferred_location_id);
+  return match?.path || match?.name || "";
+}
+
+function productSettingValue(productId, key) {
+  return document.querySelector(`[data-product-${key}="${productId}"]`)?.value?.trim() || "";
 }
 
 function renderInventory(items) {
@@ -830,6 +875,27 @@ async function handlePageClick(event) {
   const priceProduct = target.dataset.priceAnalysis;
   if (priceProduct) {
     await handlePriceAnalysis(priceProduct);
+    return;
+  }
+
+  const saveProduct = target.dataset.productSave;
+  if (saveProduct) {
+    const minimumStock = productSettingValue(saveProduct, "minimum");
+    const defaultUnit = productSettingValue(saveProduct, "unit");
+    await api(`/api/products/${encodeURIComponent(saveProduct)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        category: productSettingValue(saveProduct, "category") || null,
+        default_unit: defaultUnit,
+        minimum_stock_quantity: minimumStock === "" ? null : minimumStock,
+        minimum_stock_unit: productSettingValue(saveProduct, "minimum-unit") || defaultUnit,
+        preferred_location: productSettingValue(saveProduct, "location") || null,
+        default_shelf_life_days: productSettingValue(saveProduct, "shelf") || null,
+        opened_shelf_life_days: productSettingValue(saveProduct, "opened-shelf") || null,
+      }),
+    });
+    showToast("Product settings saved");
+    await refresh();
     return;
   }
 
