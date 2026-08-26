@@ -348,7 +348,7 @@ def _validate_check_specific_details(
                 problems.append({"field": f"{prefix}.details.review_path", "problem": "must be a file"})
             elif require_git_tracking:
                 _validate_git_release_file(resolved, root=root, field=f"{prefix}.details.review_path", problems=problems)
-            else:
+            if resolved.exists() and resolved.is_file():
                 review_text = resolved.read_text(encoding="utf-8", errors="replace")
                 if expected_commit not in review_text:
                     problems.append({"field": f"{prefix}.details.review_path", "problem": "review artifact must mention reviewed_commit"})
