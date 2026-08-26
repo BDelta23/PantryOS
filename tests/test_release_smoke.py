@@ -283,10 +283,10 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
         artifact = evidence_dir / "manual-check.md"
         artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
         review = evidence_dir / "independent-review.md"
-        review.write_text("# Independent review\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         commit = "b" * 40
+        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
         checks = []
         for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
             details = {field: f"value-{field}" for field in rule["details"]}
@@ -401,9 +401,9 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
         artifact = evidence_dir / "manual-check.md"
         artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
         review = evidence_dir / "independent-review.md"
-        review.write_text("# Independent review\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         commit = "d" * 40
+        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
         checks = []
         for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
             details = {field: f"value-{field}" for field in rule["details"]}
@@ -477,6 +477,93 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
     assert "checks[real-receipt-ocr].details.purchase_id" in fields
     assert "checks[real-receipt-ocr].details.committed_lot_count" in fields
     assert "checks[real-receipt-ocr].details.price_history_result" in fields
+
+
+def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifacts() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review = evidence_dir / "independent-review.md"
+        review.write_text(
+            "# Independent review\n\nReviewed commit: " + "e" * 40 + "\n\nPASS: no release-blocking findings.\n", encoding="utf-8"
+        )
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        commit = "d" * 40
+        recorded_digest = "sha256:" + "1" * 64
+        other_digest = "sha256:" + "2" * 64
+        checks = []
+        for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
+            details = {field: f"value-{field}" for field in rule["details"]}
+            if check_id == "physical-barcode-camera":
+                details.update(
+                    {
+                        "app_url": "http://127.0.0.1:8765",
+                        "known_barcode": "012345678905",
+                        "known_result": "Resolved known product and created lot lot_known",
+                        "unknown_barcode": "999999999999",
+                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                    }
+                )
+            elif check_id == "real-receipt-ocr":
+                details.update(
+                    {
+                        "receipt_id": "receipt_123",
+                        "purchase_id": "purchase_123",
+                        "committed_lot_count": "2",
+                        "price_history_result": "Price history displayed store, date, package quantity, total, and unit price",
+                    }
+                )
+            elif check_id == "published-image-signature":
+                details.update(
+                    {
+                        "image": "ghcr.io/example/pantryos@" + other_digest,
+                        "digest": recorded_digest,
+                        "tag": "v1.0.0",
+                        "verification_command": "cosign verify ghcr.io/example/pantryos@" + other_digest,
+                        "signature_identity": "release@example.test",
+                    }
+                )
+            elif check_id == "independent-full-review":
+                details.update(
+                    {
+                        "review_path": "docs/release/evidence/independent-review.md",
+                        "reviewed_commit": commit,
+                        "decision": "PASS",
+                        "open_critical_high": "0",
+                        "release_blocking_medium": "0",
+                    }
+                )
+            checks.append(
+                {
+                    "id": check_id,
+                    "result": "PASS",
+                    "operator": "release-operator",
+                    "timestamp_utc": "2026-08-26T12:00:00Z",
+                    "acceptance": list(rule["acceptance"]),
+                    "details": details,
+                    "evidence": {
+                        "summary": f"{check_id} passed against the release candidate.",
+                        "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                    },
+                }
+            )
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    fields = {problem["field"] for problem in result["problems"]}
+    assert result["ok"] is False
+    assert "checks[published-image-signature].details.image" in fields
+    assert "checks[published-image-signature].details.verification_command" in fields
+    assert "checks[independent-full-review].details.review_path" in fields
 
 
 def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> None:
@@ -554,6 +641,7 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
     fields = {problem["field"] for problem in result["problems"]}
     assert result["ok"] is False
     assert "checks[published-image-signature].details.digest" in fields
+    assert "checks[published-image-signature].details.image" in fields
     assert "checks[published-image-signature].details.verification_command" in fields
     assert "checks[independent-full-review].details.review_path" in fields
     assert "checks[independent-full-review].details.reviewed_commit" in fields

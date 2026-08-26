@@ -251,11 +251,17 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.price_history_result", "problem": "must describe price history visibility"})
     elif check_id == "published-image-signature":
         digest = details.get("digest")
-        if not isinstance(digest, str) or SHA256_DIGEST_RE.fullmatch(digest.strip()) is None:
+        digest_value = digest.strip() if isinstance(digest, str) else ""
+        if SHA256_DIGEST_RE.fullmatch(digest_value) is None:
             problems.append({"field": f"{prefix}.details.digest", "problem": "must be a sha256:<64 lowercase hex> digest"})
+        image = details.get("image")
+        if isinstance(image, str) and digest_value and digest_value not in image:
+            problems.append({"field": f"{prefix}.details.image", "problem": "must include the recorded digest"})
         command = details.get("verification_command")
         if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
+        elif digest_value and digest_value not in command:
+            problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded digest"})
     elif check_id == "independent-full-review":
         if details.get("decision") != "PASS":
             problems.append({"field": f"{prefix}.details.decision", "problem": "must be PASS"})
@@ -272,6 +278,10 @@ def _validate_check_specific_details(
                 resolved = root / resolved
             if not resolved.exists():
                 problems.append({"field": f"{prefix}.details.review_path", "problem": f"missing {review_path}"})
+            else:
+                review_text = resolved.read_text(encoding="utf-8", errors="replace")
+                if expected_commit not in review_text:
+                    problems.append({"field": f"{prefix}.details.review_path", "problem": "review artifact must mention reviewed_commit"})
 
 
 def _validate_timestamp(value: Any, field: str, problems: list[dict[str, str]]) -> None:
