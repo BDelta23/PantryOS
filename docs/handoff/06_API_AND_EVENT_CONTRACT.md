@@ -118,7 +118,7 @@ Rebuild is idempotent. It reports source changes and does not silently accept su
 
 ### Receipts, purchases, and prices
 
-- `POST /api/v1/receipts` — bounded upload
+- `POST /api/v1/receipts` — bounded text upload or image upload with JSON `content_base64`
 - `POST /api/v1/receipts/{id}/extract`
 - `GET/PATCH /api/v1/receipts/{id}/review`
 - `POST /api/v1/receipts/{id}/commit`
@@ -127,7 +127,7 @@ Rebuild is idempotent. It reports source changes and does not silently accept su
 - `GET /api/v1/purchases/{id}`
 - `GET /api/v1/products/{id}/prices`
 
-Receipt commit is idempotent and transactional. It may create products, barcode mappings, purchase records, and inventory lots only after review.
+Receipt upload accepts `text/plain`, `text/csv`, `image/png`, and `image/jpeg`; image extraction is local OCR and must degrade with a validation error when the runtime lacks OCR support. Receipt commit is idempotent and transactional. It may create products, barcode mappings, purchase records, and inventory lots only after review.
 
 ### Operations
 

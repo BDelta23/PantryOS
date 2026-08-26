@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
+import subprocess
 import shutil
 import sqlite3
 import tempfile
@@ -22,7 +25,18 @@ from .units import UNITS, convert, decimal_text, require_non_negative, require_p
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 CURRENT_SCHEMA_VERSION = 4
 MAX_RECEIPT_UPLOAD_BYTES = 64_000
-SUPPORTED_RECEIPT_MIME_TYPES = {"text/plain": ".txt", "text/csv": ".csv"}
+MAX_RECEIPT_IMAGE_UPLOAD_BYTES = 750_000
+MAX_RECEIPT_IMAGE_EDGE_PIXELS = 6000
+MAX_RECEIPT_IMAGE_PIXELS = 16_000_000
+RECEIPT_OCR_TIMEOUT_SECONDS = 15
+SUPPORTED_RECEIPT_MIME_TYPES = {"text/plain": ".txt", "text/csv": ".csv", "image/png": ".png", "image/jpeg": ".jpg"}
+RECEIPT_EXTENSION_ALIASES = {
+    "text/plain": {".txt"},
+    "text/csv": {".csv"},
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+}
+IMAGE_RECEIPT_MIME_TYPES = {"image/png", "image/jpeg"}
 PURGEABLE_RECEIPT_STATUSES = {"uploaded", "review", "rejected"}
 BACKUP_ARCHIVE_DB = "pantryos.sqlite3"
 BACKUP_ARCHIVE_MANIFEST = "manifest.json"
@@ -832,27 +846,17 @@ class PantryCore:
         mime_type = str(data.get("mime_type") or "text/plain").casefold().strip()
         storage_suffix = SUPPORTED_RECEIPT_MIME_TYPES.get(mime_type)
         if storage_suffix is None:
-            raise ValidationError("Unsupported receipt type; supported types are text/plain and text/csv")
+            supported = ", ".join(sorted(SUPPORTED_RECEIPT_MIME_TYPES))
+            raise ValidationError(f"Unsupported receipt type; supported types are {supported}")
         filename = str(data.get("filename") or f"receipt{storage_suffix}").strip()
         if not filename:
             raise ValidationError("Receipt filename is required")
         if filename in {".", ".."} or "/" in filename or "\\" in filename:
             raise ValidationError("Receipt filename must not include a path")
         suffix = Path(filename).suffix.casefold()
-        if suffix and suffix != storage_suffix:
+        if suffix and suffix not in RECEIPT_EXTENSION_ALIASES[mime_type]:
             raise ValidationError("Receipt filename extension does not match MIME type")
-        raw_text = data.get("text") if "text" in data else data.get("content")
-        if not isinstance(raw_text, str):
-            raise ValidationError("Receipt content must be text")
-        payload = raw_text.encode("utf-8")
-        if not payload:
-            raise ValidationError("Receipt content is required")
-        if "\x00" in raw_text:
-            raise ValidationError("Receipt content must be text")
-        if len(payload) > MAX_RECEIPT_UPLOAD_BYTES:
-            raise ValidationError(f"Receipt upload exceeds {MAX_RECEIPT_UPLOAD_BYTES} bytes")
-        if mime_type == "text/csv" and "," not in raw_text:
-            raise ValidationError("CSV receipt content must contain comma-separated rows")
+        payload = self._receipt_upload_payload(data, mime_type)
         content_hash = hashlib.sha256(payload).hexdigest()
         receipt_dir = (self.db_path.parent / "receipts").resolve()
         receipt_dir.mkdir(parents=True, exist_ok=True)
@@ -902,6 +906,20 @@ class PantryCore:
 
     def extract_receipt(self, receipt_id: str, *, source: str = "api") -> dict[str, Any]:
         self.migrate()
+        with closing(self.connect()) as connection:
+            receipt = self._receipt_row(connection, receipt_id)
+            if receipt["status"] == "committed":
+                return {
+                    "receipt": self._receipt_snapshot(receipt),
+                    "review": json.loads(receipt["review_json"] or "{}"),
+                    "revision": int(self._metadata(connection, "state_revision")),
+                }
+            if receipt["status"] == "rejected":
+                raise ValidationError("Rejected receipt cannot be extracted")
+            if receipt["status"] == "purged":
+                raise ValidationError("Purged receipt content is not available")
+            text = self._receipt_payload_text(receipt)
+        extracted = self._extract_receipt_text(text)
         with self.transaction() as connection:
             receipt = self._receipt_row(connection, receipt_id)
             if receipt["status"] == "committed":
@@ -914,8 +932,6 @@ class PantryCore:
                 raise ValidationError("Rejected receipt cannot be extracted")
             if receipt["status"] == "purged":
                 raise ValidationError("Purged receipt content is not available")
-            text = Path(receipt["storage_path"]).read_text(encoding="utf-8")
-            extracted = self._extract_receipt_text(text)
             connection.execute(
                 """
                 UPDATE receipt_uploads
@@ -2177,6 +2193,109 @@ class PantryCore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def _receipt_upload_payload(self, data: dict[str, Any], mime_type: str) -> bytes:
+        if mime_type in IMAGE_RECEIPT_MIME_TYPES:
+            encoded = data.get("content_base64")
+            if not isinstance(encoded, str):
+                raise ValidationError("Image receipt uploads require content_base64")
+            try:
+                payload = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValidationError("Receipt image content_base64 is invalid") from exc
+            if not payload:
+                raise ValidationError("Receipt content is required")
+            if len(payload) > MAX_RECEIPT_IMAGE_UPLOAD_BYTES:
+                raise ValidationError(f"Receipt image upload exceeds {MAX_RECEIPT_IMAGE_UPLOAD_BYTES} bytes")
+            self._validate_receipt_image_payload(payload, mime_type)
+            return payload
+
+        raw_text = data.get("text") if "text" in data else data.get("content")
+        if not isinstance(raw_text, str):
+            raise ValidationError("Receipt content must be text")
+        payload = raw_text.encode("utf-8")
+        if not payload:
+            raise ValidationError("Receipt content is required")
+        if "\x00" in raw_text:
+            raise ValidationError("Receipt content must be text")
+        if len(payload) > MAX_RECEIPT_UPLOAD_BYTES:
+            raise ValidationError(f"Receipt upload exceeds {MAX_RECEIPT_UPLOAD_BYTES} bytes")
+        if mime_type == "text/csv" and "," not in raw_text:
+            raise ValidationError("CSV receipt content must contain comma-separated rows")
+        return payload
+
+    def _validate_receipt_image_payload(self, payload: bytes, mime_type: str) -> None:
+        if mime_type == "image/png":
+            if not payload.startswith(b"\x89PNG\r\n\x1a\n") or len(payload) < 24:
+                raise ValidationError("Receipt image content does not match MIME type")
+            width = int.from_bytes(payload[16:20], "big")
+            height = int.from_bytes(payload[20:24], "big")
+        elif mime_type == "image/jpeg":
+            if not payload.startswith(b"\xff\xd8"):
+                raise ValidationError("Receipt image content does not match MIME type")
+            width, height = self._jpeg_dimensions(payload)
+        else:
+            raise ValidationError("Unsupported receipt image type")
+        if width <= 0 or height <= 0:
+            raise ValidationError("Receipt image dimensions are invalid")
+        if width > MAX_RECEIPT_IMAGE_EDGE_PIXELS or height > MAX_RECEIPT_IMAGE_EDGE_PIXELS:
+            raise ValidationError(f"Receipt image dimensions exceed {MAX_RECEIPT_IMAGE_EDGE_PIXELS}px")
+        if width * height > MAX_RECEIPT_IMAGE_PIXELS:
+            raise ValidationError(f"Receipt image exceeds {MAX_RECEIPT_IMAGE_PIXELS} pixels")
+
+    def _jpeg_dimensions(self, payload: bytes) -> tuple[int, int]:
+        index = 2
+        while index + 9 < len(payload):
+            if payload[index] != 0xFF:
+                index += 1
+                continue
+            marker = payload[index + 1]
+            index += 2
+            if marker in {0xD8, 0xD9}:
+                continue
+            if index + 2 > len(payload):
+                break
+            length = int.from_bytes(payload[index:index + 2], "big")
+            if length < 2 or index + length > len(payload):
+                break
+            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                if length < 7:
+                    break
+                height = int.from_bytes(payload[index + 3:index + 5], "big")
+                width = int.from_bytes(payload[index + 5:index + 7], "big")
+                return width, height
+            index += length
+        raise ValidationError("Receipt image dimensions are invalid")
+
+    def _receipt_payload_text(self, receipt: sqlite3.Row) -> str:
+        mime_type = str(receipt["mime_type"])
+        storage_path = Path(receipt["storage_path"])
+        if mime_type in {"text/plain", "text/csv"}:
+            return storage_path.read_text(encoding="utf-8")
+        if mime_type in IMAGE_RECEIPT_MIME_TYPES:
+            return self._extract_receipt_image(storage_path)
+        raise ValidationError("Unsupported receipt type")
+
+    def _extract_receipt_image(self, storage_path: Path) -> str:
+        tesseract = shutil.which("tesseract")
+        if tesseract is None:
+            raise ValidationError("Receipt OCR is unavailable; install tesseract-ocr in the PantryOS runtime")
+        try:
+            result = subprocess.run(
+                [tesseract, str(storage_path), "stdout", "--psm", "6"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=RECEIPT_OCR_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValidationError("Receipt OCR timed out") from exc
+        if result.returncode != 0:
+            raise ValidationError("Receipt OCR failed")
+        extracted = result.stdout.strip()
+        if not extracted:
+            raise ValidationError("Receipt OCR did not produce readable text")
+        return extracted
 
     def _extract_receipt_text(self, text: str) -> dict[str, Any]:
         review: dict[str, Any] = {"store": None, "purchased_at": None, "total": None, "currency": "USD", "items": []}

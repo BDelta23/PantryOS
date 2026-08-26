@@ -33,12 +33,12 @@ PantryOS is local-first but should not assume every browser, IoT device, or proc
 
 ## Receipt upload safety
 
-- Allow only documented image/text-based receipt formats needed by the implementation.
+- Allow only documented image/text-based receipt formats needed by the implementation. Current local formats are `text/plain`, `text/csv`, `image/png`, and `image/jpeg`; images are submitted as JSON `content_base64`.
 - Validate content, not only filename extension or client MIME.
 - Generate server-side storage names; never concatenate user filenames into paths.
 - Store uploads outside the static asset tree.
-- Set size, dimensions/page count, and processing timeout limits.
-- Run OCR/parsing in a constrained subprocess or worker boundary where practical.
+- Set size, dimensions/page count, and processing timeout limits. Current image limits are 750,000 decoded bytes, 6,000px per edge, 16,000,000 pixels, and 15 seconds per OCR extraction.
+- Run OCR/parsing in a constrained subprocess or worker boundary where practical. Current image extraction shells out to the local `tesseract` binary and reports unavailable/timeout/failure categories without logging receipt content.
 - Do not execute embedded scripts, macros, or active document content.
 - Delete rejected/expired uploads according to documented retention. Current implementation provides `purge-receipts`, which purges old `uploaded`, `review`, and `rejected` receipt payload files while retaining committed receipt purchase evidence.
 - Never include raw receipt content in routine logs or HA diagnostics.
@@ -88,7 +88,7 @@ Automated tests must compare key counts, quantities, events, purchases, and revi
 - Do not bake secrets or real data into image layers.
 - Provide liveness/readiness health checks.
 - Use a multi-stage build when frontend or native OCR build dependencies are needed.
-- Document required system packages for local receipt extraction.
+- Document required system packages for local receipt extraction. The Docker image installs `tesseract-ocr`; source-checkout image extraction requires a `tesseract` executable on `PATH`.
 
 ## Logging and observability
 

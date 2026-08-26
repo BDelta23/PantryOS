@@ -60,6 +60,20 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.remove("visible"), 2400);
 }
 
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const value = String(reader.result || "");
+      const marker = ";base64,";
+      const markerIndex = value.indexOf(marker);
+      resolve(markerIndex >= 0 ? value.slice(markerIndex + marker.length) : value);
+    });
+    reader.addEventListener("error", () => reject(new Error("Receipt image could not be read.")));
+    reader.readAsDataURL(file);
+  });
+}
+
 function formatQty(value, unit) {
   return `${value} ${unit || "count"}`;
 }
@@ -707,9 +721,21 @@ async function handleReceiptSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const payload = compactPayload(formData(form));
+  const imageFile = form.elements.image?.files?.[0];
+  let upload;
+  if (imageFile) {
+    upload = {
+      filename: imageFile.name || "browser-receipt.jpg",
+      mime_type: imageFile.type || "image/jpeg",
+      content_base64: await readFileBase64(imageFile),
+    };
+  } else {
+    if (!payload.text) throw new Error("Enter receipt text or choose a receipt image.");
+    upload = { filename: "browser-receipt.txt", mime_type: "text/plain", text: payload.text };
+  }
   const uploaded = await api("/api/receipts", {
     method: "POST",
-    body: JSON.stringify({ filename: "browser-receipt.txt", mime_type: "text/plain", text: payload.text }),
+    body: JSON.stringify(upload),
   });
   const extracted = await api(`/api/receipts/${encodeURIComponent(uploaded.receipt.id)}/extract`, { method: "POST" });
   state.activeReceipt = { id: uploaded.receipt.id, review: extracted.review };

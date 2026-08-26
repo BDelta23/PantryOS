@@ -78,6 +78,9 @@ def test_openapi_document_tracks_current_versioned_route_surface() -> None:
     assert document["paths"]["/api/v1/events"]["get"]["responses"]["200"]["content"]["text/event-stream"]
     assert "201" in document["paths"]["/api/v1/inventory/lots"]["post"]["responses"]
     assert document["paths"]["/api/v1/receipts"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ReceiptUploadRequest"
+    receipt_schema = document["components"]["schemas"]["ReceiptUploadRequest"]
+    assert "content_base64" in receipt_schema["properties"]
+    assert receipt_schema["required"] == ["filename", "mime_type"]
 
 
 def test_openapi_endpoint_is_authenticated_and_serves_contract() -> None:

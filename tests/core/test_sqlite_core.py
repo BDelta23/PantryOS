@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import sqlite3
@@ -521,15 +522,100 @@ def test_price_history_uses_recent_median_compatible_unit_anomaly() -> None:
         assert "3 compatible prior purchases" in latest["explanation"]
 
 
+def png_receipt_bytes(width: int = 120, height: int = 80) -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
+
+
+def test_receipt_image_upload_extracts_through_local_ocr_boundary() -> None:
+    original = PantryCore._extract_receipt_image
+
+    def fake_ocr(self: PantryCore, storage_path: Path) -> str:
+        assert storage_path.suffix == ".png"
+        assert storage_path.read_bytes().startswith(b"\x89PNG")
+        return "Store: Image Market\nDate: 2026-08-26\nImage Beans,2,count,4.00,777888999000\nTotal: 4.00\n"
+
+    PantryCore._extract_receipt_image = fake_ocr
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            core = make_core(directory)
+            uploaded = core.upload_receipt(
+                {
+                    "filename": "receipt.png",
+                    "mime_type": "image/png",
+                    "content_base64": base64.b64encode(png_receipt_bytes()).decode("ascii"),
+                }
+            )
+            extracted = core.extract_receipt(uploaded["receipt"]["id"])
+            assert core.dashboard()["summary"]["active_lot_count"] == 0
+            committed = core.commit_receipt(uploaded["receipt"]["id"])
+            with closing(core.connect()) as connection:
+                row = connection.execute("SELECT * FROM receipt_uploads WHERE id = ?", (uploaded["receipt"]["id"],)).fetchone()
+            storage_path = Path(row["storage_path"])
+
+            assert uploaded["receipt"]["mime_type"] == "image/png"
+            assert "storage_path" not in uploaded["receipt"]
+            assert storage_path.parent == Path(directory) / "receipts"
+            assert extracted["receipt"]["status"] == "review"
+            assert extracted["review"]["store"] == "Image Market"
+            assert extracted["review"]["items"][0]["name"] == "Image Beans"
+            assert committed["lots"][0]["product_name"] == "Image Beans"
+            assert core.resolve_barcode("777888999000")["matched"] is True
+    finally:
+        PantryCore._extract_receipt_image = original
+
+
+def test_receipt_image_upload_validates_base64_magic_size_and_ocr_availability() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        try:
+            core.upload_receipt({"filename": "receipt.png", "mime_type": "image/png", "content_base64": "not base64!"})
+        except ValidationError as exc:
+            assert "content_base64 is invalid" in str(exc)
+        else:
+            raise AssertionError("invalid image base64 should fail")
+
+        try:
+            core.upload_receipt({"filename": "receipt.png", "mime_type": "image/png", "content_base64": base64.b64encode(b"not a png").decode("ascii")})
+        except ValidationError as exc:
+            assert "does not match MIME type" in str(exc)
+        else:
+            raise AssertionError("image magic mismatch should fail")
+
+        try:
+            core.upload_receipt({"filename": "huge.png", "mime_type": "image/png", "content_base64": base64.b64encode(b"x" * 750001).decode("ascii")})
+        except ValidationError as exc:
+            assert "image upload exceeds 750000 bytes" in str(exc)
+        else:
+            raise AssertionError("oversized image receipt should fail")
+
+        uploaded = core.upload_receipt(
+            {
+                "filename": "receipt.png",
+                "mime_type": "image/png",
+                "content_base64": base64.b64encode(png_receipt_bytes()).decode("ascii"),
+            }
+        )
+        original_which = core_module.shutil.which
+        core_module.shutil.which = lambda _name: None
+        try:
+            core.extract_receipt(uploaded["receipt"]["id"])
+        except ValidationError as exc:
+            assert "Receipt OCR is unavailable" in str(exc)
+        else:
+            raise AssertionError("missing OCR runtime should fail clearly")
+        finally:
+            core_module.shutil.which = original_which
+
+
 def test_receipt_upload_rejects_unsupported_type_and_large_text() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
         try:
-            core.upload_receipt({"filename": "receipt.png", "mime_type": "image/png", "text": "not supported"})
+            core.upload_receipt({"filename": "receipt.pdf", "mime_type": "application/pdf", "content_base64": "AAAA"})
         except ValidationError as exc:
             assert "Unsupported receipt type" in str(exc)
         else:
-            raise AssertionError("image receipt upload should fail until OCR exists")
+            raise AssertionError("unsupported receipt upload should fail")
 
         try:
             core.upload_receipt({"filename": "large.txt", "mime_type": "text/plain", "text": "x" * 64001})

@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import logging
@@ -820,6 +821,51 @@ def test_receipt_api_review_commit_and_price_history() -> None:
     assert browser_prices["product"]["id"] == product_id
 
 
+def test_receipt_api_accepts_image_upload_and_extracts_with_local_ocr_boundary() -> None:
+    original = server_module.PantryCore._extract_receipt_image
+
+    def fake_ocr(self, storage_path: Path) -> str:
+        assert storage_path.suffix == ".png"
+        return "Store: API Image Market\nDate: 2026-08-26\nAPI Image Rice,1,count,3.50\nTotal: 3.50\n"
+
+    server_module.PantryCore._extract_receipt_image = fake_ocr
+    try:
+        with TemporaryDirectory() as directory, api_token("test-token"):
+            data_path = Path(directory) / "pantryos.sqlite3"
+            httpd = server_module.make_server("127.0.0.1", 0, data_path)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{httpd.server_port}"
+                uploaded = request_json(
+                    f"{base}/api/v1/receipts",
+                    method="POST",
+                    token="test-token",
+                    payload={
+                        "filename": "image-receipt.png",
+                        "mime_type": "image/png",
+                        "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (120).to_bytes(4, "big") + (80).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00").decode("ascii"),
+                    },
+                )
+                extracted = request_json(
+                    f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/extract",
+                    method="POST",
+                    token="test-token",
+                )
+            finally:
+                httpd.shutdown()
+                thread.join(timeout=5)
+                httpd.server_close()
+    finally:
+        server_module.PantryCore._extract_receipt_image = original
+
+    assert uploaded["receipt"]["mime_type"] == "image/png"
+    assert "storage_path" not in uploaded["receipt"]
+    assert extracted["receipt"]["status"] == "review"
+    assert extracted["review"]["store"] == "API Image Market"
+    assert extracted["review"]["items"][0]["name"] == "API Image Rice"
+
+
 def test_receipt_upload_enforces_limits_and_private_storage() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
         data_path = Path(directory) / "pantryos.sqlite3"
@@ -832,7 +878,7 @@ def test_receipt_upload_enforces_limits_and_private_storage() -> None:
                 f"{base}/api/v1/receipts",
                 method="POST",
                 token="test-token",
-                payload={"filename": "receipt.png", "mime_type": "image/png", "text": "not an image"},
+                payload={"filename": "receipt.pdf", "mime_type": "application/pdf", "content_base64": "AAAA"},
                 request_id="bad-mime",
             )
             path_status, path_problem = request_error(

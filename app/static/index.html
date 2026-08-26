@@ -162,7 +162,8 @@
           <section class="tool-panel">
             <h2>Receipt Review</h2>
             <form id="receiptForm" class="form-grid">
-              <label>Receipt text<textarea name="text" required placeholder="Store: Market&#10;Date: 2026-08-25&#10;Milk,1,gallon,3.99&#10;Eggs,12,count,4.50&#10;Total: 8.49"></textarea></label>
+              <label>Receipt text<textarea name="text" placeholder="Store: Market&#10;Date: 2026-08-25&#10;Milk,1,gallon,3.99&#10;Eggs,12,count,4.50&#10;Total: 8.49"></textarea></label>
+              <label>Receipt image<input name="image" type="file" accept="image/png,image/jpeg" /></label>
               <button type="submit">Extract Receipt</button>
             </form>
             <form id="receiptReviewForm" class="form-grid split-tool" hidden>
