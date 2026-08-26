@@ -61,8 +61,10 @@ def sanitized_base_url(base_url: str) -> str:
 
 async def async_get_config_entry_diagnostics(hass: Any, entry: Any) -> dict[str, Any]:
     """Return redacted diagnostics for a PantryOS config entry."""
-    pantry = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    dashboard = getattr(pantry, "_dashboard", None) if pantry is not None else None
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    coordinator = getattr(runtime, "coordinator", None)
+    client = getattr(runtime, "client", runtime)
+    dashboard = getattr(coordinator, "data", None) if coordinator is not None else getattr(client, "_dashboard", None)
     summary = dashboard.get("summary", {}) if isinstance(dashboard, dict) else {}
     payload = {
         "entry": {
@@ -71,8 +73,15 @@ async def async_get_config_entry_diagnostics(hass: Any, entry: Any) -> dict[str,
             CONF_API_TOKEN: entry.data.get(CONF_API_TOKEN),
         },
         "client": {
-            "available": getattr(pantry, "available", False),
-            "base_url": sanitized_base_url(getattr(pantry, "base_url", "")) if pantry is not None else None,
+            "available": getattr(coordinator, "available", getattr(client, "available", False)),
+            "base_url": sanitized_base_url(getattr(client, "base_url", "")) if client is not None else None,
+        },
+        "coordinator": {
+            "available": getattr(coordinator, "available", False),
+            "last_revision": getattr(coordinator, "last_revision", None),
+            "last_event_revision": getattr(coordinator, "last_event_revision", None),
+            "last_successful_update": getattr(coordinator, "last_successful_update", None),
+            "last_error": getattr(coordinator, "last_error", None),
         },
         "dashboard": {
             "revision": dashboard.get("revision") if isinstance(dashboard, dict) else None,
