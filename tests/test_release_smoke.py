@@ -734,6 +734,59 @@ def test_manual_release_evidence_rejects_unknown_checks_and_acceptance_overstate
     } in result["problems"]
 
 
+def test_manual_release_evidence_rejects_unexpected_schema_fields() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "b" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        checks[0]["operator_note"] = "operator-only assertion"
+        checks[0]["details"]["extra_device_claim"] = "external camera attachment"
+        checks[0]["evidence"]["remote_url"] = "https://release.example.invalid/evidence"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_commit": commit,
+                    "checks": checks,
+                    "release_manager_note": "do not let ignored root fields influence release status",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "root",
+        "problem": "unexpected fields: release_manager_note",
+    } in result["problems"]
+    assert {
+        "field": "checks[physical-barcode-camera]",
+        "problem": "unexpected fields: operator_note",
+    } in result["problems"]
+    assert {
+        "field": "checks[physical-barcode-camera].details",
+        "problem": "unexpected fields: extra_device_claim",
+    } in result["problems"]
+    assert {
+        "field": "checks[physical-barcode-camera].evidence",
+        "problem": "unexpected fields: remote_url",
+    } in result["problems"]
+
+
 def test_manual_release_evidence_rejects_incomplete_records() -> None:
     from scripts import manual_release_evidence
 

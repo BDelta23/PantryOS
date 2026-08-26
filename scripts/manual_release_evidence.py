@@ -141,6 +141,7 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
 
     if not isinstance(data, dict):
         return _result(evidence_path, root=root, ok=False, problems=[{"field": "file", "problem": "root value must be a JSON object"}])
+    _validate_exact_keys(data, {"schema_version", "release_commit", "checks"}, "root", problems)
 
     try:
         expected_commit = resolve_target_commit(commit, root=root)
@@ -210,6 +211,7 @@ def _validate_check(
 ) -> list[dict[str, str]]:
     problems: list[dict[str, str]] = []
     prefix = f"checks[{check_id}]"
+    _validate_exact_keys(check, {"id", "result", "operator", "timestamp_utc", "acceptance", "details", "evidence"}, prefix, problems)
     if check.get("result") != "PASS":
         problems.append({"field": f"{prefix}.result", "problem": "must be PASS"})
     _require_clean_string(check.get("operator"), f"{prefix}.operator", problems)
@@ -235,6 +237,7 @@ def _validate_check(
     if not isinstance(details, dict):
         problems.append({"field": f"{prefix}.details", "problem": "must be an object"})
     else:
+        _validate_exact_keys(details, set(rule["details"]), f"{prefix}.details", problems)
         for field in rule["details"]:
             _require_clean_string(details.get(field), f"{prefix}.details.{field}", problems)
         _validate_check_specific_details(
@@ -251,6 +254,7 @@ def _validate_check(
     if not isinstance(evidence, dict):
         problems.append({"field": f"{prefix}.evidence", "problem": "must be an object"})
     else:
+        _validate_exact_keys(evidence, {"summary", "artifact_paths"}, f"{prefix}.evidence", problems)
         _require_clean_string(evidence.get("summary"), f"{prefix}.evidence.summary", problems)
         artifact_paths = evidence.get("artifact_paths")
         if not isinstance(artifact_paths, list) or not artifact_paths:
@@ -366,6 +370,12 @@ def _validate_check_specific_details(
                     field=f"{prefix}.details.review_path",
                     problems=problems,
                 )
+
+
+def _validate_exact_keys(value: dict[str, Any], expected: set[str], field: str, problems: list[dict[str, str]]) -> None:
+    extras = sorted(set(value) - expected)
+    if extras:
+        problems.append({"field": field, "problem": "unexpected fields: " + ", ".join(extras)})
 
 
 def _validate_review_artifact_text(review_text: str, *, expected_commit: str, field: str, problems: list[dict[str, str]]) -> None:
