@@ -12,6 +12,7 @@ from typing import Any
 
 from .core import PantryCore
 from .errors import PantryOSError
+from .paths import path_within
 
 DEFAULT_DB_PATH = Path("data") / "pantryos.sqlite3"
 
@@ -19,15 +20,30 @@ DEFAULT_DB_PATH = Path("data") / "pantryos.sqlite3"
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    db_path = Path(args.db or os.environ.get("PANTRYOS_DB_PATH") or DEFAULT_DB_PATH)
-    core = PantryCore(db_path)
     try:
+        db_path = configured_db_path(args)
+        core = PantryCore(db_path)
         result = args.func(core, args)
     except (OSError, ValueError, PantryOSError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": type(exc).__name__, "detail": str(exc)}), file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
+
+
+def configured_db_path(args: argparse.Namespace) -> Path:
+    db_path = Path(args.db or os.environ.get("PANTRYOS_DB_PATH") or DEFAULT_DB_PATH)
+    data_root = os.environ.get("PANTRYOS_DATA_DIR")
+    if data_root:
+        return path_within(db_path, data_root, "Database path")
+    return db_path
+
+
+def configured_backup_path(path: Path | str, label: str) -> Path:
+    backup_root = os.environ.get("PANTRYOS_BACKUP_DIR")
+    if backup_root:
+        return path_within(path, backup_root, label)
+    return Path(path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,7 +94,7 @@ def run_doctor(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_backup(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
-    output_path = Path(args.output)
+    output_path = configured_backup_path(args.output, "Backup output path")
     if output_path.suffix.casefold() == ".zip":
         archive = core.backup_archive(output_path)
         return {
@@ -104,7 +120,7 @@ def run_backup(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_restore(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
-    source = Path(args.input)
+    source = configured_backup_path(args.input, "Backup input path")
     if source.suffix.casefold() == ".zip":
         archive_probe = core.verify_backup_archive(source)
         if args.verify_only:
@@ -160,7 +176,8 @@ def run_import_legacy(core: PantryCore, args: argparse.Namespace) -> dict[str, A
     inspection = core.inspect_legacy_json(Path(args.path))
     if args.dry_run:
         return {"ok": True, "dry_run": True, "imported": False, **inspection}
-    result = core.import_legacy_json(Path(args.path), backup_dir=Path(args.backup_dir) if args.backup_dir else None)
+    backup_dir = configured_backup_path(args.backup_dir, "Legacy backup directory") if args.backup_dir else None
+    result = core.import_legacy_json(Path(args.path), backup_dir=backup_dir)
     return {
         "ok": True,
         "dry_run": False,

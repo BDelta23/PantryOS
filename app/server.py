@@ -28,6 +28,7 @@ if str(SRC) not in sys.path:
 
 from pantryos.core import PantryCore, normalize_name  # noqa: E402
 from pantryos.openapi import openapi_document  # noqa: E402
+from pantryos.paths import path_within  # noqa: E402
 from pantryos.errors import PantryOSError  # noqa: E402
 from pantryos.units import convert, decimal_text, require_non_negative, unit_code  # noqa: E402
 
@@ -1537,7 +1538,12 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
-    server = make_server(args.host, args.port, args.data)
+    data_path = (
+        path_within(args.data, os.environ["PANTRYOS_DATA_DIR"], "Database path")
+        if os.environ.get("PANTRYOS_DATA_DIR")
+        else args.data
+    )
+    server = make_server(args.host, args.port, data_path)
     print(f"PantryOS running at http://{args.host}:{args.port}", flush=True)
     server.serve_forever()
 

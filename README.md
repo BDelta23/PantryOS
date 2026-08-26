@@ -57,7 +57,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The container writes the SQLite database to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. The entrypoint repairs `/app/data` ownership for named volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the app writes only under `/app/data`. Change the host port with `PANTRYOS_PORT`:
+The container writes the SQLite database, private receipt uploads, migration backups, and backup archives to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. The entrypoint repairs `/app/data` ownership for named volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the Compose service runs with a read-only root filesystem, a small `/tmp` tmpfs, `no-new-privileges`, `PANTRYOS_DATA_DIR=/app/data`, and `PANTRYOS_BACKUP_DIR=/app/data/backups`. In the container, CLI database paths must stay under `/app/data`, and backup/restore archive paths must stay under `/app/data/backups`. Change the host port with `PANTRYOS_PORT`:
 
 ```powershell
 $env:PANTRYOS_PORT = "8770"
@@ -228,6 +228,10 @@ python scripts/pantryos.py --db data/pantryos.sqlite3 backup --output backups/pa
 python scripts/pantryos.py --db data/pantryos.sqlite3 backup --output backups/pantryos.zip
 python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pantryos.sqlite3 --verify
 python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pantryos.zip --verify
+
+# inside the Compose container, use the mounted data volume paths
+python scripts/pantryos.py --db /app/data/pantryos.sqlite3 backup --output /app/data/backups/pantryos.zip
+python scripts/pantryos.py --db /app/data/pantryos.sqlite3 restore --input /app/data/backups/pantryos.zip --verify
 python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/pantryos.json --dry-run
 ```
 

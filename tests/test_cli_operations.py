@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -15,7 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "pantryos.py"
 
 
-def run_cli(*args: str) -> dict:
+def cli_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PANTRYOS_DATA_DIR", None)
+    env.pop("PANTRYOS_BACKUP_DIR", None)
+    if overrides:
+        env.update(overrides)
+    return env
+
+
+def run_cli(*args: str, env: dict[str, str] | None = None) -> dict:
     completed = subprocess.run(
         [sys.executable, str(CLI), *args],
         cwd=ROOT,
@@ -23,8 +33,23 @@ def run_cli(*args: str) -> dict:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=cli_env(env),
     )
     return json.loads(completed.stdout)
+
+
+def run_cli_failed(*args: str, env: dict[str, str] | None = None) -> dict:
+    completed = subprocess.run(
+        [sys.executable, str(CLI), *args],
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=cli_env(env),
+    )
+    assert completed.returncode == 1
+    return json.loads(completed.stderr)
 
 
 def test_pantryos_cli_doctor_backup_restore_and_legacy_dry_run() -> None:
@@ -149,3 +174,31 @@ def test_pantryos_cli_archive_backup_restores_receipt_upload_files() -> None:
         restored_core = PantryCore(restored_db)
         extracted = restored_core.extract_receipt(receipt_id)
         assert extracted["review"]["store"] == "Market"
+
+
+def test_pantryos_cli_enforces_container_data_and_backup_allowlists() -> None:
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        data_dir = root / "data"
+        backup_dir = data_dir / "backups"
+        data_dir.mkdir()
+        backup_dir.mkdir()
+        env = {"PANTRYOS_DATA_DIR": str(data_dir), "PANTRYOS_BACKUP_DIR": str(backup_dir)}
+        source_db = data_dir / "source.sqlite3"
+        inside_backup = backup_dir / "allowed.sqlite3"
+        outside_db = root / "outside.sqlite3"
+        outside_backup = root / "outside.sqlite3"
+
+        core = PantryCore(source_db)
+        core.add_inventory_lot({"name": "Policy Apples", "quantity": "1", "unit": "count", "location": "Kitchen"})
+
+        backup = run_cli("--db", str(source_db), "backup", "--output", str(inside_backup), env=env)
+        db_error = run_cli_failed("--db", str(outside_db), "doctor", env=env)
+        backup_error = run_cli_failed("--db", str(source_db), "backup", "--output", str(outside_backup), env=env)
+
+        assert backup["ok"] is True
+        assert Path(backup["backup"]) == inside_backup
+        assert db_error["error"] == "ValidationError"
+        assert "Database path must be inside" in db_error["detail"]
+        assert backup_error["error"] == "ValidationError"
+        assert "Backup output path must be inside" in backup_error["detail"]
