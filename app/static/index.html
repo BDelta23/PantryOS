@@ -134,6 +134,14 @@
             </form>
             <form id="barcodeForm" class="form-grid split-tool">
               <label>Barcode<input name="barcode" inputmode="numeric" placeholder="012345678905" required /></label>
+              <div id="barcodeScannerPanel" class="scanner-panel" hidden>
+                <video id="barcodeVideo" playsinline muted></video>
+                <p id="barcodeScannerStatus" class="row-subtitle" role="status"></p>
+                <div class="row">
+                  <button id="barcodeCameraButton" class="secondary" type="button">Use Camera</button>
+                  <button id="barcodeStopButton" class="quiet" type="button" hidden>Stop Camera</button>
+                </div>
+              </div>
               <label>Product name<input name="name" placeholder="Required for a new barcode" /></label>
               <div class="row">
                 <label>Qty<input name="quantity" inputmode="decimal" placeholder="1" /></label>

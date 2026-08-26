@@ -924,6 +924,12 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "/api/shopping/complete-purchase" in app_js
     assert "/api/barcodes/" in app_js
     assert "handleBarcodeSubmit" in app_js
+    assert "supportsBarcodeCamera" in app_js
+    assert "BarcodeDetector" in app_js
+    assert "navigator.mediaDevices.getUserMedia" in app_js
+    assert "facingMode: { ideal: \"environment\" }" in app_js
+    assert "track.stop()" in app_js
+    assert "Manual barcode entry is available" in app_js
     assert "handleStartCooking" in app_js
     assert "handlePurchaseSubmit" in app_js
     assert "navigator.serviceWorker.register(\"/service-worker.js\")" in app_js
@@ -933,6 +939,10 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "id=\"cookingForm\"" in index_html
     assert "id=\"purchaseForm\"" in index_html
     assert "id=\"barcodeForm\"" in index_html
+    assert "id=\"barcodeScannerPanel\"" in index_html
+    assert "id=\"barcodeVideo\"" in index_html
+    assert "id=\"barcodeCameraButton\"" in index_html
+    assert "id=\"barcodeStopButton\"" in index_html
     assert manifest["display"] == "standalone"
     assert manifest["start_url"] == "/"
     assert manifest["scope"] == "/"

@@ -339,6 +339,24 @@ h2 {
   padding-top: 14px;
 }
 
+.scanner-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.scanner-panel[hidden] {
+  display: none;
+}
+
+.scanner-panel video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #17201c;
+  object-fit: cover;
+}
+
 .checkline {
   display: flex;
   align-items: center;

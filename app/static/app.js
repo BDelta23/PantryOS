@@ -5,6 +5,12 @@ const state = {
   activeReceipt: null,
   authenticated: false,
   csrfToken: "",
+  barcodeScanner: {
+    active: false,
+    detector: null,
+    stream: null,
+    scanFrame: 0,
+  },
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -333,6 +339,90 @@ async function handleItemSubmit(event) {
   await refresh();
 }
 
+
+function supportsBarcodeCamera() {
+  return "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
+}
+
+function setupBarcodeScanner() {
+  const panel = $("#barcodeScannerPanel");
+  const status = $("#barcodeScannerStatus");
+  if (!panel || !status) return;
+  panel.hidden = false;
+  if (!supportsBarcodeCamera()) {
+    $("#barcodeCameraButton").disabled = true;
+    status.textContent = "Manual barcode entry is available on this browser.";
+    return;
+  }
+  status.textContent = "Camera scanner ready.";
+}
+
+async function startBarcodeScanner() {
+  if (!supportsBarcodeCamera()) {
+    showToast("Camera scanning is unavailable on this browser");
+    return;
+  }
+  const video = $("#barcodeVideo");
+  const status = $("#barcodeScannerStatus");
+  stopBarcodeScanner();
+  try {
+    const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    state.barcodeScanner = { active: true, detector, stream, scanFrame: 0 };
+    video.srcObject = stream;
+    await video.play();
+    $("#barcodeCameraButton").hidden = true;
+    $("#barcodeStopButton").hidden = false;
+    status.textContent = "Scanning for a barcode.";
+    scanBarcodeFrame();
+  } catch (error) {
+    stopBarcodeScanner();
+    status.textContent = "Manual barcode entry is available.";
+    showToast(error.message || "Camera scanner could not start");
+  }
+}
+
+async function scanBarcodeFrame() {
+  if (!state.barcodeScanner.active) return;
+  const video = $("#barcodeVideo");
+  try {
+    const codes = await state.barcodeScanner.detector.detect(video);
+    const rawValue = codes.find((code) => code.rawValue)?.rawValue;
+    if (rawValue) {
+      $("#barcodeForm").elements.barcode.value = rawValue;
+      stopBarcodeScanner();
+      showToast("Barcode captured");
+      return;
+    }
+  } catch (_error) {
+    stopBarcodeScanner();
+    showToast("Camera scanner stopped");
+    return;
+  }
+  state.barcodeScanner.scanFrame = window.requestAnimationFrame(() => scanBarcodeFrame());
+}
+
+function stopBarcodeScanner() {
+  if (state.barcodeScanner.scanFrame) {
+    window.cancelAnimationFrame(state.barcodeScanner.scanFrame);
+  }
+  if (state.barcodeScanner.stream) {
+    for (const track of state.barcodeScanner.stream.getTracks()) {
+      track.stop();
+    }
+  }
+  const video = $("#barcodeVideo");
+  if (video) {
+    video.pause();
+    video.srcObject = null;
+  }
+  state.barcodeScanner = { active: false, detector: null, stream: null, scanFrame: 0 };
+  const startButton = $("#barcodeCameraButton");
+  const stopButton = $("#barcodeStopButton");
+  if (startButton) startButton.hidden = !supportsBarcodeCamera();
+  if (stopButton) stopButton.hidden = true;
+}
+
 async function handleBarcodeSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -638,6 +728,7 @@ async function handleLogout() {
   state.csrfToken = "";
   state.activeCookingSession = null;
   state.activeReceipt = null;
+  stopBarcodeScanner();
   setAuthenticated(false);
   showToast("Signed out");
 }
@@ -655,11 +746,14 @@ function registerServiceWorker() {
 
 async function main() {
   registerServiceWorker();
+  setupBarcodeScanner();
   setAuthenticated(false);
   $("#loginForm").addEventListener("submit", (event) => handleLogin(event).catch(handleActionError));
   $("#logoutButton").addEventListener("click", () => handleLogout().catch(handleActionError));
   $("#itemForm").addEventListener("submit", (event) => handleItemSubmit(event).catch(handleActionError));
   $("#barcodeForm").addEventListener("submit", (event) => handleBarcodeSubmit(event).catch(handleActionError));
+  $("#barcodeCameraButton").addEventListener("click", () => startBarcodeScanner().catch(handleActionError));
+  $("#barcodeStopButton").addEventListener("click", stopBarcodeScanner);
   $("#recipeForm").addEventListener("submit", (event) => handleRecipeSubmit(event).catch(handleActionError));
   $("#purchaseForm").addEventListener("submit", (event) => handlePurchaseSubmit(event).catch(handleActionError));
   $("#receiptForm").addEventListener("submit", (event) => handleReceiptSubmit(event).catch(handleActionError));
