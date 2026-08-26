@@ -14,6 +14,7 @@ def test_dockerfile_drops_runtime_to_pantryos_user_and_limits_writable_volume() 
     assert "--gid 10001" in dockerfile
     assert "ENTRYPOINT" in dockerfile
     assert "scripts/docker_entrypoint.py" in dockerfile
+    assert ".dockerignore" in dockerfile
     assert "os.setuid(user.pw_uid)" in entrypoint
     assert "os.setgid(user.pw_gid)" in entrypoint
     assert "def chown_tree" in entrypoint
@@ -23,5 +24,12 @@ def test_dockerfile_drops_runtime_to_pantryos_user_and_limits_writable_volume() 
     assert "read_only: true" in compose
     assert "/tmp:mode=1777,size=64m" in compose
     assert "no-new-privileges:true" in compose
+    assert "cap_drop:" in compose
+    assert "- ALL" in compose
+    assert "cap_add:" in compose
+    assert "- CHOWN" in compose
+    assert "- SETGID" in compose
+    assert "- SETUID" in compose
+    assert "pids_limit: 256" in compose
     assert "PANTRYOS_DATA_DIR: /app/data" in compose
     assert "PANTRYOS_BACKUP_DIR: /app/data/backups" in compose

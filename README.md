@@ -57,7 +57,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The container includes the local `tesseract-ocr` binary for receipt image extraction and writes the SQLite database, private receipt uploads, migration backups, and backup archives to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. The entrypoint repairs `/app/data` ownership for named volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the Compose service runs with a read-only root filesystem, a small `/tmp` tmpfs, `no-new-privileges`, `PANTRYOS_DATA_DIR=/app/data`, and `PANTRYOS_BACKUP_DIR=/app/data/backups`. In the container, CLI database paths must stay under `/app/data`, and backup/restore archive paths must stay under `/app/data/backups`. Change the host port with `PANTRYOS_PORT`:
+The container includes the local `tesseract-ocr` binary for receipt image extraction and writes the SQLite database, private receipt uploads, migration backups, and backup archives to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. The entrypoint repairs `/app/data` ownership for named volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the Compose service runs with a read-only root filesystem, drops all Linux capabilities by default, adds only `CHOWN`/`SETGID`/`SETUID` for startup ownership repair and privilege drop, sets `pids_limit: 256`, uses a small `/tmp` tmpfs, `no-new-privileges`, `PANTRYOS_DATA_DIR=/app/data`, and `PANTRYOS_BACKUP_DIR=/app/data/backups`. In the container, CLI database paths must stay under `/app/data`, and backup/restore archive paths must stay under `/app/data/backups`. Change the host port with `PANTRYOS_PORT`:
 
 ```powershell
 $env:PANTRYOS_PORT = "8770"
@@ -79,6 +79,15 @@ python scripts/container_smoke.py
 ```
 
 The container smoke builds and starts the Compose service, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/app/data`, compares source/restored counts, and runs the dependency-free verifier inside the image.
+
+Run the image/container hardening audit when Docker Desktop is started:
+
+```powershell
+$env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
+python scripts/image_hardening_audit.py
+```
+
+Use `python scripts/image_hardening_audit.py --skip-live` for a static Dockerfile, `.dockerignore`, and rendered Compose audit without inspecting a running container. The live audit additionally verifies the image has no baked API token, the container is healthy and not privileged, the root filesystem is read-only, only `/app/data` is writable, and the PantryOS process is UID/GID `10001` with no effective Linux capabilities after startup.
 
 ## Home Assistant Integration
 

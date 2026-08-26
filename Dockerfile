@@ -15,7 +15,7 @@ COPY custom_components ./custom_components
 COPY scripts ./scripts
 COPY tests ./tests
 COPY docs ./docs
-COPY pyproject.toml README.md Dockerfile compose.yaml ./
+COPY pyproject.toml README.md Dockerfile compose.yaml .dockerignore ./
 
 RUN groupadd --system --gid 10001 pantryos \
   && useradd --system --uid 10001 --gid pantryos --home-dir /app --shell /usr/sbin/nologin pantryos \

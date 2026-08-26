@@ -14,6 +14,13 @@ services:
     ports:
       - "${PANTRYOS_PORT:-8765}:8765"
     read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    pids_limit: 256
     tmpfs:
       - /tmp:mode=1777,size=64m
     security_opt:

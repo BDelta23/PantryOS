@@ -20,6 +20,7 @@ TEST_MODULES = (
     "tests.test_cross_surface_sync",
     "tests.test_cli_operations",
     "tests.test_container_contract",
+    "tests.test_image_hardening_audit",
     "tests.test_ha_contract",
     "tests.test_openapi_contract",
     "tests.test_release_smoke",
