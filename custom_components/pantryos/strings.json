@@ -8,31 +8,82 @@
           "base_url": "PantryOS Core URL",
           "api_token": "API token"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PantryOS",
+        "description": "Update the PantryOS Core URL or API token.",
+        "data": {
+          "base_url": "PantryOS Core URL",
+          "api_token": "API token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate PantryOS",
+        "description": "Enter a valid PantryOS API token.",
+        "data": {
+          "base_url": "PantryOS Core URL",
+          "api_token": "API token"
+        }
       }
     },
     "error": {
       "cannot_connect": "Could not connect to PantryOS Core.",
       "invalid_auth": "The PantryOS API token was rejected."
+    },
+    "abort": {
+      "wrong_instance": "The configured PantryOS Core belongs to a different PantryOS instance."
     }
   },
   "entity": {
     "sensor": {
-      "total_items": {"name": "Total items"},
-      "expiring_soon": {"name": "Expiring soon"},
-      "shopping_list_count": {"name": "Shopping list count"},
-      "leftover_count": {"name": "Leftovers"},
-      "state_revision": {"name": "State revision"},
-      "suggested_purchases": {"name": "Suggested purchases"},
-      "possible_meals": {"name": "Possible meals"},
-      "food_waste_this_month": {"name": "Food waste this month"},
-      "kitchen_items": {"name": "Kitchen items"},
-      "refrigerator_items": {"name": "Refrigerator items"},
-      "freezer_items": {"name": "Freezer items"},
-      "pantry_items": {"name": "Pantry items"},
-      "kitchen_value": {"name": "Kitchen value"},
-      "refrigerator_value": {"name": "Refrigerator value"},
-      "freezer_value": {"name": "Freezer value"},
-      "pantry_value": {"name": "Pantry value"}
+      "total_items": {
+        "name": "Total items"
+      },
+      "expiring_soon": {
+        "name": "Expiring soon"
+      },
+      "shopping_list_count": {
+        "name": "Shopping list count"
+      },
+      "leftover_count": {
+        "name": "Leftovers"
+      },
+      "state_revision": {
+        "name": "State revision"
+      },
+      "suggested_purchases": {
+        "name": "Suggested purchases"
+      },
+      "possible_meals": {
+        "name": "Possible meals"
+      },
+      "food_waste_this_month": {
+        "name": "Food waste this month"
+      },
+      "kitchen_items": {
+        "name": "Kitchen items"
+      },
+      "refrigerator_items": {
+        "name": "Refrigerator items"
+      },
+      "freezer_items": {
+        "name": "Freezer items"
+      },
+      "pantry_items": {
+        "name": "Pantry items"
+      },
+      "kitchen_value": {
+        "name": "Kitchen value"
+      },
+      "refrigerator_value": {
+        "name": "Refrigerator value"
+      },
+      "freezer_value": {
+        "name": "Freezer value"
+      },
+      "pantry_value": {
+        "name": "Pantry value"
+      }
     }
   }
 }

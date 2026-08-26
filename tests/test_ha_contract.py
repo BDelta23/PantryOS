@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import types
+from contextlib import contextmanager
+from types import SimpleNamespace
 import json
 import sys
 from pathlib import Path
@@ -170,3 +173,338 @@ def test_home_assistant_coordinator_refreshes_snapshot_when_events_advance_revis
         assert client.refresh_count == 2
 
     asyncio.run(scenario())
+
+
+@contextmanager
+def fake_homeassistant_modules():
+    module_names = [
+        "voluptuous",
+        "homeassistant",
+        "homeassistant.config_entries",
+        "homeassistant.core",
+        "homeassistant.exceptions",
+        "homeassistant.helpers",
+        "homeassistant.helpers.config_validation",
+        "homeassistant.helpers.event",
+    ]
+    original = {name: sys.modules.get(name) for name in module_names}
+
+    voluptuous = types.ModuleType("voluptuous")
+
+    class Invalid(Exception):
+        pass
+
+    class Schema:
+        def __init__(self, schema):
+            self.schema = schema
+
+        def __call__(self, value):
+            return value
+
+    def required(key, *, default=None):
+        return key
+
+    def optional(key, *, default=None):
+        return key
+
+    def all_validator(*validators):
+        def validate(value):
+            for validator in validators:
+                value = validator(value)
+            return value
+
+        return validate
+
+    voluptuous.Invalid = Invalid
+    voluptuous.Schema = Schema
+    voluptuous.Required = required
+    voluptuous.Optional = optional
+    voluptuous.All = all_validator
+
+    ha = types.ModuleType("homeassistant")
+    config_entries = types.ModuleType("homeassistant.config_entries")
+    core = types.ModuleType("homeassistant.core")
+    exceptions = types.ModuleType("homeassistant.exceptions")
+    helpers = types.ModuleType("homeassistant.helpers")
+    cv = types.ModuleType("homeassistant.helpers.config_validation")
+    event = types.ModuleType("homeassistant.helpers.event")
+
+    class ConfigFlow:
+        def __init_subclass__(cls, **kwargs):
+            super().__init_subclass__()
+
+        async def async_set_unique_id(self, unique_id):
+            self.unique_id = unique_id
+
+        def _abort_if_unique_id_configured(self):
+            self.unique_id_configured_checked = True
+
+        def _abort_if_unique_id_mismatch(self, *, reason="wrong_instance"):
+            self.unique_id_mismatch_checked = reason
+
+        def _get_reconfigure_entry(self):
+            return self.reconfigure_entry
+
+        def _get_reauth_entry(self):
+            return self.reauth_entry
+
+        def async_create_entry(self, *, title, data):
+            return {"type": "create_entry", "title": title, "data": data}
+
+        def async_show_form(self, *, step_id, data_schema, errors):
+            return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
+
+        def async_update_reload_and_abort(self, entry, *, data_updates):
+            entry.data = {**entry.data, **data_updates}
+            return {"type": "abort", "reason": "reconfigure_successful", "data_updates": data_updates}
+
+    class ConfigEntryNotReady(Exception):
+        pass
+
+    class ConfigEntryAuthFailed(Exception):
+        pass
+
+    class HomeAssistantError(Exception):
+        pass
+
+    config_entries.ConfigFlow = ConfigFlow
+    config_entries.ConfigFlowResult = dict
+    config_entries.ConfigEntry = object
+    core.HomeAssistant = object
+    core.ServiceCall = object
+    core.CALLBACK_TYPE = object
+    core.callback = lambda func: func
+    exceptions.ConfigEntryNotReady = ConfigEntryNotReady
+    exceptions.ConfigEntryAuthFailed = ConfigEntryAuthFailed
+    exceptions.HomeAssistantError = HomeAssistantError
+    cv.string = str
+    cv.date = str
+    cv.boolean = bool
+    cv.positive_int = int
+    cv.ensure_list = lambda value: value if isinstance(value, list) else [value]
+
+    def async_track_time_interval(hass, callback, interval):
+        hass.interval_callbacks.append(callback)
+
+        def unsubscribe():
+            hass.unsubscribed += 1
+
+        return unsubscribe
+
+    event.async_track_time_interval = async_track_time_interval
+
+    ha.config_entries = config_entries
+    ha.helpers = helpers
+    helpers.config_validation = cv
+    helpers.event = event
+
+    sys.modules.update(
+        {
+            "voluptuous": voluptuous,
+            "homeassistant": ha,
+            "homeassistant.config_entries": config_entries,
+            "homeassistant.core": core,
+            "homeassistant.exceptions": exceptions,
+            "homeassistant.helpers": helpers,
+            "homeassistant.helpers.config_validation": cv,
+            "homeassistant.helpers.event": event,
+        }
+    )
+    try:
+        yield SimpleNamespace(
+            ConfigEntryAuthFailed=ConfigEntryAuthFailed,
+            ConfigEntryNotReady=ConfigEntryNotReady,
+            HomeAssistantError=HomeAssistantError,
+        )
+    finally:
+        for name, module in original.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        for name in list(sys.modules):
+            if name.startswith("custom_components.pantryos"):
+                sys.modules.pop(name, None)
+
+
+def import_pantryos_component(name: str):
+    module_name = "custom_components.pantryos" if name == "__init__" else f"custom_components.pantryos.{name.removesuffix('.py')}"
+    sys.modules.pop(module_name, None)
+    return importlib.import_module(module_name)
+
+
+class FakeServices:
+    def __init__(self) -> None:
+        self.handlers = {}
+        self.removed = []
+
+    def has_service(self, domain, service):
+        return (domain, service) in self.handlers
+
+    def async_register(self, domain, service, handler, schema=None):
+        self.handlers[(domain, service)] = {"handler": handler, "schema": schema}
+
+    def async_remove(self, domain, service):
+        self.removed.append((domain, service))
+        self.handlers.pop((domain, service), None)
+
+
+class FakeBus:
+    def __init__(self) -> None:
+        self.events = []
+
+    def async_fire(self, event_type):
+        self.events.append(event_type)
+
+
+class FakeConfigEntries:
+    def __init__(self) -> None:
+        self.forwarded = []
+        self.unloaded = []
+
+    async def async_forward_entry_setups(self, entry, platforms):
+        self.forwarded.append((entry.entry_id, tuple(platforms)))
+
+    async def async_unload_platforms(self, entry, platforms):
+        self.unloaded.append((entry.entry_id, tuple(platforms)))
+        return True
+
+
+class FakeHass:
+    def __init__(self) -> None:
+        self.data = {}
+        self.services = FakeServices()
+        self.bus = FakeBus()
+        self.config_entries = FakeConfigEntries()
+        self.interval_callbacks = []
+        self.unsubscribed = 0
+
+
+class FakeEntry:
+    def __init__(self, data=None, entry_id="entry-1") -> None:
+        self.data = data or {"base_url": "http://pantry.local:8765", "api_token": "good-token"}
+        self.entry_id = entry_id
+        self.runtime_data = None
+
+
+class FakeServiceCall:
+    def __init__(self, data) -> None:
+        self.data = data
+
+
+def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -> None:
+    with fake_homeassistant_modules() as fake_ha:
+        module = import_pantryos_component("__init__")
+
+        class FakeClient:
+            instances = []
+
+            def __init__(self, base_url, token):
+                self.base_url = base_url
+                self.token = token
+                self.available = False
+                self.refresh_count = 0
+                self.added_items = []
+                FakeClient.instances.append(self)
+
+            async def async_instance(self):
+                if self.token == "bad-token":
+                    raise module.PantryAPIAuthError("invalid token", status=401, code="unauthorized")
+                return {"instance_id": "pantry-instance", "schema_version": 4}
+
+            async def async_refresh(self):
+                self.refresh_count += 1
+                self.available = True
+                return {"revision": self.refresh_count, "summary": {"total_items": self.refresh_count, "state_revision": self.refresh_count}}
+
+            async def async_events(self, *, limit=25, after_revision=None):
+                return {"items": [{"revision": self.refresh_count + 1}], "revision": self.refresh_count + 1}
+
+            async def async_add_item(self, data):
+                self.added_items.append(data)
+                return {"revision": self.refresh_count + 1, "item": {"id": "lot-1", **data}}
+
+        module.PantryAPIClient = FakeClient
+        hass = FakeHass()
+        entry = FakeEntry()
+
+        async def scenario() -> None:
+            assert await module.async_setup_entry(hass, entry) is True
+            runtime = hass.data[module.DOMAIN][entry.entry_id]
+            assert entry.runtime_data is runtime
+            assert runtime.instance["instance_id"] == "pantry-instance"
+            assert runtime.coordinator.available is True
+            assert hass.config_entries.forwarded == [(entry.entry_id, tuple(module.PLATFORMS))]
+            assert hass.services.has_service(module.DOMAIN, "add_item")
+
+            handler = hass.services.handlers[(module.DOMAIN, "add_item")]["handler"]
+            await handler(FakeServiceCall({"name": "Runtime Oats", "quantity": "1", "unit": "count"}))
+            assert runtime.client.added_items == [{"name": "Runtime Oats", "quantity": "1", "unit": "count"}]
+            assert runtime.coordinator.last_revision >= 2
+            assert hass.bus.events[-1] == f"{module.DOMAIN}_updated"
+
+            await hass.interval_callbacks[0](None)
+            assert runtime.coordinator.last_revision >= 3
+
+            assert await module.async_unload_entry(hass, entry) is True
+            assert hass.unsubscribed == 1
+            assert (module.DOMAIN, "add_item") in hass.services.removed
+            assert entry.entry_id not in hass.data.get(module.DOMAIN, {})
+
+            bad_entry = FakeEntry({"base_url": "http://pantry.local:8765", "api_token": "bad-token"}, entry_id="bad")
+            try:
+                await module.async_setup_entry(FakeHass(), bad_entry)
+            except fake_ha.ConfigEntryAuthFailed:
+                pass
+            else:
+                raise AssertionError("auth failures should raise ConfigEntryAuthFailed")
+
+        asyncio.run(scenario())
+
+
+def test_home_assistant_config_flow_reconfigure_and_reauth_update_existing_entry() -> None:
+    with fake_homeassistant_modules():
+        module = import_pantryos_component("config_flow")
+
+        class FakeClient:
+            def __init__(self, base_url, token):
+                self.base_url = base_url
+                self.token = token
+
+            async def async_instance(self):
+                if self.token == "bad-token":
+                    raise module.PantryAPIAuthError("invalid token", status=401, code="unauthorized")
+                if self.base_url == "http://offline.local":
+                    raise module.PantryAPIError("offline")
+                return {"instance_id": "pantry-instance"}
+
+        module.PantryAPIClient = FakeClient
+
+        async def scenario() -> None:
+            flow = module.PantryOSConfigFlow()
+            flow.reconfigure_entry = SimpleNamespace(data={"base_url": "http://old.local", "api_token": "old-token"})
+            shown = await flow.async_step_reconfigure()
+            assert shown["type"] == "form"
+            assert shown["step_id"] == "reconfigure"
+
+            updated = await flow.async_step_reconfigure({"base_url": "http://new.local/", "api_token": "new-token"})
+            assert updated["type"] == "abort"
+            assert updated["data_updates"] == {"base_url": "http://new.local", "api_token": "new-token"}
+            assert flow.reconfigure_entry.data["base_url"] == "http://new.local"
+            assert flow.unique_id_mismatch_checked == "wrong_instance"
+
+            flow.reauth_entry = SimpleNamespace(data={"base_url": "http://new.local", "api_token": "expired-token"})
+            prompt = await flow.async_step_reauth(flow.reauth_entry.data)
+            assert prompt["type"] == "form"
+            assert prompt["step_id"] == "reauth_confirm"
+
+            reauthed = await flow.async_step_reauth_confirm({"api_token": "rotated-token"})
+            assert reauthed["type"] == "abort"
+            assert reauthed["data_updates"] == {"base_url": "http://new.local", "api_token": "rotated-token"}
+            assert flow.reauth_entry.data["api_token"] == "rotated-token"
+
+            invalid = await flow.async_step_reauth_confirm({"api_token": "bad-token"})
+            assert invalid["type"] == "form"
+            assert invalid["errors"] == {"base": "invalid_auth"}
+
+        asyncio.run(scenario())

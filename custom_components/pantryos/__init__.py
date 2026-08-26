@@ -9,11 +9,11 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 
-from .api_client import PantryAPIClient, PantryAPIError
+from .api_client import PantryAPIAuthError, PantryAPIClient, PantryAPIError
 from .const import CONF_API_TOKEN, CONF_BASE_URL, DOMAIN, PLATFORMS
 from .coordinator import PantryDataCoordinator, PantryRuntime
 
@@ -27,6 +27,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         instance = await pantry.async_instance()
         await coordinator.async_refresh()
+    except PantryAPIAuthError as exc:
+        raise ConfigEntryAuthFailed(str(exc)) from exc
     except PantryAPIError as exc:
         raise ConfigEntryNotReady(str(exc)) from exc
 

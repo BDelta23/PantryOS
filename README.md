@@ -78,7 +78,7 @@ Copy `custom_components/pantryos` into your Home Assistant config directory:
 <config>/custom_components/pantryos
 ```
 
-Restart Home Assistant, then go to **Settings > Devices & services > Add integration** and search for `PantryOS`. Enter the PantryOS Core URL, for example `http://127.0.0.1:8765`, and the same `PANTRYOS_API_TOKEN` used by the Core server.
+Restart Home Assistant, then go to **Settings > Devices & services > Add integration** and search for `PantryOS`. Enter the PantryOS Core URL, for example `http://127.0.0.1:8765`, and the same `PANTRYOS_API_TOKEN` used by the Core server. The integration supports Home Assistant reconfigure and reauth flows for URL/token changes; authentication failures during setup are reported as credential failures rather than generic connection retries.
 
 ### Main Entities
 

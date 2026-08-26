@@ -3,7 +3,6 @@
   "name": "PantryOS",
   "codeowners": [],
   "config_flow": true,
-  "documentation": "https://github.com/example/pantryos",
   "integration_type": "hub",
   "iot_class": "local_polling",
   "requirements": [],

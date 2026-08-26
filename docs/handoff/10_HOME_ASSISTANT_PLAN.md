@@ -31,7 +31,7 @@ Flow behavior:
 4. Use returned instance ID as unique ID.
 5. Prevent duplicate entries for the same instance.
 6. Store only required connection data; never log the token.
-7. Support reconfigure and reauth.
+7. Support reconfigure and reauth. Current implementation validates replacement URL/token pairs against `/api/v1/instance`, preserves the PantryOS instance unique ID, and reloads the existing entry.
 
 ## Runtime structure
 
@@ -148,7 +148,7 @@ A Home Assistant automation combines the freezer temperature entity with PantryO
 
 - user config success and all major error branches;
 - duplicate instance prevention;
-- setup, unload, reload, reconfigure, reauth;
+- setup, unload, reload, reconfigure, reauth; current dependency-light tests cover setup, unload, auth-failure mapping, service action refresh, reconfigure, and reauth;
 - initial fetch failure and automatic retry;
 - stream update and recovery poll;
 - entity availability and bounded attributes;

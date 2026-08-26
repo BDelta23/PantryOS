@@ -110,7 +110,7 @@ Locations are normalized paths (`inventory.py:28-33`) and counted with `startswi
 
 - Domain code lives inside the Home Assistant component and is dynamically loaded by the web server (`app/server.py:23-39`).
 - The server uses `http.server` and hand-written routing/validation.
-- The manifest documentation URL is a placeholder (`manifest.json:6`).
+- Baseline had a placeholder manifest documentation URL; the current manifest no longer ships that placeholder.
 - No dependency lock file, CI workflow, formatter/linter/type checker configuration, changelog, license, or release process is present.
 - Browser tests, accessibility tests, Home Assistant tests, migration tests, security tests, and container smoke tests are absent.
 - Health checks do not distinguish liveness from database readiness.
