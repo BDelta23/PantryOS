@@ -16,12 +16,31 @@ DEFAULT_TEMPLATE_PATH = ROOT / "docs" / "release" / "manual-validation.template.
 
 REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
     "physical-barcode-camera": {
-        "acceptance": ("F2", "G5", "G6"),
-        "details": ("device", "os", "browser", "app_url", "barcode_case"),
+        "acceptance": ("F1", "F2", "G5", "G6"),
+        "details": (
+            "device",
+            "os",
+            "browser",
+            "app_url",
+            "known_barcode",
+            "known_result",
+            "unknown_barcode",
+            "manual_fallback_result",
+        ),
     },
     "real-receipt-ocr": {
-        "acceptance": ("F5", "F6"),
-        "details": ("device", "os", "browser", "receipt_source", "capture_method"),
+        "acceptance": ("F5", "F6", "F8"),
+        "details": (
+            "device",
+            "os",
+            "browser",
+            "receipt_source",
+            "capture_method",
+            "receipt_id",
+            "purchase_id",
+            "committed_lot_count",
+            "price_history_result",
+        ),
     },
     "published-image-signature": {
         "acceptance": ("I4", "I5", "J8"),
@@ -35,6 +54,7 @@ REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
 
 REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replace-me", "changeme"}
 SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
 class ManualReleaseEvidenceError(AssertionError):
@@ -204,7 +224,32 @@ def _validate_check_specific_details(
     expected_commit: str,
     problems: list[dict[str, str]],
 ) -> None:
-    if check_id == "published-image-signature":
+    if check_id == "physical-barcode-camera":
+        app_url = details.get("app_url")
+        if not isinstance(app_url, str) or HTTP_URL_RE.match(app_url.strip()) is None:
+            problems.append({"field": f"{prefix}.details.app_url", "problem": "must be an http(s) URL"})
+        known_barcode = str(details.get("known_barcode", "")).strip()
+        unknown_barcode = str(details.get("unknown_barcode", "")).strip()
+        if known_barcode and unknown_barcode and known_barcode == unknown_barcode:
+            problems.append({"field": f"{prefix}.details.unknown_barcode", "problem": "must differ from known_barcode"})
+        known_result = str(details.get("known_result", "")).strip().lower()
+        if known_result and "product" not in known_result and "lot" not in known_result:
+            problems.append({"field": f"{prefix}.details.known_result", "problem": "must describe the resolved product or lot"})
+        fallback_result = str(details.get("manual_fallback_result", "")).strip().lower()
+        if fallback_result and "manual" not in fallback_result:
+            problems.append({"field": f"{prefix}.details.manual_fallback_result", "problem": "must describe the manual fallback"})
+    elif check_id == "real-receipt-ocr":
+        receipt_id = details.get("receipt_id")
+        if not isinstance(receipt_id, str) or not receipt_id.strip().startswith("receipt_"):
+            problems.append({"field": f"{prefix}.details.receipt_id", "problem": "must be a committed receipt_ identifier"})
+        purchase_id = details.get("purchase_id")
+        if not isinstance(purchase_id, str) or not purchase_id.strip().startswith("purchase_"):
+            problems.append({"field": f"{prefix}.details.purchase_id", "problem": "must be a purchase_ identifier"})
+        _require_positive_int_string(details.get("committed_lot_count"), f"{prefix}.details.committed_lot_count", problems)
+        price_history_result = str(details.get("price_history_result", "")).strip().lower()
+        if price_history_result and "price" not in price_history_result:
+            problems.append({"field": f"{prefix}.details.price_history_result", "problem": "must describe price history visibility"})
+    elif check_id == "published-image-signature":
         digest = details.get("digest")
         if not isinstance(digest, str) or SHA256_DIGEST_RE.fullmatch(digest.strip()) is None:
             problems.append({"field": f"{prefix}.details.digest", "problem": "must be a sha256:<64 lowercase hex> digest"})
@@ -248,6 +293,16 @@ def _validate_timestamp(value: Any, field: str, problems: list[dict[str, str]]) 
 def _require_clean_string(value: Any, field: str, problems: list[dict[str, str]]) -> None:
     if not isinstance(value, str) or _rejected(value):
         problems.append({"field": field, "problem": "must be a concrete non-empty string"})
+
+
+def _require_positive_int_string(value: Any, field: str, problems: list[dict[str, str]]) -> None:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        problems.append({"field": field, "problem": "must be a positive integer"})
+        return
+    if parsed < 1:
+        problems.append({"field": field, "problem": "must be a positive integer"})
 
 
 def _rejected(value: str) -> bool:

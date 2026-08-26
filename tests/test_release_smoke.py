@@ -290,7 +290,26 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
         checks = []
         for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
             details = {field: f"value-{field}" for field in rule["details"]}
-            if check_id == "published-image-signature":
+            if check_id == "physical-barcode-camera":
+                details.update(
+                    {
+                        "app_url": "http://127.0.0.1:8765",
+                        "known_barcode": "012345678905",
+                        "known_result": "Resolved known product and created lot lot_known",
+                        "unknown_barcode": "999999999999",
+                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                    }
+                )
+            elif check_id == "real-receipt-ocr":
+                details.update(
+                    {
+                        "receipt_id": "receipt_123",
+                        "purchase_id": "purchase_123",
+                        "committed_lot_count": "2",
+                        "price_history_result": "Price history displayed store, date, package quantity, total, and unit price",
+                    }
+                )
+            elif check_id == "published-image-signature":
                 details.update(
                     {
                         "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
@@ -372,6 +391,94 @@ def test_manual_release_evidence_rejects_incomplete_records() -> None:
     assert any(problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]" for problem in result["problems"])
 
 
+def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review = evidence_dir / "independent-review.md"
+        review.write_text("# Independent review\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        commit = "d" * 40
+        checks = []
+        for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
+            details = {field: f"value-{field}" for field in rule["details"]}
+            if check_id == "physical-barcode-camera":
+                details.update(
+                    {
+                        "app_url": "pantry.local",
+                        "known_barcode": "012345678905",
+                        "known_result": "Scanner beeped",
+                        "unknown_barcode": "012345678905",
+                        "manual_fallback_result": "Created item",
+                    }
+                )
+            elif check_id == "real-receipt-ocr":
+                details.update(
+                    {
+                        "receipt_id": "123",
+                        "purchase_id": "123",
+                        "committed_lot_count": "0",
+                        "price_history_result": "History displayed",
+                    }
+                )
+            elif check_id == "published-image-signature":
+                details.update(
+                    {
+                        "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "digest": "sha256:" + "1" * 64,
+                        "tag": "v1.0.0",
+                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "signature_identity": "release@example.test",
+                    }
+                )
+            elif check_id == "independent-full-review":
+                details.update(
+                    {
+                        "review_path": "docs/release/evidence/independent-review.md",
+                        "reviewed_commit": commit,
+                        "decision": "PASS",
+                        "open_critical_high": "0",
+                        "release_blocking_medium": "0",
+                    }
+                )
+            checks.append(
+                {
+                    "id": check_id,
+                    "result": "PASS",
+                    "operator": "release-operator",
+                    "timestamp_utc": "2026-08-26T12:00:00Z",
+                    "acceptance": list(rule["acceptance"]),
+                    "details": details,
+                    "evidence": {
+                        "summary": f"{check_id} passed against the release candidate.",
+                        "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                    },
+                }
+            )
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    fields = {problem["field"] for problem in result["problems"]}
+    assert result["ok"] is False
+    assert "checks[physical-barcode-camera].details.app_url" in fields
+    assert "checks[physical-barcode-camera].details.unknown_barcode" in fields
+    assert "checks[physical-barcode-camera].details.known_result" in fields
+    assert "checks[physical-barcode-camera].details.manual_fallback_result" in fields
+    assert "checks[real-receipt-ocr].details.receipt_id" in fields
+    assert "checks[real-receipt-ocr].details.purchase_id" in fields
+    assert "checks[real-receipt-ocr].details.committed_lot_count" in fields
+    assert "checks[real-receipt-ocr].details.price_history_result" in fields
+
+
 def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> None:
     from scripts import manual_release_evidence
 
@@ -387,7 +494,26 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
         checks = []
         for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
             details = {field: f"value-{field}" for field in rule["details"]}
-            if check_id == "published-image-signature":
+            if check_id == "physical-barcode-camera":
+                details.update(
+                    {
+                        "app_url": "http://127.0.0.1:8765",
+                        "known_barcode": "012345678905",
+                        "known_result": "Resolved known product and created lot lot_known",
+                        "unknown_barcode": "999999999999",
+                        "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                    }
+                )
+            elif check_id == "real-receipt-ocr":
+                details.update(
+                    {
+                        "receipt_id": "receipt_123",
+                        "purchase_id": "purchase_123",
+                        "committed_lot_count": "2",
+                        "price_history_result": "Price history displayed store, date, package quantity, total, and unit price",
+                    }
+                )
+            elif check_id == "published-image-signature":
                 details.update(
                     {
                         "digest": "value-digest",
