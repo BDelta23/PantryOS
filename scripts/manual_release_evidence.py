@@ -404,7 +404,7 @@ def _validate_check_specific_details(
         command = details.get("verification_command")
         identity_constraints = _cosign_identity_values(command) if isinstance(command, str) else []
         insecure_flags = _cosign_insecure_flags(command) if isinstance(command, str) else []
-        if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
+        if not isinstance(command, str) or not _is_cosign_verify_command(command):
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
         elif insecure_flags:
             problems.append(
@@ -488,6 +488,17 @@ def _validate_exact_keys(value: dict[str, Any], expected: set[str], field: str, 
     extras = sorted(set(value) - expected)
     if extras:
         problems.append({"field": field, "problem": "unexpected fields: " + ", ".join(extras)})
+
+
+def _is_cosign_verify_command(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if len(tokens) < 2:
+        return False
+    command_name = Path(tokens[0]).name.lower()
+    return command_name in {"cosign", "cosign.exe"} and tokens[1].lower() == "verify"
 
 
 def _cosign_identity_values(command: str) -> list[str]:
