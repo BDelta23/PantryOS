@@ -333,11 +333,15 @@ def _validate_check_specific_details(
         image = details.get("image")
         if isinstance(image, str) and digest_value and digest_value not in image:
             problems.append({"field": f"{prefix}.details.image", "problem": "must include the recorded digest"})
+        signature_identity = details.get("signature_identity")
+        identity_value = signature_identity.strip() if isinstance(signature_identity, str) else ""
         command = details.get("verification_command")
         if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
         elif digest_value and digest_value not in command:
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded digest"})
+        elif identity_value and identity_value not in command:
+            problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include signature_identity"})
     elif check_id == "independent-full-review":
         if details.get("decision") != "PASS":
             problems.append({"field": f"{prefix}.details.decision", "problem": "must be PASS"})

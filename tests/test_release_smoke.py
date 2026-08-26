@@ -60,7 +60,9 @@ def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -
                     "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
                     "digest": "sha256:" + "1" * 64,
                     "tag": "v1.0.0",
-                    "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                    "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:"
+                    + "1" * 64
+                    + " --certificate-identity release@example.test",
                     "signature_identity": "release@example.test",
                 }
             )
@@ -476,7 +478,9 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
                         "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
                         "digest": "sha256:" + "1" * 64,
                         "tag": "v1.0.0",
-                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:"
+                        + "1" * 64
+                        + " --certificate-identity release@example.test",
                         "signature_identity": "release@example.test",
                     }
                 )
@@ -1181,7 +1185,9 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
                         "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
                         "digest": "sha256:" + "1" * 64,
                         "tag": "v1.0.0",
-                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:"
+                        + "1" * 64
+                        + " --certificate-identity release@example.test",
                         "signature_identity": "release@example.test",
                     }
                 )
@@ -1273,7 +1279,9 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
                         "image": "ghcr.io/example/pantryos@" + other_digest,
                         "digest": recorded_digest,
                         "tag": "v1.0.0",
-                        "verification_command": "cosign verify ghcr.io/example/pantryos@" + other_digest,
+                        "verification_command": "cosign verify ghcr.io/example/pantryos@"
+                        + other_digest
+                        + " --certificate-identity release@example.test",
                         "signature_identity": "release@example.test",
                     }
                 )
@@ -1313,6 +1321,43 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
     assert "checks[published-image-signature].details.image" in fields
     assert "checks[published-image-signature].details.verification_command" in fields
     assert "checks[independent-full-review].details.review_path" in fields
+
+
+def test_manual_release_evidence_rejects_signature_identity_mismatch() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "published-image-signature":
+                digest = check["details"]["digest"]
+                check["details"]["verification_command"] = (
+                    "cosign verify ghcr.io/example/pantryos@" + digest + " --certificate-identity other@example.test"
+                )
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[published-image-signature].details.verification_command",
+        "problem": "must include signature_identity",
+    } in result["problems"]
 
 
 def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> None:
