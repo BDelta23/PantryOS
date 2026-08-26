@@ -235,7 +235,7 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
 
     acceptance = """# Gates
 - [ ] A1. One source.
-- [ ] J8. Readiness PASS.
+- [x] J8. Readiness PASS.
 """
     status = """# Status
 ## Phase gates
@@ -257,6 +257,9 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     blockers = release_readiness.parse_open_blockers(status)
 
     assert [criterion.id for criterion in criteria] == ["A1", "J8"]
+    assert [criterion.complete for criterion in criteria] == [False, True]
+    open_criteria = [f"{criterion.id}. {criterion.text}" for criterion in criteria if not criterion.complete]
+    assert open_criteria == ["A1. One source."]
     assert [gate.name for gate in gates if not gate.complete] == ["Release gate PASS"]
     assert evidence[-1].phase == "Phase 8/J"
     assert evidence[-1].commands == "`python scripts/check.py` -> passed"
@@ -267,6 +270,7 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
             "generated_at": "2026-08-26T00:00:00Z",
             "decision": "NOT READY",
             "acceptance_criteria_count": len(criteria),
+            "open_acceptance_criteria": open_criteria,
             "phase_gate_count": len(gates),
             "open_phase_gates": ["Release gate PASS"],
             "open_blockers": blockers,
@@ -275,6 +279,9 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
         }
     )
     assert "Status: **NOT READY**" in markdown
+    assert "Open acceptance criteria: `1`" in markdown
+    assert "A1. One source." in markdown
+    assert "J8. Readiness PASS." not in markdown
     assert "python scripts/concurrency_smoke.py" in markdown
     assert "python scripts/container_smoke.py --isolated" in markdown
     assert "Independent review pending." in markdown

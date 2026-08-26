@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ACCEPTANCE_PATH = ROOT / "docs" / "handoff" / "08_ACCEPTANCE_CRITERIA.md"
 STATUS_PATH = ROOT / "docs" / "handoff" / "IMPLEMENTATION_STATUS.md"
 READINESS_PATH = ROOT / "docs" / "release" / "RELEASE_READINESS.md"
-CRITERION_RE = re.compile(r"^- \[[ xX]\] (?P<id>[A-J][0-9]+)\. (?P<text>.+)$")
+CRITERION_RE = re.compile(r"^- \[(?P<done>[ xX])\] (?P<id>[A-J][0-9]+)\. (?P<text>.+)$")
 PHASE_RE = re.compile(r"^- \[(?P<done>[ xX])\] (?P<name>.+)$")
 EVIDENCE_RE = re.compile(r"^\| (?P<date>20\d\d-[^|]+) \| (?P<phase>[^|]+) \| (?P<change>[^|]+) \| (?P<commands>[^|]+) \| (?P<gap>[^|]+) \|")
 
@@ -23,6 +23,7 @@ EVIDENCE_RE = re.compile(r"^\| (?P<date>20\d\d-[^|]+) \| (?P<phase>[^|]+) \| (?P
 class Criterion:
     id: str
     text: str
+    complete: bool
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ def parse_acceptance(text: str) -> list[Criterion]:
     for line in text.splitlines():
         match = CRITERION_RE.match(line)
         if match:
-            criteria.append(Criterion(match.group("id"), match.group("text")))
+            criteria.append(Criterion(match.group("id"), match.group("text"), match.group("done").lower() == "x"))
     return criteria
 
 
@@ -118,12 +119,14 @@ def readiness_summary() -> dict[str, Any]:
     gates = parse_phase_gates(status_text)
     evidence = parse_evidence(status_text)
     blockers = parse_open_blockers(status_text)
+    open_criteria = [f"{criterion.id}. {criterion.text}" for criterion in criteria if not criterion.complete]
     open_gates = [gate.name for gate in gates if not gate.complete]
-    ready = not open_gates and not blockers
+    ready = not open_criteria and not open_gates and not blockers
     return {
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "decision": "PASS" if ready else "NOT READY",
         "acceptance_criteria_count": len(criteria),
+        "open_acceptance_criteria": open_criteria,
         "phase_gate_count": len(gates),
         "open_phase_gates": open_gates,
         "open_blockers": blockers,
@@ -161,6 +164,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"- Status: **{summary['decision']}**",
         f"- Generated: `{summary['generated_at']}`",
         f"- Acceptance criteria in contract: `{summary['acceptance_criteria_count']}`",
+        f"- Open acceptance criteria: `{len(summary['open_acceptance_criteria'])}`",
         f"- Phase gates in ledger: `{summary['phase_gate_count']}`",
         "",
         "## Required Release Commands",
@@ -168,6 +172,13 @@ def render_markdown(summary: dict[str, Any]) -> str:
     ]
     for command in summary["required_release_commands"]:
         lines.append(f"- `{command}`")
+    lines.extend(["", "## Open Acceptance Criteria", ""])
+    open_criteria = summary["open_acceptance_criteria"]
+    if open_criteria:
+        for criterion in open_criteria:
+            lines.append(f"- {criterion}")
+    else:
+        lines.append("- None")
     lines.extend(["", "## Open Phase Gates", ""])
     open_gates = summary["open_phase_gates"]
     if open_gates:

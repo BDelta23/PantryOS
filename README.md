@@ -375,4 +375,4 @@ python scripts/release_readiness.py --write
 python scripts/release_readiness.py --check
 ```
 
-The readiness document is written to `docs/release/RELEASE_READINESS.md` and remains `NOT READY` until all phase gates and implementation-status blockers are cleared.
+The readiness document is written to `docs/release/RELEASE_READINESS.md` and remains `NOT READY` until every acceptance criterion in `docs/handoff/08_ACCEPTANCE_CRITERIA.md` is checked off, all phase gates are closed, and implementation-status blockers are cleared.
