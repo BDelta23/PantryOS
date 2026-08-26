@@ -1571,6 +1571,40 @@ def test_manual_release_evidence_rejects_signature_identity_mismatch() -> None:
     } in result["problems"]
 
 
+def test_manual_release_evidence_rejects_non_semver_signature_tag() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "published-image-signature":
+                check["details"]["tag"] = "latest"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[published-image-signature].details.tag",
+        "problem": "must be a SemVer release tag like v1.0.0",
+    } in result["problems"]
+
+
 def test_manual_release_evidence_rejects_malformed_signature_transparency_log() -> None:
     from scripts import manual_release_evidence
 
