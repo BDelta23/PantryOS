@@ -176,6 +176,23 @@ async function assertNoHorizontalOverflow(page, viewportName) {
 
 async function runViewport(browser, baseUrl, viewport) {
   const page = await browser.newPage({ viewport: viewport.size });
+  const cameraBarcode = `990${Math.floor(100000000 + Math.random() * 899999999)}`;
+  await page.addInitScript((barcode) => {
+    window.__pantryosBarcodeScannerSmoke = { attached: false, detected: false, stopped: false };
+    window.PantryOSBarcodeScannerAdapter = {
+      supported: () => true,
+      start: async () => ({
+        detector: { barcode },
+        stream: { getTracks: () => [{ stop: () => { window.__pantryosBarcodeScannerSmoke.stopped = true; } }] },
+      }),
+      attach: async () => { window.__pantryosBarcodeScannerSmoke.attached = true; },
+      detect: async (detector) => {
+        window.__pantryosBarcodeScannerSmoke.detected = true;
+        return [{ rawValue: detector.barcode }];
+      },
+      stop: (stream) => { for (const track of stream.getTracks()) track.stop(); },
+    };
+  }, cameraBarcode);
   const consoleErrors = [];
   const httpErrors = [];
   page.on("console", (message) => {
@@ -214,6 +231,14 @@ async function runViewport(browser, baseUrl, viewport) {
   await assertNoCriticalA11yIssues(page);
 
   const suffix = `${viewport.name}-${Date.now()}`;
+  await page.locator('#barcodeForm [name="barcode"]').fill("");
+  await clickButton(page, "Use Camera");
+  await page.waitForFunction((barcode) => document.querySelector('#barcodeForm [name="barcode"]')?.value === barcode, cameraBarcode);
+  const cameraState = await page.evaluate(() => window.__pantryosBarcodeScannerSmoke);
+  if (!cameraState.attached || !cameraState.detected || !cameraState.stopped) {
+    throw new Error(`Barcode camera adapter did not complete capture and cleanup: ${JSON.stringify(cameraState)}`);
+  }
+
   const itemName = `Smoke Flour ${suffix}`;
   const recipeName = `Smoke Pancakes ${suffix}`;
   const barcodeItem = `Smoke Barcode Beans ${suffix}`;

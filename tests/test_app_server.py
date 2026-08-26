@@ -1241,6 +1241,8 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "/api/barcodes/" in app_js
     assert "handleBarcodeSubmit" in app_js
     assert "supportsBarcodeCamera" in app_js
+    assert "PantryOSBarcodeScannerAdapter" in app_js
+    assert "nativeBarcodeScannerAdapter" in app_js
     assert "BarcodeDetector" in app_js
     assert "navigator.mediaDevices.getUserMedia" in app_js
     assert "facingMode: { ideal: \"environment\" }" in app_js

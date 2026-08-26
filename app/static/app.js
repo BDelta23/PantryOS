@@ -623,8 +623,37 @@ async function handleItemSubmit(event) {
 }
 
 
+const DEFAULT_BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
+
+const nativeBarcodeScannerAdapter = {
+  supported() {
+    return "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
+  },
+  async start() {
+    const detector = new BarcodeDetector({ formats: DEFAULT_BARCODE_FORMATS });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    return { detector, stream };
+  },
+  async attach(video, stream) {
+    video.srcObject = stream;
+    await video.play();
+  },
+  async detect(detector, video) {
+    return detector.detect(video);
+  },
+  stop(stream) {
+    for (const track of stream.getTracks()) {
+      track.stop();
+    }
+  },
+};
+
+function barcodeScannerAdapter() {
+  return window.PantryOSBarcodeScannerAdapter || nativeBarcodeScannerAdapter;
+}
+
 function supportsBarcodeCamera() {
-  return "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
+  return Boolean(barcodeScannerAdapter().supported());
 }
 
 function setupBarcodeScanner() {
@@ -637,11 +666,13 @@ function setupBarcodeScanner() {
     status.textContent = "Manual barcode entry is available on this browser.";
     return;
   }
+  $("#barcodeCameraButton").disabled = false;
   status.textContent = "Camera scanner ready.";
 }
 
 async function startBarcodeScanner() {
-  if (!supportsBarcodeCamera()) {
+  const adapter = barcodeScannerAdapter();
+  if (!adapter.supported()) {
     showToast("Camera scanning is unavailable on this browser");
     return;
   }
@@ -649,11 +680,9 @@ async function startBarcodeScanner() {
   const status = $("#barcodeScannerStatus");
   stopBarcodeScanner();
   try {
-    const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
-    state.barcodeScanner = { active: true, detector, stream, scanFrame: 0 };
-    video.srcObject = stream;
-    await video.play();
+    const { detector, stream } = await adapter.start();
+    state.barcodeScanner = { active: true, adapter, detector, stream, scanFrame: 0 };
+    await adapter.attach(video, stream);
     $("#barcodeCameraButton").hidden = true;
     $("#barcodeStopButton").hidden = false;
     status.textContent = "Scanning for a barcode.";
@@ -669,7 +698,7 @@ async function scanBarcodeFrame() {
   if (!state.barcodeScanner.active) return;
   const video = $("#barcodeVideo");
   try {
-    const codes = await state.barcodeScanner.detector.detect(video);
+    const codes = await state.barcodeScanner.adapter.detect(state.barcodeScanner.detector, video);
     const rawValue = codes.find((code) => code.rawValue)?.rawValue;
     if (rawValue) {
       $("#barcodeForm").elements.barcode.value = rawValue;
@@ -690,16 +719,14 @@ function stopBarcodeScanner() {
     window.cancelAnimationFrame(state.barcodeScanner.scanFrame);
   }
   if (state.barcodeScanner.stream) {
-    for (const track of state.barcodeScanner.stream.getTracks()) {
-      track.stop();
-    }
+    state.barcodeScanner.adapter.stop(state.barcodeScanner.stream);
   }
   const video = $("#barcodeVideo");
   if (video) {
     video.pause();
     video.srcObject = null;
   }
-  state.barcodeScanner = { active: false, detector: null, stream: null, scanFrame: 0 };
+  state.barcodeScanner = { active: false, adapter: nativeBarcodeScannerAdapter, detector: null, stream: null, scanFrame: 0 };
   const startButton = $("#barcodeCameraButton");
   const stopButton = $("#barcodeStopButton");
   if (startButton) startButton.hidden = !supportsBarcodeCamera();
