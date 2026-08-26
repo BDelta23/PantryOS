@@ -92,12 +92,15 @@ class RateLimiter:
 
 
 class BrowserSessionStore:
-    """In-process session store for the local browser UI."""
+    """File-backed session store for the local browser UI."""
 
-    def __init__(self, *, ttl_seconds: int) -> None:
+    def __init__(self, *, ttl_seconds: int, storage_path: Path | None = None) -> None:
         self.ttl_seconds = max(60, ttl_seconds)
+        self.storage_path = storage_path
         self._lock = threading.Lock()
         self._sessions: dict[str, dict[str, str | float]] = {}
+        with self._lock:
+            self._load_locked()
 
     def create(self) -> dict[str, str | float]:
         session_id = secrets.token_urlsafe(32)
@@ -108,6 +111,7 @@ class BrowserSessionStore:
         }
         with self._lock:
             self._sessions[session_id] = session
+            self._save_locked()
         return session
 
     def get(self, session_id: str | None) -> dict[str, str | float] | None:
@@ -119,6 +123,7 @@ class BrowserSessionStore:
                 return None
             if float(session["expires_at"]) <= time.time():
                 self._sessions.pop(session_id, None)
+                self._save_locked()
                 return None
             return session
 
@@ -127,6 +132,44 @@ class BrowserSessionStore:
             return
         with self._lock:
             self._sessions.pop(session_id, None)
+            self._save_locked()
+
+    def _load_locked(self) -> None:
+        if self.storage_path is None or not self.storage_path.exists():
+            return
+        try:
+            payload = json.loads(self.storage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self._sessions = {}
+            return
+        sessions = payload.get("sessions") if isinstance(payload, dict) else None
+        if not isinstance(sessions, dict):
+            self._sessions = {}
+            return
+        now = time.time()
+        loaded: dict[str, dict[str, str | float]] = {}
+        for session_id, session in sessions.items():
+            if not isinstance(session_id, str) or not isinstance(session, dict):
+                continue
+            csrf_token = session.get("csrf_token")
+            expires_at = session.get("expires_at")
+            if not isinstance(csrf_token, str) or not isinstance(expires_at, int | float):
+                continue
+            if expires_at <= now:
+                continue
+            loaded[session_id] = {"id": session_id, "csrf_token": csrf_token, "expires_at": float(expires_at)}
+        self._sessions = loaded
+        if len(loaded) != len(sessions):
+            self._save_locked()
+
+    def _save_locked(self) -> None:
+        if self.storage_path is None:
+            return
+        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"sessions": self._sessions}
+        temporary = self.storage_path.with_name(f".{self.storage_path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(payload, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+        temporary.replace(self.storage_path)
 
 
 def demo_seed_document() -> dict[str, Any]:
@@ -511,6 +554,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
     api_token: str | None = None
     rate_limiter: RateLimiter
     session_store: BrowserSessionStore
+    secure_browser_cookies: bool = False
 
     def handle_one_request(self) -> None:
         self._pantryos_started_at = time.monotonic()
@@ -985,7 +1029,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                     "name": BROWSER_SESSION_COOKIE,
                     "http_only": True,
                     "same_site": "Lax",
-                    "secure": False,
+                    "secure": self._browser_cookie_secure(),
                 },
             },
             headers=headers,
@@ -1032,10 +1076,18 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         return {"Access-Control-Allow-Origin": origin, "Vary": "Origin"}
 
     def _session_cookie(self, session_id: str) -> str:
-        return f"{BROWSER_SESSION_COOKIE}={session_id}; Path=/; Max-Age={self.session_store.ttl_seconds}; HttpOnly; SameSite=Lax"
+        secure = "; Secure" if self._browser_cookie_secure() else ""
+        return f"{BROWSER_SESSION_COOKIE}={session_id}; Path=/; Max-Age={self.session_store.ttl_seconds}; HttpOnly; SameSite=Lax{secure}"
 
     def _clear_session_cookie(self) -> str:
-        return f"{BROWSER_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        secure = "; Secure" if self._browser_cookie_secure() else ""
+        return f"{BROWSER_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax{secure}"
+
+    def _browser_cookie_secure(self) -> bool:
+        if self.secure_browser_cookies:
+            return True
+        forwarded_proto = self.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().casefold()
+        return forwarded_proto == "https"
 
     def _request_id(self) -> str:
         request_id = getattr(self, "_pantryos_request_id", None)
@@ -1608,6 +1660,18 @@ def _bounded_float(value: str | None, *, default: float, minimum: float, maximum
     return max(minimum, min(numeric, maximum))
 
 
+def _env_bool(value: str | None) -> bool:
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _browser_session_store_path(db_path: Path) -> Path | None:
+    configured = os.environ.get("PANTRYOS_BROWSER_SESSION_STORE")
+    if configured and configured.strip().casefold() in {"memory", ":memory:", "none", "off"}:
+        return None
+    if configured:
+        return Path(configured)
+    return db_path.parent / "browser_sessions.json"
+
 def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
     handler.core = PantryCore(db_path)
@@ -1617,8 +1681,10 @@ def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
         window_seconds=int(os.environ.get("PANTRYOS_RATE_LIMIT_WINDOW_SECONDS", str(DEFAULT_RATE_LIMIT_WINDOW_SECONDS))),
     )
     handler.session_store = BrowserSessionStore(
-        ttl_seconds=int(os.environ.get("PANTRYOS_BROWSER_SESSION_SECONDS", str(DEFAULT_BROWSER_SESSION_SECONDS)))
+        ttl_seconds=int(os.environ.get("PANTRYOS_BROWSER_SESSION_SECONDS", str(DEFAULT_BROWSER_SESSION_SECONDS))),
+        storage_path=_browser_session_store_path(db_path),
     )
+    handler.secure_browser_cookies = _env_bool(os.environ.get("PANTRYOS_BROWSER_SECURE_COOKIES"))
     handler.core.migrate()
     if LEGACY_JSON_PATH.exists() and handler.core.dashboard()["summary"]["product_count"] == 0:
         handler.core.import_legacy_json(LEGACY_JSON_PATH)

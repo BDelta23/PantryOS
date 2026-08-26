@@ -35,6 +35,19 @@ def api_token(value: str):
             os.environ["PANTRYOS_API_TOKEN"] = original
 
 
+@contextmanager
+def temporary_env(name: str, value: str):
+    original = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = original
+
+
 def request_json(
     url: str,
     method: str = "GET",
@@ -364,6 +377,71 @@ def test_browser_routes_require_session_csrf_and_same_origin() -> None:
     assert preflight_headers["Access-Control-Allow-Origin"] == base
     assert preflight_headers["Access-Control-Allow-Credentials"] == "true"
     assert created["item"]["name"] == "Session Apples"
+
+def test_browser_session_persists_across_server_restart_and_logout_removes_it() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        session_path = Path(directory) / "browser_sessions.json"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            cookie, csrf_token, _set_cookie = browser_login(base)
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+        stored_sessions = session_path.read_text(encoding="utf-8")
+        assert "test-token" not in stored_sessions
+        assert "csrf_token" in stored_sessions
+
+        restarted = server_module.make_server("127.0.0.1", 0, data_path)
+        restarted_thread = threading.Thread(target=restarted.serve_forever, daemon=True)
+        restarted_thread.start()
+        try:
+            restarted_base = f"http://127.0.0.1:{restarted.server_port}"
+            session = request_json(f"{restarted_base}/api/session", cookie=cookie)
+            created = request_json(
+                f"{restarted_base}/api/items",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"name": "Restart Session Rice", "quantity": "1", "unit": "count"},
+            )
+            logout = request_json(f"{restarted_base}/api/session/logout", method="POST", cookie=cookie, csrf_token=csrf_token)
+            after_logout_status, after_logout = request_error(f"{restarted_base}/api/state", cookie=cookie, request_id="after-logout")
+        finally:
+            restarted.shutdown()
+            restarted_thread.join(timeout=5)
+            restarted.server_close()
+
+    assert session["authenticated"] is True
+    assert session["csrf_token"] == csrf_token
+    assert created["item"]["name"] == "Restart Session Rice"
+    assert logout == {"ok": True, "authenticated": False}
+    assert after_logout_status == 401
+    assert after_logout["code"] == "browser_session_required"
+
+
+def test_browser_secure_cookie_mode_is_explicit_and_reported() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"), temporary_env("PANTRYOS_BROWSER_SECURE_COOKIES", "true"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            cookie, _csrf_token, set_cookie = browser_login(base)
+            session = request_json(f"{base}/api/session", cookie=cookie)
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert "Secure" in set_cookie
+    assert session["cookie"]["secure"] is True
 
 def test_structured_request_logs_include_request_id_without_sensitive_values() -> None:
     log_stream = io.StringIO()
