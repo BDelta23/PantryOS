@@ -89,6 +89,15 @@ python scripts/image_hardening_audit.py
 
 Use `python scripts/image_hardening_audit.py --skip-live` for a static Dockerfile, `.dockerignore`, and rendered Compose audit without inspecting a running container. The live audit additionally verifies the image has no baked API token, the container is healthy and not privileged, the root filesystem is read-only, only `/app/data` is writable, and the PantryOS process is UID/GID `10001` with no effective Linux capabilities after startup.
 
+Generate or verify the container supply-chain lock and SPDX-style SBOM after rebuilding the release candidate image:
+
+```powershell
+python scripts/supply_chain_audit.py --write
+python scripts/supply_chain_audit.py
+```
+
+The supply-chain audit enforces the digest-pinned base image, `docs/release/container-image.lock.json`, `docs/release/pantryos-image-sbom.spdx.json`, required `tesseract-ocr` package inventory, and the release signing policy in `docs/release/SUPPLY_CHAIN.md`.
+
 ## Home Assistant Integration
 
 Copy `custom_components/pantryos` into your Home Assistant config directory:

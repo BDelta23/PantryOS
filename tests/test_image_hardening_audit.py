@@ -11,6 +11,7 @@ def test_static_image_hardening_checks_cover_container_controls() -> None:
     checks = {check.name: check.ok for check in image_hardening_audit.static_checks()}
 
     assert checks["dockerfile-slim-base"] is True
+    assert checks["dockerfile-pinned-base-digest"] is True
     assert checks["dockerfile-dedicated-user"] is True
     assert checks["entrypoint-drops-privileges"] is True
     assert checks["dockerfile-packages-docker-contract"] is True
@@ -21,6 +22,7 @@ def test_static_image_hardening_checks_cover_container_controls() -> None:
     assert checks["compose-no-new-privileges"] is True
     assert checks["dockerignore-.git"] is True
     assert checks["dockerignore-data/*.sqlite3"] is True
+    assert checks["supply-chain-policy"] is True
 
 
 def test_compose_hardening_checks_accept_rendered_config_shape() -> None:

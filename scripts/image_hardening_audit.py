@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE = "pantryos-pantryos:latest"
 DEFAULT_CONTAINER = "pantryos"
 DEFAULT_TOKEN = "local-dev-token"
+BASE_IMAGE_RE = re.compile(r"^FROM python:3\.12-slim@sha256:[a-f0-9]{64}$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ def static_checks() -> list[AuditCheck]:
     entrypoint = (ROOT / "scripts" / "docker_entrypoint.py").read_text(encoding="utf-8")
 
     require(checks, "dockerfile-slim-base", dockerfile.startswith("FROM python:3.12-slim"), "Dockerfile uses the Python slim runtime base.")
+    require(checks, "dockerfile-pinned-base-digest", bool(BASE_IMAGE_RE.search(dockerfile)), "Dockerfile pins the Python slim base image by sha256 digest.")
     require(checks, "dockerfile-no-pyc", "PYTHONDONTWRITEBYTECODE=1" in dockerfile, "Image disables Python bytecode writes.")
     require(checks, "dockerfile-apt-no-recommends", "--no-install-recommends" in dockerfile, "APT installs avoid recommended packages.")
     require(checks, "dockerfile-apt-cache-clean", "rm -rf /var/lib/apt/lists/*" in dockerfile, "APT package lists are removed in the same layer.")
@@ -108,6 +111,9 @@ def static_checks() -> list[AuditCheck]:
     require(checks, "compose-tmpfs", "/tmp:mode=1777,size=64m" in compose, "Compose provides only bounded /tmp tmpfs scratch space.")
     require(checks, "compose-data-volume", "pantryos-data:/app/data" in compose, "Compose writes application state only through the named /app/data volume.")
     require(checks, "compose-path-allowlists", "PANTRYOS_DATA_DIR: /app/data" in compose and "PANTRYOS_BACKUP_DIR: /app/data/backups" in compose, "Container path allowlists constrain data and backup paths.")
+    require(checks, "supply-chain-policy", (ROOT / "docs" / "release" / "SUPPLY_CHAIN.md").exists(), "Supply-chain policy documents lock, SBOM, and signing requirements.")
+    require(checks, "supply-chain-lock", (ROOT / "docs" / "release" / "container-image.lock.json").exists(), "Container image lock file is present.")
+    require(checks, "supply-chain-sbom", (ROOT / "docs" / "release" / "pantryos-image-sbom.spdx.json").exists(), "Container image SBOM is present.")
     for pattern in (".git", ".codex", "data/*.sqlite3", "data/backups/"):
         require(checks, f"dockerignore-{pattern}", pattern in dockerignore, f".dockerignore excludes {pattern} from build context.")
     return checks
