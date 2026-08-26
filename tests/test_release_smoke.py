@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _git_available() -> bool:
+    return shutil.which("git") is not None
 
 
 def test_scripted_demo_proves_supported_surface_vertical_slice() -> None:
@@ -331,6 +336,9 @@ def test_manual_release_evidence_template_refuses_evidence_path() -> None:
 def test_manual_release_evidence_accepts_complete_current_commit_record() -> None:
     from scripts import manual_release_evidence
 
+    if not _git_available():
+        return
+
     with TemporaryDirectory() as directory:
         root = Path(directory)
         subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -514,6 +522,9 @@ def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir(
 
 def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
     from scripts import manual_release_evidence
+
+    if not _git_available():
+        return
 
     with TemporaryDirectory() as directory:
         root = Path(directory)

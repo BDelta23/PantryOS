@@ -370,14 +370,17 @@ def _require_positive_int_string(value: Any, field: str, problems: list[dict[str
 
 
 def _is_git_worktree(root: Path) -> bool:
-    completed = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=root,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
     return completed.returncode == 0 and completed.stdout.strip() == "true"
 
 
@@ -386,14 +389,17 @@ def _is_git_tracked(path: Path, *, root: Path) -> bool:
         relative = path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return False
-    completed = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "--", relative],
-        cwd=root,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
     return completed.returncode == 0
 
 
