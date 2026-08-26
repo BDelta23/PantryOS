@@ -5,6 +5,8 @@ services:
     container_name: pantryos
     environment:
       PANTRYOS_API_TOKEN: ${PANTRYOS_API_TOKEN:?Set PANTRYOS_API_TOKEN before starting PantryOS}
+      PANTRYOS_RATE_LIMIT_REQUESTS: ${PANTRYOS_RATE_LIMIT_REQUESTS:-20}
+      PANTRYOS_RATE_LIMIT_WINDOW_SECONDS: ${PANTRYOS_RATE_LIMIT_WINDOW_SECONDS:-60}
     ports:
       - "${PANTRYOS_PORT:-8765}:8765"
     volumes:

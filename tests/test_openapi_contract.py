@@ -69,7 +69,7 @@ def test_openapi_document_tracks_current_versioned_route_surface() -> None:
         for method, operation in methods.items():
             if path not in {"/api/v1/health/live", "/api/v1/health/ready"}:
                 protected_operations.append((path, method, operation))
-            for status in ("400", "401", "404", "409", "413", "415", "503"):
+            for status in ("400", "401", "404", "409", "413", "415", "429", "503"):
                 assert operation["responses"][status]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/Problem"
 
     assert protected_operations

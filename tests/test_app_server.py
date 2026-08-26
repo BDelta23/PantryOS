@@ -59,10 +59,28 @@ def request_error(
     token: str | None = None,
     request_id: str | None = None,
 ) -> tuple[int, dict]:
+    status, problem, _headers = request_error_with_headers(
+        url,
+        method=method,
+        payload=payload,
+        token=token,
+        request_id=request_id,
+    )
+    return status, problem
+
+
+def request_error_with_headers(
+    url: str,
+    method: str = "GET",
+    payload: dict | None = None,
+    *,
+    token: str | None = None,
+    request_id: str | None = None,
+) -> tuple[int, dict, dict[str, str]]:
     try:
         request_json(url, method=method, payload=payload, token=token, request_id=request_id)
     except HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8"))
+        return exc.code, json.loads(exc.read().decode("utf-8")), dict(exc.headers.items())
     raise AssertionError("Expected request to fail")
 
 
@@ -560,6 +578,63 @@ def test_receipt_upload_enforces_limits_and_private_storage() -> None:
     assert storage_path.parent == receipt_dir
     assert static_dir not in storage_path.parents
 
+
+def test_receipt_upload_and_extract_are_rate_limited() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        httpd.RequestHandlerClass.rate_limiter = server_module.RateLimiter(limit=1, window_seconds=60)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            uploaded = request_json(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={
+                    "filename": "rate-one.txt",
+                    "mime_type": "text/plain",
+                    "text": "Store: Rate Market\nDate: 2026-08-25\nRate Beans,1,count,2.00\n",
+                },
+            )
+            upload_status, upload_problem, upload_headers = request_error_with_headers(
+                f"{base}/api/v1/receipts",
+                method="POST",
+                token="test-token",
+                payload={
+                    "filename": "rate-two.txt",
+                    "mime_type": "text/plain",
+                    "text": "Store: Rate Market\nDate: 2026-08-25\nRate Rice,1,count,2.00\n",
+                },
+                request_id="upload-limit",
+            )
+            extracted = request_json(
+                f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/extract",
+                method="POST",
+                token="test-token",
+            )
+            extract_status, extract_problem, extract_headers = request_error_with_headers(
+                f"{base}/api/v1/receipts/{uploaded['receipt']['id']}/extract",
+                method="POST",
+                token="test-token",
+                request_id="extract-limit",
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert uploaded["receipt"]["status"] == "uploaded"
+    assert upload_status == 429
+    assert upload_problem["code"] == "rate_limited"
+    assert upload_problem["request_id"] == "upload-limit"
+    assert int(upload_headers["Retry-After"]) >= 1
+    assert extracted["receipt"]["status"] == "review"
+    assert extract_status == 429
+    assert extract_problem["code"] == "rate_limited"
+    assert extract_problem["request_id"] == "extract-limit"
+    assert int(extract_headers["Retry-After"]) >= 1
 
 def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):

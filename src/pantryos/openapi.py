@@ -218,7 +218,7 @@ def _responses(schema_name: str, *, sse: bool = False, created: bool = False) ->
 
 def _problem_responses() -> dict[str, Any]:
     problem = {"description": "Stable PantryOS problem response.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}}
-    return {status: deepcopy(problem) for status in ("400", "401", "404", "409", "413", "415", "503")}
+    return {status: deepcopy(problem) for status in ("400", "401", "404", "409", "413", "415", "429", "503")}
 
 
 def _components() -> dict[str, Any]:

@@ -132,7 +132,7 @@ data:
 
 The versioned API requires `Authorization: Bearer <PANTRYOS_API_TOKEN>` except for health checks. Errors use a stable problem shape with `type`, `title`, `status`, `code`, `detail`, `errors`, and `request_id`. The current OpenAPI 3.1 document is served at authenticated endpoint `GET /api/v1/openapi.json`.
 
-Non-empty JSON request bodies must use `Content-Type: application/json` or a `+json` media type and are limited to `1,000,000` bytes. Receipt uploads currently support reviewed local text ingestion only: `text/plain` `.txt` and `text/csv` `.csv`, up to `64,000` UTF-8 bytes. Receipt filenames must be basenames, not paths; stored receipt payloads live under the data directory's private `receipts/` folder and are not served from `app/static` or returned by API responses.
+Non-empty JSON request bodies must use `Content-Type: application/json` or a `+json` media type and are limited to `1,000,000` bytes. Receipt uploads currently support reviewed local text ingestion only: `text/plain` `.txt` and `text/csv` `.csv`, up to `64,000` UTF-8 bytes. Receipt filenames must be basenames, not paths; stored receipt payloads live under the data directory's private `receipts/` folder and are not served from `app/static` or returned by API responses. Receipt upload and extraction endpoints have a fixed-window local rate limit of `20` requests per `60` seconds per client by default; override with `PANTRYOS_RATE_LIMIT_REQUESTS` and `PANTRYOS_RATE_LIMIT_WINDOW_SECONDS`.
 
 Current versioned endpoints:
 

@@ -10,6 +10,7 @@ import os
 import secrets
 import sys
 import tempfile
+import threading
 import uuid
 from contextlib import closing
 from decimal import Decimal
@@ -33,6 +34,8 @@ STATIC_DIR = ROOT / "app" / "static"
 DEFAULT_DB_PATH = ROOT / "data" / "pantryos.sqlite3"
 LEGACY_JSON_PATH = ROOT / "data" / "pantryos.json"
 MAX_REQUEST_BODY_BYTES = 1_000_000
+DEFAULT_RATE_LIMIT_REQUESTS = 20
+DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60
 PROBLEM_BASE_URL = "https://pantryos.local/problems"
 PUBLIC_V1_ENDPOINTS = {"/api/v1/health/live", "/api/v1/health/ready"}
 
@@ -43,6 +46,38 @@ class RequestBodyTooLarge(ValueError):
 
 class UnsupportedMediaType(ValueError):
     """Request declares a body type PantryOS does not accept."""
+
+
+class RateLimitExceeded(ValueError):
+    """Request exceeded a bounded in-process route limit."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"Rate limit exceeded; retry after {retry_after_seconds} seconds")
+
+
+class RateLimiter:
+    """Small fixed-window limiter for local expensive endpoints."""
+
+    def __init__(self, *, limit: int, window_seconds: int) -> None:
+        self.limit = max(1, limit)
+        self.window_seconds = max(1, window_seconds)
+        self._lock = threading.Lock()
+        self._windows: dict[tuple[str, str], tuple[float, int]] = {}
+
+    def check(self, *, client: str, bucket: str, now: float | None = None) -> None:
+        current = time.monotonic() if now is None else now
+        key = (client, bucket)
+        with self._lock:
+            window_start, count = self._windows.get(key, (current, 0))
+            elapsed = current - window_start
+            if elapsed >= self.window_seconds:
+                self._windows[key] = (current, 1)
+                return
+            if count >= self.limit:
+                retry_after = max(1, int(self.window_seconds - elapsed))
+                raise RateLimitExceeded(retry_after)
+            self._windows[key] = (window_start, count + 1)
 
 
 def demo_seed_document() -> dict[str, Any]:
@@ -424,6 +459,7 @@ def minimum_stock_suggestions(core: PantryCore) -> list[dict[str, Any]]:
 class PantryRequestHandler(BaseHTTPRequestHandler):
     core: PantryCore
     api_token: str | None = None
+    rate_limiter: RateLimiter
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -509,6 +545,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if not self._authorize(parsed.path):
             return
         try:
+            self._enforce_rate_limit(parsed.path)
             body = self._read_json()
             if parsed.path in ("/api/items", "/api/v1/inventory/lots"):
                 result = self.core.add_inventory_lot(body)
@@ -631,6 +668,15 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         except PantryOSError as exc:
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
             return
+        except RateLimitExceeded as exc:
+            self._send_problem(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                str(exc),
+                code="rate_limited",
+                title="Rate limited",
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
+            return
         except RequestBodyTooLarge as exc:
             self._send_problem(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc), code="request_body_too_large", title="Request body too large")
             return
@@ -647,6 +693,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if not self._authorize(parsed.path):
             return
         try:
+            self._enforce_rate_limit(parsed.path)
             body = self._read_json()
             receipt_id = receipt_review_path(parsed.path)
             if receipt_id is not None:
@@ -665,6 +712,15 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             return
         except PantryOSError as exc:
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
+            return
+        except RateLimitExceeded as exc:
+            self._send_problem(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                str(exc),
+                code="rate_limited",
+                title="Rate limited",
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
             return
         except RequestBodyTooLarge as exc:
             self._send_problem(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, str(exc), code="request_body_too_large", title="Request body too large")
@@ -696,6 +752,13 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _enforce_rate_limit(self, path: str) -> None:
+        bucket = rate_limit_bucket(path)
+        if bucket is None:
+            return
+        client = self.client_address[0] if self.client_address else "local"
+        self.rate_limiter.check(client=client, bucket=bucket)
 
     def _read_json(self) -> dict[str, Any]:
         try:
@@ -827,6 +890,15 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
 
 def is_versioned_api(path: str) -> bool:
     return path == "/api/v1" or path.startswith("/api/v1/")
+
+
+def rate_limit_bucket(path: str) -> str | None:
+    if path in {"/api/receipts", "/api/v1/receipts"}:
+        return "receipt_upload"
+    action = receipt_action_path(path)
+    if action is not None and action[1] == "extract":
+        return "receipt_extract"
+    return None
 
 
 def is_json_content_type(value: str) -> bool:
@@ -1187,6 +1259,10 @@ def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
     handler.core = PantryCore(db_path)
     handler.api_token = os.environ.get("PANTRYOS_API_TOKEN")
+    handler.rate_limiter = RateLimiter(
+        limit=int(os.environ.get("PANTRYOS_RATE_LIMIT_REQUESTS", str(DEFAULT_RATE_LIMIT_REQUESTS))),
+        window_seconds=int(os.environ.get("PANTRYOS_RATE_LIMIT_WINDOW_SECONDS", str(DEFAULT_RATE_LIMIT_WINDOW_SECONDS))),
+    )
     handler.core.migrate()
     if LEGACY_JSON_PATH.exists() and handler.core.dashboard()["summary"]["product_count"] == 0:
         handler.core.import_legacy_json(LEGACY_JSON_PATH)
