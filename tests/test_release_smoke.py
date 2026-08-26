@@ -1163,6 +1163,40 @@ def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
     assert "checks[independent-full-review].details.review_path" in fields
 
 
+def test_manual_release_evidence_rejects_malformed_physical_barcodes() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "physical-barcode-camera":
+                check["details"]["known_barcode"] = "ABC12345"
+                check["details"]["unknown_barcode"] = "1234567"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    fields = {problem["field"]: problem["problem"] for problem in result["problems"]}
+    assert fields["checks[physical-barcode-camera].details.known_barcode"] == "must be 8 to 14 digits"
+    assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be 8 to 14 digits"
+
+
 def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> None:
     from scripts import manual_release_evidence
 

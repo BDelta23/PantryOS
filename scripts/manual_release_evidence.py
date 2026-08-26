@@ -58,6 +58,7 @@ REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replac
 SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+BARCODE_RE = re.compile(r"^\d{8,14}$")
 
 
 class ManualReleaseEvidenceError(AssertionError):
@@ -306,6 +307,10 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.app_url", "problem": "must be an http(s) URL"})
         known_barcode = str(details.get("known_barcode", "")).strip()
         unknown_barcode = str(details.get("unknown_barcode", "")).strip()
+        if known_barcode and BARCODE_RE.fullmatch(known_barcode) is None:
+            problems.append({"field": f"{prefix}.details.known_barcode", "problem": "must be 8 to 14 digits"})
+        if unknown_barcode and BARCODE_RE.fullmatch(unknown_barcode) is None:
+            problems.append({"field": f"{prefix}.details.unknown_barcode", "problem": "must be 8 to 14 digits"})
         if known_barcode and unknown_barcode and known_barcode == unknown_barcode:
             problems.append({"field": f"{prefix}.details.unknown_barcode", "problem": "must differ from known_barcode"})
         known_result = str(details.get("known_result", "")).strip().lower()
