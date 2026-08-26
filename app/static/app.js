@@ -472,6 +472,7 @@ function renderInventory(items) {
             <button class="secondary" type="button" data-consume="${escapeHtml(item.id)}">Consume</button>
             <input class="location-input" aria-label="Move ${escapeHtml(item.name)} to location" list="knownLocations" placeholder="Move to" value="${escapeHtml(item.location)}" data-move-location="${escapeHtml(item.id)}" />
             <button class="secondary" type="button" data-move="${escapeHtml(item.id)}">Move</button>
+            ${item.opened ? "" : `<button class="secondary" type="button" data-open="${escapeHtml(item.id)}">Open</button>`}
             <button class="danger" type="button" data-delete="${escapeHtml(item.id)}">Delete</button>
           </div>
         </article>`
@@ -949,6 +950,15 @@ async function handlePageClick(event) {
       body: JSON.stringify({ location }),
     });
     showToast("Food moved");
+    await refresh();
+    return;
+  }
+
+  const openId = target.dataset.open;
+  if (openId) {
+    if (!window.confirm("Open this food and apply its opened shelf-life policy?")) return;
+    await api(`/api/items/${encodeURIComponent(openId)}/open`, { method: "POST", body: JSON.stringify({}) });
+    showToast("Food opened");
     await refresh();
     return;
   }

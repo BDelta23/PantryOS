@@ -1194,6 +1194,8 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "DELETE" in app_js
     assert "renderKnownLocations" in app_js
     assert "data-move-location" in app_js
+    assert "data-open" in app_js
+    assert "/open" in app_js
     assert "/move" in app_js
     assert "renderPurchases" in app_js
     assert "handlePurchaseDetail" in app_js
@@ -1256,3 +1258,79 @@ def test_pwa_metadata_and_service_worker_are_served() -> None:
     assert "offlineProblem" in worker_text
     assert "the request was not committed" in worker_text
     assert "<svg" in icon_text
+
+
+def test_open_lot_api_and_browser_routes_apply_opened_shelf_life_idempotently() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            created = request_json(
+                f"{base}/api/v1/inventory/lots",
+                method="POST",
+                token="test-token",
+                payload={
+                    "name": "Open API Yogurt",
+                    "quantity": "1",
+                    "unit": "count",
+                    "location": "Kitchen/Refrigerator",
+                    "expires": "2026-09-30",
+                },
+            )
+            request_json(
+                f"{base}/api/v1/products/{created['item']['product_id']}",
+                method="PATCH",
+                token="test-token",
+                payload={"opened_shelf_life_days": 3},
+            )
+            opened = request_json(
+                f"{base}/api/v1/inventory/lots/{created['item']['id']}/open",
+                method="POST",
+                token="test-token",
+                payload={"opened_at": "2026-08-26"},
+            )
+            opened_again = request_json(
+                f"{base}/api/v1/inventory/lots/{created['item']['id']}/open",
+                method="POST",
+                token="test-token",
+                payload={"opened_at": "2026-08-27"},
+            )
+
+            cookie, csrf_token, _set_cookie = browser_login(base)
+            browser_created = request_json(
+                f"{base}/api/items",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"name": "Open Browser Jam", "quantity": "1", "unit": "count", "location": "Kitchen/Pantry"},
+            )
+            request_json(
+                f"{base}/api/products/{browser_created['item']['product_id']}",
+                method="PATCH",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"opened_shelf_life_days": 2},
+            )
+            browser_opened = request_json(
+                f"{base}/api/items/{browser_created['item']['id']}/open",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"opened_at": "2026-08-26"},
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert opened["opened"] is True
+    assert opened["item"]["opened"] is True
+    assert opened["item"]["expires"] == "2026-08-29"
+    assert opened_again["opened"] is False
+    assert opened_again["revision"] == opened["revision"]
+    assert browser_opened["opened"] is True
+    assert browser_opened["item"]["opened"] is True
+    assert browser_opened["item"]["expires"] == "2026-08-28"

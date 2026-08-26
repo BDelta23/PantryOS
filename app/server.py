@@ -332,6 +332,7 @@ def lot_to_item(lot: dict[str, Any]) -> dict[str, Any]:
         "purchased": lot["acquired_at"],
         "expires": lot["expires_at"],
         "opened": bool(lot["opened_at"]),
+        "opened_at": lot["opened_at"],
         "minimum_stock": lot["minimum_stock_quantity"],
         "product_id": lot["product_id"],
         "barcode": None,
@@ -731,6 +732,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
                 if action == "move":
                     self._send_json(move_lot(self.core, lot_id, body["location"]))
                     return
+                if action == "open":
+                    self._send_json(open_lot(self.core, lot_id, body.get("opened_at")))
+                    return
                 if action == "discard":
                     self._send_json(discard_lot(self.core, lot_id, str(body["reason"])))
                     return
@@ -742,6 +746,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/items/") and parsed.path.endswith("/move"):
                 lot_id = parsed.path.removeprefix("/api/items/").removesuffix("/move")
                 self._send_json(move_lot(self.core, lot_id, body["location"]))
+                return
+            if parsed.path.startswith("/api/items/") and parsed.path.endswith("/open"):
+                lot_id = parsed.path.removeprefix("/api/items/").removesuffix("/open")
+                self._send_json(open_lot(self.core, lot_id, body.get("opened_at")))
                 return
             if parsed.path == "/api/seed":
                 reset = parse_qs(parsed.query).get("reset", ["false"])[0].casefold() == "true"
@@ -1307,7 +1315,7 @@ def versioned_lot_action_path(path: str) -> tuple[str, str] | None:
     if not path.startswith(prefix):
         return None
     parts = path.removeprefix(prefix).split("/")
-    if len(parts) != 2 or not parts[0] or parts[1] not in {"consume", "move", "discard"}:
+    if len(parts) != 2 or not parts[0] or parts[1] not in {"consume", "move", "discard", "open"}:
         return None
     return unquote(parts[0]), parts[1]
 
@@ -1497,6 +1505,11 @@ def move_lot(core: PantryCore, lot_id: str, location: str) -> dict[str, Any]:
 
 def discard_lot(core: PantryCore, lot_id: str, reason: str = "web delete action") -> dict[str, Any]:
     return core.discard_lot(lot_id, reason=reason, source="api")
+
+
+def open_lot(core: PantryCore, lot_id: str, opened_at: str | None = None) -> dict[str, Any]:
+    result = core.open_lot(lot_id, opened_at=opened_at, source="api")
+    return {"item": lot_to_item(result["lot"]), "opened": result["opened"], "revision": result["revision"]}
 
 
 def add_recipe(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:

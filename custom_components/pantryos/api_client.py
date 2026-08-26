@@ -96,6 +96,13 @@ class PantryAPIClient:
         path = f"/api/v1/inventory/lots/{quote(item_id, safe='')}/move"
         return await self._request("POST", path, data={"location": location}, authenticated=True)
 
+    async def async_open_item(self, item_id: str, *, opened_at: str | None = None) -> dict[str, Any]:
+        data: dict[str, Any] = {}
+        if opened_at:
+            data["opened_at"] = opened_at
+        path = f"/api/v1/inventory/lots/{quote(item_id, safe='')}/open"
+        return await self._request("POST", path, data=data, authenticated=True)
+
     async def async_add_recipe(self, data: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/api/v1/recipes", data=data, authenticated=True)
 

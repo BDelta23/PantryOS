@@ -863,3 +863,55 @@ def test_cooking_session_cancel_does_not_consume_inventory() -> None:
         assert cancelled["session"]["status"] == "cancelled"
         assert rice_lot["quantity"] == "3"
         assert any(event["event_type"] == "cooking.cancelled" for event in snapshot["events"])
+
+def test_open_lot_is_idempotent_and_applies_opened_shelf_life_without_extending_expiration() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        lot = core.add_inventory_lot(
+            {
+                "name": "Yogurt",
+                "quantity": "1",
+                "unit": "count",
+                "location": "Kitchen/Refrigerator",
+                "expires": "2026-09-30",
+            }
+        )["lot"]
+        core.update_product(lot["product_id"], {"opened_shelf_life_days": 3})
+
+        opened = core.open_lot(lot["id"], opened_at="2026-08-26", source="test")
+        opened_again = core.open_lot(lot["id"], opened_at="2026-08-27", source="test")
+        snapshot = core.dashboard()
+        opened_lot = next(row for row in snapshot["lots"] if row["id"] == lot["id"])
+        open_events = [event for event in snapshot["events"] if event["event_type"] == "OPEN" and event["lot_id"] == lot["id"]]
+
+        assert opened["opened"] is True
+        assert opened["lot"]["opened_at"].startswith("2026-08-26")
+        assert opened["lot"]["expires_at"] == "2026-08-29"
+        assert opened_again["opened"] is False
+        assert opened_again["revision"] == opened["revision"]
+        assert opened_lot["opened_at"].startswith("2026-08-26")
+        assert opened_lot["expires_at"] == "2026-08-29"
+        assert len(open_events) == 1
+
+
+def test_opened_lot_creation_uses_opened_shelf_life_policy() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        product_lot = core.add_inventory_lot(
+            {"name": "Salsa", "quantity": "1", "unit": "count", "location": "Kitchen/Pantry"}
+        )["lot"]
+        core.update_product(product_lot["product_id"], {"opened_shelf_life_days": 5})
+
+        opened_lot = core.add_inventory_lot(
+            {
+                "name": "Salsa",
+                "quantity": "1",
+                "unit": "count",
+                "location": "Kitchen/Refrigerator",
+                "opened": True,
+                "opened_at": "2026-08-26T12:00:00Z",
+            }
+        )["lot"]
+
+        assert opened_lot["opened_at"] == "2026-08-26T12:00:00Z"
+        assert opened_lot["expires_at"] == "2026-08-31"

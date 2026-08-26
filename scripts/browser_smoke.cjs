@@ -194,6 +194,10 @@ async function runViewport(browser, baseUrl, viewport) {
   });
   page.on("pageerror", (error) => consoleErrors.push(error.message));
   page.on("dialog", async (dialog) => {
+    if (/Open this food/.test(dialog.message())) {
+      await dialog.accept();
+      return;
+    }
     if (!/Remove this food|Remove this shopping item|Delete this recipe/.test(dialog.message())) {
       throw new Error(`Unexpected dialog: ${dialog.message()}`);
     }
@@ -224,6 +228,12 @@ async function runViewport(browser, baseUrl, viewport) {
   });
   await page.locator('#itemForm button[type="submit"]').click();
   await expectVisibleText(page, itemName);
+  await page.locator(".inventory-row", { hasText: itemName }).first().getByRole("button", { name: "Open" }).click();
+  await page.waitForFunction((name) => {
+    const rows = [...document.querySelectorAll(".inventory-row")];
+    const row = rows.find((candidate) => candidate.textContent.includes(name));
+    return row && ![...row.querySelectorAll("button")].some((button) => button.textContent.trim() === "Open");
+  }, itemName);
 
   await fillForm(page.locator("#barcodeForm"), {
     barcode: String(Math.floor(100000000000 + Math.random() * 899999999999)),

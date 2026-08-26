@@ -14,7 +14,7 @@ The local app covers the end-to-end loop that makes the product useful:
 - See tonight's planned meal, use-soon food, quick meals, shopping, and inventory on one kitchen dashboard.
 - Add food with quantity, unit, location, expiration, minimum stock, cost, and leftover flag.
 - Type a barcode to add a known package or create a manual barcode mapping for an unknown package.
-- Consume or delete inventory items.
+- Open, consume, move, or discard inventory lots while preserving product-level settings.
 - Add recipes from simple comma-separated ingredient rows.
 - Plan a recipe for tonight.
 - Compare recipes against current inventory.
@@ -103,7 +103,7 @@ The integration exposes these sensors:
 
 ### Service Surface
 
-The integration registers API-backed actions for `add_item`, `consume_item`, `delete_item` as a compatibility discard action, `discard_item`, `move_item`, `add_recipe`, `plan_meal`, `add_shopping_item`, `add_missing_to_shopping_list`, `rebuild_shopping`, `promote_suggested_purchases`, `start_cooking`, `complete_cooking`, and `cancel_cooking`.
+The integration registers API-backed actions for `add_item`, `consume_item`, `delete_item` as a compatibility discard action, `discard_item`, `move_item`, `open_item`, `add_recipe`, `plan_meal`, `add_shopping_item`, `add_missing_to_shopping_list`, `rebuild_shopping`, `promote_suggested_purchases`, `start_cooking`, `complete_cooking`, and `cancel_cooking`.
 ### Example Service Calls
 
 Add chicken to the garage freezer:
@@ -156,6 +156,7 @@ Current versioned endpoints:
 - `POST /api/v1/inventory/lots`
 - `POST /api/v1/inventory/lots/{id}/consume`
 - `POST /api/v1/inventory/lots/{id}/move`
+- `POST /api/v1/inventory/lots/{id}/open`
 - `POST /api/v1/inventory/lots/{id}/discard`
 - `POST /api/v1/barcodes/mappings`
 - `POST /api/v1/barcodes/{barcode}/add-lot`
@@ -192,6 +193,7 @@ The browser uses these session-protected compatibility routes:
 - `POST /api/items`
 - `POST /api/items/{id}/consume`
 - `POST /api/items/{id}/move`
+- `POST /api/items/{id}/open`
 - `DELETE /api/items/{id}`
 - `GET /api/barcodes/{barcode}`
 - `POST /api/barcodes/mappings`

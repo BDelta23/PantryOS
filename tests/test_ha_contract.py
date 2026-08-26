@@ -25,6 +25,7 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
 
     for service in (
         "discard_item",
+        "open_item",
         "rebuild_shopping",
         "start_cooking",
         "complete_cooking",
@@ -43,6 +44,7 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     assert "async_track_time_interval" in init_py
     assert "self._coordinator.summary()" in sensor_py
     assert "await self._pantry.async_refresh()" not in sensor_py
+    assert "async_open_item" in init_py
     assert "async_rebuild_shopping" in init_py
     assert "async_start_cooking_session" in init_py
     assert "async_complete_cooking_session" in init_py
@@ -442,6 +444,7 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
                 self.available = False
                 self.refresh_count = 0
                 self.added_items = []
+                self.opened_items = []
                 FakeClient.instances.append(self)
 
             async def async_instance(self):
@@ -461,6 +464,10 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
                 self.added_items.append(data)
                 return {"revision": self.refresh_count + 1, "item": {"id": "lot-1", **data}}
 
+            async def async_open_item(self, item_id, *, opened_at=None):
+                self.opened_items.append({"item_id": item_id, "opened_at": opened_at})
+                return {"revision": self.refresh_count + 1, "opened": True}
+
         module.PantryAPIClient = FakeClient
         hass = FakeHass()
         entry = FakeEntry()
@@ -477,6 +484,10 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
             handler = hass.services.handlers[(module.DOMAIN, "add_item")]["handler"]
             await handler(FakeServiceCall({"name": "Runtime Oats", "quantity": "1", "unit": "count"}))
             assert runtime.client.added_items == [{"name": "Runtime Oats", "quantity": "1", "unit": "count"}]
+
+            open_handler = hass.services.handlers[(module.DOMAIN, "open_item")]["handler"]
+            await open_handler(FakeServiceCall({"item_id": "lot-1", "opened_at": "2026-08-26"}))
+            assert runtime.client.opened_items == [{"item_id": "lot-1", "opened_at": "2026-08-26"}]
             assert runtime.coordinator.last_revision >= 2
             assert hass.bus.events[-1] == f"{module.DOMAIN}_updated"
 

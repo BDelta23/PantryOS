@@ -68,6 +68,15 @@ move_item:
       required: true
       selector:
         text:
+open_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+    opened_at:
+      selector:
+        text:
 add_recipe:
   fields:
     name:

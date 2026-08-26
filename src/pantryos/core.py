@@ -339,6 +339,45 @@ class PantryCore:
             "currency": lot["currency"],
         }
 
+    def open_lot(self, lot_id: str, *, opened_at: str | None = None, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            lot = connection.execute(
+                """
+                SELECT l.*, p.opened_shelf_life_days
+                FROM inventory_lots l
+                JOIN products p ON p.id = l.product_id
+                WHERE l.id = ?
+                """,
+                (lot_id,),
+            ).fetchone()
+            if lot is None:
+                raise NotFoundError(f"Inventory lot not found: {lot_id}")
+            if lot["status"] != "active":
+                raise ValidationError(f"Inventory lot is not active: {lot_id}")
+            if lot["opened_at"]:
+                return {"lot": self.get_lot(connection, lot_id), "opened": False, "revision": int(self._metadata(connection, "state_revision"))}
+
+            opened_timestamp = self._normalize_opened_at(opened_at)
+            expires_at = self._opened_expiration(lot["expires_at"], opened_timestamp, lot["opened_shelf_life_days"])
+            connection.execute(
+                """
+                UPDATE inventory_lots
+                SET opened_at = ?, expires_at = ?, updated_at = ?, version = version + 1
+                WHERE id = ?
+                """,
+                (opened_timestamp, expires_at, utc_now(), lot_id),
+            )
+            revision = self._append_event(
+                connection,
+                "OPEN",
+                product_id=lot["product_id"],
+                lot_id=lot_id,
+                source=source,
+                metadata={"opened_at": opened_timestamp, "expires_at": expires_at},
+            )
+            return {"lot": self.get_lot(connection, lot_id), "opened": True, "revision": revision}
+
     def update_recipe(self, recipe_id: str, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
         self.migrate()
         ingredients = data.get("ingredients", [])
@@ -2032,6 +2071,16 @@ class PantryCore:
         lot_id = new_id("lot")
         tags = {str(tag).casefold() for tag in data.get("tags", [])}
         lot_type = "leftover" if "leftover" in tags else "grocery"
+        opened_at = data.get("opened_at")
+        if opened_at in (None, "") and data.get("opened") is True:
+            opened_at = utc_now()
+        if opened_at not in (None, ""):
+            opened_at = self._normalize_opened_at(str(opened_at))
+        expires_at = data.get("expires") or data.get("expires_at")
+        product = connection.execute("SELECT opened_shelf_life_days FROM products WHERE id = ?", (product_id,)).fetchone()
+        opened_life_days = product["opened_shelf_life_days"] if product is not None else None
+        if opened_at:
+            expires_at = self._opened_expiration(expires_at, opened_at, opened_life_days)
         connection.execute(
             """
             INSERT INTO inventory_lots(
@@ -2046,8 +2095,8 @@ class PantryCore:
                 unit,
                 location_id,
                 data.get("purchased") or data.get("acquired_at"),
-                data.get("expires") or data.get("expires_at"),
-                data.get("opened_at"),
+                expires_at,
+                opened_at,
                 lot_type,
                 purchase_line_id,
                 cooking_session_id,
@@ -2057,6 +2106,33 @@ class PantryCore:
             ),
         )
         return lot_id
+
+    def _normalize_opened_at(self, opened_at: str | None) -> str:
+        if opened_at is None or str(opened_at).strip() == "":
+            return utc_now()
+        text = str(opened_at).strip()
+        if text.endswith("Z"):
+            datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return text
+        if "T" in text:
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        parsed_date = date.fromisoformat(text[:10])
+        return datetime.combine(parsed_date, datetime.min.time(), tzinfo=UTC).isoformat().replace("+00:00", "Z")
+
+    def _opened_expiration(self, current_expires_at: str | None, opened_at: str, opened_shelf_life_days: int | None) -> str | None:
+        if opened_shelf_life_days is None:
+            return current_expires_at
+        if opened_shelf_life_days < 0:
+            raise ValidationError("opened_shelf_life_days must be non-negative")
+        opened_date = date.fromisoformat(opened_at[:10])
+        opened_expires = (opened_date + timedelta(days=opened_shelf_life_days)).isoformat()
+        if not current_expires_at:
+            return opened_expires
+        current_date = date.fromisoformat(str(current_expires_at)[:10]).isoformat()
+        return min(current_date, opened_expires)
 
     def _append_event(
         self,

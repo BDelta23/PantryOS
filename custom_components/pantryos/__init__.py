@@ -105,6 +105,10 @@ def _register_services(hass: HomeAssistant) -> None:
     async def move_item(call: ServiceCall) -> None:
         await _run(call, lambda pantry, call: pantry.async_move_item(str(call.data["item_id"]), str(call.data["location"])))
 
+    async def open_item(call: ServiceCall) -> None:
+        opened_at = call.data.get("opened_at")
+        await _run(call, lambda pantry, call: pantry.async_open_item(str(call.data["item_id"]), opened_at=str(opened_at) if opened_at else None))
+
     async def add_recipe(call: ServiceCall) -> None:
         await _run(call, lambda pantry, call: pantry.async_add_recipe(dict(call.data)))
 
@@ -159,6 +163,7 @@ def _register_services(hass: HomeAssistant) -> None:
         "delete_item": (delete_item, ITEM_ID_SCHEMA),
         "discard_item": (discard_item, DISCARD_ITEM_SCHEMA),
         "move_item": (move_item, MOVE_ITEM_SCHEMA),
+        "open_item": (open_item, OPEN_ITEM_SCHEMA),
         "add_recipe": (add_recipe, ADD_RECIPE_SCHEMA),
         "plan_meal": (plan_meal, PLAN_MEAL_SCHEMA),
         "add_shopping_item": (add_shopping_item, ADD_SHOPPING_ITEM_SCHEMA),
@@ -206,6 +211,7 @@ SERVICES = (
     "delete_item",
     "discard_item",
     "move_item",
+    "open_item",
     "add_recipe",
     "plan_meal",
     "add_shopping_item",
@@ -238,6 +244,7 @@ CONSUME_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Requir
 ITEM_ID_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string})
 DISCARD_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Optional("reason", default="discarded"): cv.string})
 MOVE_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Required("location"): cv.string})
+OPEN_ITEM_SCHEMA = vol.Schema({vol.Required("item_id"): cv.string, vol.Optional("opened_at"): cv.string})
 INGREDIENT_SCHEMA = vol.Schema(
     {
         vol.Required("name"): cv.string,

@@ -62,6 +62,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         created = await client.async_add_item(
             {"name": "HA Butter", "quantity": "1", "unit": "lb", "location": "Kitchen/Refrigerator"}
         )
+        opened = await client.async_open_item(created["item"]["id"], opened_at="2026-08-26")
         consumed = await client.async_consume_item(created["item"]["id"], "0.25", reason="client test")
         shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
         refreshed = await client.async_refresh()
@@ -72,6 +73,8 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         assert instance["schema_version"] == 4
         initial_total = initial["summary"]["total_items"]
         assert created["item"]["name"] == "HA Butter"
+        assert opened["opened"] is True
+        assert opened["item"]["opened_at"].startswith("2026-08-26")
         assert consumed["allocations"][0]["quantity"] == "0.25"
         assert shopping["item"]["name"] == "Oats"
         assert refreshed["summary"]["total_items"] == initial_total + 1
