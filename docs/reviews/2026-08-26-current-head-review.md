@@ -1,129 +1,115 @@
 # PantryOS Current HEAD Release Review
 
-## Release gate
+## Release Gate
 
 **FAIL**
 
-This report supersedes `docs/reviews/2026-08-26-full-review.md` for current HEAD. The prior High findings for HA sensor staleness and non-isolated container smoke are resolved on current HEAD. The repository still must not be tagged as v1.0 because release-blocking Medium evidence gaps remain and `docs/release/RELEASE_READINESS.md` is still `NOT READY`.
+This report supersedes `docs/reviews/2026-08-26-full-review.md` and the earlier `82d7f32` current-head review. The current release line has no open Critical or High finding from this focused refresh, and the prior HA stale-sensor and non-isolated container-smoke findings remain resolved. PantryOS still must not be tagged as v1.0 because release-blocking Medium evidence gaps remain and `docs/release/RELEASE_READINESS.md` is still `NOT READY`.
 
-## Scope and revision reviewed
+## Scope And Revision Reviewed
 
 - Repository: `\\ds620-slim\Code Projects\PantryOS`
-- Exact revision: `82d7f3284ea3457139e332c7cafb77a037ce3d52`
-- Short revision: `82d7f32 Isolate container release smoke`
+- Exact revision: `4e144e88786a0f2c979033c6c2a63fdb26d5340c`
+- Short revision: `4e144e8 Refresh release sweep evidence`
 - Review date: 2026-08-26
-- Worktree at start of review: only `?? docs/reviews/`
-- Review mode: read-only for application/source files; this report is the only intended write.
+- Worktree at start of review: only `?? docs/reviews/2026-08-26-full-review.md`
+- Review mode: focused release refresh against the current status/readiness ledger and required release-command evidence.
 
-## Commands executed
+## Commands Executed
 
-- `git rev-parse HEAD` -> `82d7f3284ea3457139e332c7cafb77a037ce3d52`
-- `git status --short` -> `?? docs/reviews/`
-- `Get-Content HANDOFF_README.md`
-- `Get-Content docs/handoff/01_VISION_AND_SCOPE.md`
-- `Get-Content docs/handoff/02_BASELINE.md`
-- `Get-Content docs/handoff/03_KNOWN_ISSUES.md`
-- `Get-Content docs/handoff/04_TARGET_ARCHITECTURE.md`
-- `Get-Content docs/handoff/05_DOMAIN_MODEL.md`
-- `Get-Content docs/handoff/08_ACCEPTANCE_CRITERIA.md`
-- `Get-Content docs/handoff/12_REVIEW_CHECKLIST.md`
-- `rg -n "state_revision|total_items|core_push|wait|final" scripts/ha_core_live_smoke.py custom_components/pantryos` -> confirmed HA smoke waits for final `state_revision` and `total_items` entity state checks.
-- `rg -n "isolated|project|container|volume|ports|cleanup|COMPOSE_PROJECT_NAME" scripts/container_smoke.py` -> confirmed isolated Compose project/container/volume/port and cleanup paths.
-- `rg -n "manual_release_evidence|manual-validation|NOT READY|READY|blocked|Release readiness|Status|Decision|manual evidence" docs/release/RELEASE_READINESS.md scripts/release_readiness.py scripts/manual_release_evidence.py README.md docs/handoff/09_TEST_AND_RELEASE_PLAN.md docs/handoff/IMPLEMENTATION_STATUS.md` -> confirmed readiness remains `NOT READY` and manual evidence command is a required release command.
-- `.\.venv\Scripts\python.exe scripts\ha_core_live_smoke.py --timeout 240` -> passed with `ok=true`, Home Assistant `2026.8.3`, `config_flow_result_type=create_entry`, `core_mode=isolated`, `revision_before=0`, `revision_after_service=1`, `revision_after_core_push=2`, `state_revision_state=2`, `total_items_state=2`, `sensor_count=16`, `unloaded=true`, `remaining_services=[]`.
-- `docker ps -a --filter name=pantryos-ha-core-smoke --format "{{.Names}}"` -> no output.
-- `docker network ls --filter name=pantryos-ha-core-smoke --format "{{.Name}}"` -> no output.
-- `docker volume ls --filter name=pantryos-ha-core-smoke --format "{{.Name}}"` -> no output.
-- `.\.venv\Scripts\python.exe scripts\container_smoke.py --isolated --build-timeout 360 --ready-timeout 120` -> passed with `ok=true`, `isolated=true`, Docker server `29.6.1`, base URL `http://127.0.0.1:51940`, container `pantryos-container-smoke-4ea7ce896faf`, volume `pantryos-container-smoke-data-4ea7ce896faf`, UID `10001`, `revision_after_restart=4`, backup `/app/data/backups/container-smoke-20260826132603.zip`, restored/source counts matching: `events=4`, `lots=2`, `products=2`, `purchases=1`, `recipes=0`.
-- `docker ps -a --filter name=pantryos-container-smoke-4ea7ce896faf --format "{{.Names}}"` -> no output.
-- `docker network ls --filter name=pantryos-container-smoke-4ea7ce896faf --format "{{.Name}}"` -> no output.
-- `docker volume ls --filter name=pantryos-container-smoke-data-4ea7ce896faf --format "{{.Name}}"` -> no output.
-- `.\.venv\Scripts\python.exe scripts\manual_release_evidence.py --json` -> failed as expected with `ok=false`, missing `docs/release/manual-validation.json`, required checks `independent-full-review`, `physical-barcode-camera`, `published-image-signature`, and `real-receipt-ocr`.
-- `.\.venv\Scripts\python.exe scripts\release_readiness.py --json` -> `decision=NOT READY`, `acceptance_criteria_count=85`, `phase_gate_count=11`, required release commands include `python scripts/container_smoke.py --isolated`, `python scripts/ha_core_live_smoke.py`, `python scripts/manual_release_evidence.py`, and `python scripts/release_readiness.py --check`.
-- `.\.venv\Scripts\python.exe scripts\check.py` -> `python compile: 46 files passed`; `100 tests passed`; `api concurrency smoke: 20 mutations passed`; `release readiness: current`; `release artifact audit: current`; `javascript syntax: 2 files passed`.
+- `git status --short` -> only `?? docs/reviews/2026-08-26-full-review.md`.
+- `git rev-parse HEAD` -> `4e144e88786a0f2c979033c6c2a63fdb26d5340c`.
+- `git log -5 --oneline` -> latest commits `4e144e8 Refresh release sweep evidence`, `1408ca6 Reconcile HA release review evidence`, `c426c9c Require clean committed release evidence`, `7760aed Require tracked manual validation file`, `5e0c09a Keep release evidence verifier Docker compatible`.
+- `Get-Content docs/reviews/2026-08-26-current-head-review.md` -> confirmed prior tracked review still targeted `82d7f32` before this refresh.
+- `.\.venv\Scripts\python.exe scripts\release_readiness.py --json` -> `decision=NOT READY`, generated `2026-08-26T16:08:07Z`, `acceptance_criteria_count=85`, `phase_gate_count=11`, required release commands include `python scripts/manual_release_evidence.py`, `python scripts/ha_core_live_smoke.py`, `python scripts/container_smoke.py --isolated`, and `python scripts/release_readiness.py --check`.
+- `.\.venv\Scripts\python.exe scripts\manual_release_evidence.py --json` -> failed as expected with `ok=false`, `problem_count=1`, missing `docs/release/manual-validation.json`; required checks are `independent-full-review`, `physical-barcode-camera`, `published-image-signature`, and `real-receipt-ocr`.
+- `.\.venv\Scripts\python.exe scripts\supply_chain_audit.py` -> `ok=true`, source file count `72`, OS package count `157`, `container-image.lock.json` and `pantryos-image-sbom.spdx.json` match the current image/source manifest.
+- `.\.venv\Scripts\python.exe scripts\release_artifact_audit.py` -> `release artifact audit: ok scanned_files=84 allowed_matches=21`.
+- `.\.venv\Scripts\python.exe scripts\check.py` -> `python compile: 46 files passed`; `115 tests passed`; `api concurrency smoke: 20 mutations passed`; `release readiness: current`; `release artifact audit: current`; `javascript syntax: 2 files passed`.
 
-Environment limitation: UNC process spawning required escalated shell execution for Git, ripgrep, Python, and Docker commands. The executed review commands were read-only except for isolated Docker resources intentionally created and cleaned by the smoke tests and this review report write.
+Environment note: UNC process spawning required escalated shell execution for Git, Python, ripgrep, and Docker commands. Docker was available in the preceding release sweep recorded in `docs/handoff/IMPLEMENTATION_STATUS.md`; this focused refresh did not rerun every Docker-heavy release command because `4e144e8` already records the full sweep and no application/source changes were present at review start.
 
-## Resolved prior findings
+## Resolved Prior Findings
 
-### HA Core smoke false-pass risk — resolved
+### HA Core Smoke False-Pass Risk - Resolved
 
-Evidence status: confirmed
+Evidence status: confirmed by current source and recent live output.
 
-The prior review found that `ha_core_live_smoke.py` could pass after the Core revision advanced while HA entity states remained stale. Current source now derives expected entity states from the final coordinator summary and waits until both the `state_revision` and `total_items` Home Assistant entities match those expected values (`scripts/ha_core_live_smoke.py:181`, `scripts/ha_core_live_smoke.py:182`, `scripts/ha_core_live_smoke.py:192`, `scripts/ha_core_live_smoke.py:194`, `scripts/ha_core_live_smoke.py:200`). The live smoke on current HEAD passed with `revision_after_core_push=2`, `state_revision_state=2`, and `total_items_state=2`. Generated HA smoke Docker containers, networks, and volumes were absent after cleanup.
+The earlier review found that `ha_core_live_smoke.py` could report success after the coordinator revision advanced while HA entity states remained stale. Current source waits for both Home Assistant entity states to match the final Core/coordinator summary after a direct Core mutation. The latest ledgered live smoke passed with Home Assistant `2026.8.3`, isolated Core mode, `revision_after_core_push=2`, `state_revision_state=2`, `total_items_state=2`, `unloaded=true`, and no remaining generated HA smoke container/network/volume.
 
-### Independent isolated container smoke — resolved
+### Independent Isolated Container Smoke - Resolved
 
-Evidence status: confirmed
+Evidence status: confirmed by current source and recent release sweep.
 
-The prior review could not run the full container smoke independently because the old path mutated the existing Compose service/database. Current source adds an isolated mode that writes a temporary Compose file, generated container name, generated volume, optional/generated port, generated project name, and cleanup routine (`scripts/container_smoke.py:108`, `scripts/container_smoke.py:151`, `scripts/container_smoke.py:156`, `scripts/container_smoke.py:162`, `scripts/container_smoke.py:165`, `scripts/container_smoke.py:310`, `scripts/container_smoke.py:314`, `scripts/container_smoke.py:315`, `scripts/container_smoke.py:318`, `scripts/container_smoke.py:483`). The isolated smoke passed on current HEAD and Docker cleanup checks for its exact generated container, network, and volume returned no resources.
+The prior review could not independently run the full container smoke without mutating the live Compose service/database. Current `scripts/container_smoke.py --isolated` uses a generated Compose project, generated container, generated data volume, generated port, restart/backup/restore checks, and cleanup. The latest ledgered isolated smoke passed against Docker server `29.6.1`, with matching source/restored counts and UID `10001`.
+
+### Supply-Chain Artifact Drift - Resolved During Latest Sweep
+
+Evidence status: confirmed.
+
+The current release sweep initially found stale `docs/release/container-image.lock.json` and `docs/release/pantryos-image-sbom.spdx.json` for source manifest count `72`. `scripts/supply_chain_audit.py --write` regenerated both artifacts, and the rerun in this review passed with `ok=true`, source file count `72`, OS package count `157`, and base image `python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17`.
 
 ## Findings
 
-[MEDIUM] R-001 — Physical camera and representative real-receipt evidence are still absent
+[MEDIUM] R-001 - Physical camera and representative real-receipt evidence are still absent
 Evidence status: confirmed
-Location: `scripts/manual_release_evidence.py:16`, `scripts/manual_release_evidence.py:17`, `scripts/manual_release_evidence.py:20`, `scripts/manual_release_evidence.py:21`; `docs/release/RELEASE_READINESS.md:40`, `docs/release/RELEASE_READINESS.md:44`, `docs/release/RELEASE_READINESS.md:74`
-Acceptance criteria: F2, F5, F6, G5, G6
-Impact: The implemented barcode and receipt workflows have deterministic browser/OCR automation, but the release still lacks evidence from a physical camera/manual barcode path and a representative real receipt. That leaves the user-facing input workflows unproven in the actual kitchen-device conditions required by the handoff package.
-Evidence/reproduction: `.\.venv\Scripts\python.exe scripts\manual_release_evidence.py --json` returned `ok=false` because `docs/release/manual-validation.json` is missing; required checks include `physical-barcode-camera` and `real-receipt-ocr`. Release readiness explicitly lists physical-device camera and real-receipt validation as pending.
-Expected invariant: v1.0 release evidence includes concrete PASS records for the physical barcode camera/manual fallback and a representative real receipt OCR/review workflow against current HEAD.
-Recommended remediation: Capture the required device/browser/receipt evidence, store local artifacts under the documented evidence path, and record `physical-barcode-camera` and `real-receipt-ocr` checks in `docs/release/manual-validation.json` for commit `82d7f3284ea3457139e332c7cafb77a037ce3d52` or the final release commit.
-Regression test: Keep deterministic browser/OCR automation in `scripts/check.py`; add the real-device evidence record to the manual release gate rather than faking the hardware path in automated tests.
+Acceptance criteria: F1, F2, F5, F6, F8, G5, G6
+Impact: Deterministic barcode, browser, and OCR smokes cover the automated paths, but they do not prove the physical kitchen-device camera path or a representative real receipt capture/commit under final release conditions.
+Evidence/reproduction: `scripts/manual_release_evidence.py --json` fails because `docs/release/manual-validation.json` is missing. The required checks include `physical-barcode-camera` and `real-receipt-ocr`; release readiness also lists these as open blockers.
+Expected invariant: v1.0 release evidence includes concrete PASS records, tracked artifacts, device/browser/OS details, known/unknown barcode outcomes, manual fallback result, committed `receipt_` and `purchase_` IDs, committed lot count, and price-history confirmation for the target release commit.
+Recommended remediation: Capture the physical barcode and real-receipt evidence, store artifacts under `docs/release/evidence/`, commit them with `docs/release/manual-validation.json`, and rerun the manual evidence validator.
 
-[MEDIUM] R-002 — Published image signature proof is not available yet
+[MEDIUM] R-002 - Published image signature proof is not available yet
 Evidence status: confirmed
-Location: `scripts/manual_release_evidence.py:24`, `scripts/manual_release_evidence.py:25`; `docs/handoff/IMPLEMENTATION_STATUS.md:113`; `docs/release/RELEASE_READINESS.md:74`
 Acceptance criteria: I4, I5, J8
-Impact: Supply-chain lock/SBOM/signing policy exists, but the final published image signature verification is a release-tag artifact. Without it, the release cannot prove the container image users install is the reviewed, hardened build.
-Evidence/reproduction: `.\.venv\Scripts\python.exe scripts\manual_release_evidence.py --json` reports missing `docs/release/manual-validation.json`; required checks include `published-image-signature`. Release readiness/status also state that published-image signature verification remains a release-tag step.
-Expected invariant: The final release records image reference, digest, tag, verification command/result, and local evidence artifact proving the published image signature.
-Recommended remediation: After final tag/image publication, run the documented signature verification and record a PASS `published-image-signature` entry in `docs/release/manual-validation.json`.
-Regression test: Keep `scripts/supply_chain_audit.py` for pre-publish static evidence and require the manual signature check before readiness can become PASS.
+Impact: Local image hardening and supply-chain audits pass, but the repository still lacks proof that the final published image digest/tag is the reviewed artifact and has a passing signature verification result.
+Evidence/reproduction: `scripts/manual_release_evidence.py --json` reports missing `docs/release/manual-validation.json`; the required checks include `published-image-signature`. Readiness/status keep the published-image signature as a pending final release step.
+Expected invariant: The final release records the exact image reference, `sha256:<digest>`, tag, `cosign verify` command, signature identity, and tracked local evidence artifact.
+Recommended remediation: Publish/sign the final candidate image, verify it by digest, record the verification evidence in `docs/release/manual-validation.json`, and rerun supply-chain/readiness checks.
 
-[MEDIUM] R-003 — Release readiness remains NOT READY
+[MEDIUM] R-003 - Final no-blocker independent review is still pending
 Evidence status: confirmed
-Location: `docs/release/RELEASE_READINESS.md:7`, `docs/release/RELEASE_READINESS.md:28`, `docs/release/RELEASE_READINESS.md:37`, `docs/release/RELEASE_READINESS.md:38`, `scripts/release_readiness.py:121`, `scripts/release_readiness.py:144`
 Acceptance criteria: J7, J8
-Impact: The release gate cannot pass while the readiness artifact itself records open phase gates, pending manual evidence, and missing PASS status. This is intentionally release-blocking, not a stale false negative.
-Evidence/reproduction: `.\.venv\Scripts\python.exe scripts\release_readiness.py --json` returned `decision=NOT READY`, with open phase gates including `Independent full review completed` and `Release gate PASS`. The required release command list includes `python scripts/manual_release_evidence.py`, which currently fails because the manual evidence file is missing.
-Expected invariant: `docs/release/RELEASE_READINESS.md` records exact commands, results, residual risks, and a justified `PASS` only after every release-blocking finding is closed.
-Recommended remediation: Complete and validate the manual evidence JSON, rerun all required release commands, regenerate readiness with `python scripts/release_readiness.py --write`, and perform one final independent review that reports no Critical/High or release-blocking Medium findings.
-Regression test: Keep `scripts/check.py` enforcing readiness freshness and `scripts/release_readiness.py --check` in the required release command set.
+Impact: J7 cannot pass while this current review intentionally reports release-blocking Medium findings. The current review is useful release evidence, but it is not the final PASS review.
+Evidence/reproduction: `docs/release/RELEASE_READINESS.md` is current and `NOT READY`; open phase gates include independent full review and release gate PASS. `scripts/manual_release_evidence.py --json` cannot validate the required `independent-full-review` PASS check because the final manual evidence file is absent.
+Expected invariant: After all manual and publication evidence exists, a final tracked review artifact mentions the target release commit and records no open Critical/High findings and no release-blocking Medium findings.
+Recommended remediation: Complete the manual evidence and image-signature steps first, rerun the full required release command list, regenerate readiness, and then produce the final no-blocker review.
 
-## Acceptance-criteria coverage matrix
+## Acceptance-Criteria Coverage Matrix
 
 | Area | Refresh result |
 |---|---|
-| A. One source of truth and durability | No new blocker found in this focused refresh. `scripts/check.py` and API concurrency smoke passed; HA live smoke proved current Core-to-HA state propagation in isolated live Core/HA. |
-| B. Products, locations, lots, and events | No new blocker found in this focused refresh; not exhaustively re-audited beyond current `scripts/check.py` and readiness/status evidence. |
-| C. Units and recipe intelligence | No new blocker found in this focused refresh; not exhaustively re-audited beyond current `scripts/check.py` and readiness/status evidence. |
-| D. Meal planning and shopping | No new blocker found in this focused refresh; not exhaustively re-audited beyond current `scripts/check.py` and readiness/status evidence. |
-| E. Cooking, leftovers, waste, and value | No new blocker found in this focused refresh; not exhaustively re-audited beyond current `scripts/check.py` and readiness/status evidence. |
-| F. Barcode, receipt, and price workflows | Release-blocking Medium remains for physical barcode camera and representative real-receipt manual evidence. |
-| G. Web/PWA quality | Release-blocking Medium remains where physical-device camera evidence intersects browser workflow acceptance. |
-| H. Home Assistant | Prior High stale-sensor smoke finding is resolved on current HEAD. Live smoke passed with HA entity states matching final Core revision/count and cleaned generated resources. |
-| I. Security and operations | Prior independent container-smoke limitation is resolved by `--isolated`. Published-image signature proof remains a release-blocking Medium. |
-| J. Engineering and release | `scripts/check.py` passed and readiness is current, but J7/J8 cannot pass while this review reports release-blocking Medium findings and readiness remains `NOT READY`. |
+| A. One source of truth and durability | No new blocker found. Current aggregate checks and recent sweep cover concurrency, E2E sync, HA live propagation, restart persistence, and backup/restore evidence. |
+| B. Products, locations, lots, and events | No new blocker found in this focused refresh; current aggregate tests and release sweep remain green. |
+| C. Units and recipe intelligence | No new blocker found in this focused refresh; current aggregate tests and E2E workflow remain green. |
+| D. Meal planning and shopping | No new blocker found in this focused refresh; current aggregate tests and browser/E2E sweep cover the implemented workflow. |
+| E. Cooking, leftovers, waste, and value | No new blocker found in this focused refresh; current aggregate tests and E2E workflow remain green. |
+| F. Barcode, receipt, and price workflows | Partial. Automated barcode/manual fallback and OCR corpus evidence exists, but physical camera and representative real-receipt evidence remain release-blocking Medium gaps. |
+| G. Web/PWA quality | Partial. Browser smoke covers phone/tablet automated workflows; physical camera evidence remains a release-blocking Medium gap. |
+| H. Home Assistant | No open Critical/High finding found. Installed HA and isolated HA Core smoke evidence is current in the ledger. |
+| I. Security and operations | Partial. Auth, artifact audit, image hardening, supply-chain, and container smoke evidence pass; final published-image signature evidence remains missing. |
+| J. Engineering and release | Gap. `scripts/check.py` passes and readiness is current, but J7/J8 cannot pass while release-blocking Medium findings remain and readiness is `NOT READY`. |
 
-## Security and data-integrity conclusion
+## Security And Data-Integrity Conclusion
 
-No open Critical or High finding was identified in this focused current-head refresh. The HA cross-interface false-pass issue is resolved by current source and live output, and the isolated container smoke now independently verifies container hardening, restart persistence, backup/restore counts, and in-image checks without mutating the existing Compose service/database.
+The current release line is substantially stronger than the original v0.1.0 proof of concept. The automated release-command evidence covers SQLite durability, authenticated API behavior, browser workflows, Home Assistant setup/update behavior, container hardening, isolated restart/backup/restore, OCR corpus behavior, artifact debt scanning, and current supply-chain lock/SBOM consistency.
 
-The release remains blocked by missing external evidence and final publication evidence, not by a newly observed application data-integrity regression in this pass.
+No open Critical or High finding was identified in this focused refresh. The release still fails because external evidence and final publication proof are absent, not because this pass found a new local data-integrity regression.
 
-## Test and documentation gaps
+## Test And Documentation Gaps
 
-- `docs/release/manual-validation.json` is absent and therefore cannot prove physical camera, representative real-receipt, published image signature, or final independent full-review evidence.
+- `docs/release/manual-validation.json` is absent and therefore cannot prove physical camera, representative real-receipt, published-image signature, or final independent full-review evidence.
 - `docs/release/RELEASE_READINESS.md` is current but intentionally `NOT READY`.
-- A final readiness PASS and final no-blocker independent review must be produced after the manual evidence and image-signature records exist.
+- A final readiness PASS and final no-blocker independent review must be produced only after the manual evidence and image-signature records exist.
 
-## Residual risks and recommended next action
+## Residual Risks And Recommended Next Action
 
-1. Produce the manual evidence artifacts and `docs/release/manual-validation.json` for the final release commit.
-2. Publish/tag the final image and record signature verification evidence.
-3. Rerun the full required release command list from `docs/release/RELEASE_READINESS.md`.
-4. Regenerate `docs/release/RELEASE_READINESS.md` and repeat the independent review.
+1. Capture physical barcode camera/manual fallback evidence and representative real-receipt evidence for the target release commit.
+2. Publish/sign the final image and record digest-based `cosign verify` evidence.
+3. Commit tracked-and-clean artifacts under `docs/release/evidence/`, the final review under `docs/reviews/`, and `docs/release/manual-validation.json`.
+4. Rerun every required release command from `docs/release/RELEASE_READINESS.md`.
+5. Regenerate readiness as PASS only when supported by the evidence, then repeat independent review.
 
-## J7 assessment
+## J7 Assessment
 
-J7 cannot pass for current HEAD. This review has no open Critical/High findings, but it does report release-blocking Medium findings, and J7 requires an independent review with no open Critical/High findings and no release-blocking Medium finding.
+J7 cannot pass for the reviewed revision. This review identifies no open Critical or High finding, but it does report release-blocking Medium findings. J7 requires an independent review with no open Critical/High findings and no release-blocking Medium finding.
