@@ -34,6 +34,7 @@ API_PATHS: tuple[str, ...] = (
     "/api/v1/receipts/{id}/commit",
     "/api/v1/receipts/{id}/reject",
     "/api/v1/recipes",
+    "/api/v1/recipes/{id}",
     "/api/v1/recipes/{recipe_name}/shopping",
     "/api/v1/meal-plan",
     "/api/v1/shopping/rebuild",
@@ -99,10 +100,12 @@ POST_METHODS: dict[str, tuple[str, str, str]] = {
 
 PATCH_METHODS: dict[str, tuple[str, str, str]] = {
     "/api/v1/receipts/{id}/review": ("Receipts", "Update editable receipt review", "ReceiptReviewRequest"),
+    "/api/v1/recipes/{id}": ("Recipes", "Update recipe", "RecipeRequest"),
     "/api/v1/shopping/{id}": ("Shopping", "Update shopping item", "ShoppingUpdateRequest"),
 }
 
 DELETE_METHODS: dict[str, tuple[str, str]] = {
+    "/api/v1/recipes/{id}": ("Recipes", "Retire recipe"),
     "/api/v1/shopping/{id}": ("Shopping", "Remove shopping item"),
 }
 

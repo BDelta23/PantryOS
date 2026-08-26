@@ -324,6 +324,74 @@ class PantryCore:
             "currency": lot["currency"],
         }
 
+    def update_recipe(self, recipe_id: str, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        ingredients = data.get("ingredients", [])
+        if not isinstance(ingredients, list):
+            raise ValidationError("Recipe ingredients must be a list")
+        with self.transaction() as connection:
+            existing = connection.execute("SELECT * FROM recipes WHERE id = ? AND active = 1", (recipe_id,)).fetchone()
+            if existing is None:
+                raise NotFoundError(f"Recipe not found: {recipe_id}")
+            name = str(data.get("name") or "").strip()
+            if not name:
+                raise ValidationError("Recipe name is required")
+            normalized = normalize_name(name)
+            conflict = connection.execute(
+                "SELECT id FROM recipes WHERE normalized_name = ? AND id != ?",
+                (normalized, recipe_id),
+            ).fetchone()
+            if conflict is not None:
+                raise ValidationError(f"Recipe name already exists: {name}")
+            yield_servings = decimal_text(require_positive(data.get("yield_servings", existing["yield_servings"]), "yield_servings"))
+            tags_json = json.dumps(data.get("tags", json.loads(existing["tags_json"] or "[]")), sort_keys=True)
+            connection.execute(
+                """
+                UPDATE recipes
+                SET name = ?, normalized_name = ?, yield_servings = ?, prep_minutes = ?,
+                    instructions = ?, tags_json = ?, updated_at = ?, version = version + 1
+                WHERE id = ?
+                """,
+                (
+                    name,
+                    normalized,
+                    yield_servings,
+                    data.get("prep_minutes"),
+                    data.get("instructions"),
+                    tags_json,
+                    utc_now(),
+                    recipe_id,
+                ),
+            )
+            connection.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
+            for position, ingredient in enumerate(ingredients):
+                product = connection.execute(
+                    "SELECT id FROM products WHERE normalized_name = ? AND active = 1",
+                    (normalize_name(ingredient["name"]),),
+                ).fetchone()
+                self._insert_recipe_ingredient(connection, recipe_id, ingredient, product["id"] if product else None, position)
+            revision = self._append_event(connection, "recipe.changed", source=source, metadata={"recipe_id": recipe_id})
+            return {"recipe": self._recipe_snapshot(connection, recipe_id), "revision": revision}
+
+    def delete_recipe(self, recipe_id: str, *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            recipe = connection.execute("SELECT * FROM recipes WHERE id = ? AND active = 1", (recipe_id,)).fetchone()
+            if recipe is None:
+                raise NotFoundError(f"Recipe not found: {recipe_id}")
+            active_plan = connection.execute(
+                "SELECT id FROM meal_plan_entries WHERE recipe_id = ? AND status IN ('planned', 'cooking') LIMIT 1",
+                (recipe_id,),
+            ).fetchone()
+            if active_plan is not None:
+                raise ValidationError("Recipe is used by an active meal plan")
+            connection.execute(
+                "UPDATE recipes SET active = 0, updated_at = ?, version = version + 1 WHERE id = ?",
+                (utc_now(), recipe_id),
+            )
+            revision = self._append_event(connection, "recipe.deleted", source=source, metadata={"recipe_id": recipe_id})
+        return {"ok": True, "recipe_id": recipe_id, "revision": revision}
+
     def backup(self, output_path: Path | str) -> Path:
         self.migrate()
         target = Path(output_path)
@@ -2150,9 +2218,9 @@ class PantryCore:
         recipe_name: str | None,
     ) -> sqlite3.Row:
         if recipe_id:
-            row = connection.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+            row = connection.execute("SELECT * FROM recipes WHERE id = ? AND active = 1", (recipe_id,)).fetchone()
         elif recipe_name:
-            row = connection.execute("SELECT * FROM recipes WHERE normalized_name = ?", (normalize_name(str(recipe_name)),)).fetchone()
+            row = connection.execute("SELECT * FROM recipes WHERE normalized_name = ? AND active = 1", (normalize_name(str(recipe_name)),)).fetchone()
         else:
             raise ValidationError("Cooking session requires recipe_id or recipe_name")
         if row is None:
@@ -2294,7 +2362,7 @@ class PantryCore:
             lot["estimated_value"] = self._money_text(
                 self._lot_value_for_quantity(connection, lot, require_non_negative(lot["quantity"]))
             )
-        recipes = [self._recipe_snapshot(connection, row["id"]) for row in connection.execute("SELECT id FROM recipes ORDER BY name")]
+        recipes = [self._recipe_snapshot(connection, row["id"]) for row in connection.execute("SELECT id FROM recipes WHERE active = 1 ORDER BY name")]
         shopping = [dict(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name")]
         events = [dict(row) for row in connection.execute("SELECT * FROM inventory_events ORDER BY revision DESC LIMIT 25")]
         location_summary = self._location_summary(lots)

@@ -300,6 +300,7 @@ def recipe_to_legacy(recipe: dict[str, Any]) -> dict[str, Any]:
         "id": recipe["id"],
         "name": recipe["name"],
         "prep_minutes": recipe["prep_minutes"],
+        "yield_servings": recipe["yield_servings"],
         "instructions": recipe["instructions"],
         "tags": json.loads(recipe["tags_json"]),
         "ingredients": [
@@ -783,6 +784,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             if receipt_id is not None:
                 self._send_json(self.core.update_receipt_review(receipt_id, body))
                 return
+            recipe_id = recipe_path(parsed.path)
+            if recipe_id is not None:
+                self._send_json(update_recipe(self.core, recipe_id, body))
+                return
             shopping_id = shopping_item_path(parsed.path)
             if shopping_id is not None:
                 result = self.core.update_shopping_item(shopping_id, body)
@@ -825,6 +830,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             shopping_id = shopping_item_path(parsed.path)
             if shopping_id is not None:
                 self._send_json(self.core.remove_shopping_item(shopping_id))
+                return
+            recipe_id = recipe_path(parsed.path)
+            if recipe_id is not None:
+                self._send_json(delete_recipe(self.core, recipe_id))
                 return
             if parsed.path.startswith("/api/items/"):
                 lot_id = parsed.path.removeprefix("/api/items/")
@@ -1218,6 +1227,17 @@ def recipe_shopping_path(path: str) -> str | None:
     return None
 
 
+def recipe_path(path: str) -> str | None:
+    for prefix in ("/api/recipes/", "/api/v1/recipes/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix:
+            return None
+        return unquote(suffix)
+    return None
+
+
 def event_detail_path(path: str) -> str | None:
     prefix = "/api/v1/events/"
     if not path.startswith(prefix):
@@ -1398,11 +1418,20 @@ def add_recipe(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:
     return {"recipe": recipe_to_legacy(snapshot), "revision": revision}
 
 
+def update_recipe(core: PantryCore, recipe_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    result = core.update_recipe(recipe_id, body, source="api")
+    return {"recipe": recipe_to_legacy(result["recipe"]), "revision": result["revision"]}
+
+
+def delete_recipe(core: PantryCore, recipe_id: str) -> dict[str, Any]:
+    return core.delete_recipe(recipe_id, source="api")
+
+
 def plan_meal(core: PantryCore, day: str, recipe_name: str) -> dict[str, Any]:
     core.migrate()
     with core.transaction() as connection:
         recipe = connection.execute(
-            "SELECT id FROM recipes WHERE normalized_name = ?",
+            "SELECT id FROM recipes WHERE normalized_name = ? AND active = 1",
             (normalize_name(recipe_name),),
         ).fetchone()
         if recipe is None:
@@ -1422,7 +1451,7 @@ def add_missing_to_shopping(core: PantryCore, recipe_name: str) -> dict[str, Any
     core.migrate()
     with core.transaction() as connection:
         recipe_row = connection.execute(
-            "SELECT id FROM recipes WHERE normalized_name = ?",
+            "SELECT id FROM recipes WHERE normalized_name = ? AND active = 1",
             (normalize_name(recipe_name),),
         ).fetchone()
         if recipe_row is None:

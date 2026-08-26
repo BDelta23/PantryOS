@@ -7,6 +7,7 @@ const state = {
   activePurchase: null,
   activePriceAnalysis: null,
   priceError: "",
+  editingRecipeId: null,
   authenticated: false,
   csrfToken: "",
   barcodeScanner: {
@@ -442,10 +443,42 @@ function renderRecipes(recipes, possibleMeals) {
           <div class="recipe-actions">
             <button class="secondary" type="button" data-plan="${escapeHtml(recipe.name)}">Plan Tonight</button>
             <button type="button" data-missing="${escapeHtml(recipe.name)}">Add Missing</button>
+            <button class="secondary" type="button" data-recipe-edit="${escapeHtml(recipe.id)}">Edit</button>
+            <button class="danger" type="button" data-recipe-delete="${escapeHtml(recipe.id)}">Delete</button>
           </div>
         </article>`;
     })
     .join("");
+}
+
+function recipeIngredientsText(recipe) {
+  return (recipe.ingredients || [])
+    .map((item) => [item.name, item.quantity || "1", item.unit || "count"].join(","))
+    .join("\n");
+}
+
+function startRecipeEdit(recipeId) {
+  const recipe = state.data.recipes.find((row) => row.id === recipeId);
+  if (!recipe) return;
+  const form = $("#recipeForm");
+  state.editingRecipeId = recipe.id;
+  form.elements.name.value = recipe.name || "";
+  form.elements.prep_minutes.value = recipe.prep_minutes || "";
+  form.elements.ingredients.value = recipeIngredientsText(recipe);
+  form.elements.instructions.value = recipe.instructions || "";
+  $("#recipeFormTitle").textContent = "Edit Recipe";
+  $("#recipeSubmitButton").textContent = "Save Recipe";
+  $("#cancelRecipeEditButton").hidden = false;
+  form.elements.name.focus();
+}
+
+function resetRecipeEditor() {
+  state.editingRecipeId = null;
+  const form = $("#recipeForm");
+  form.reset();
+  $("#recipeFormTitle").textContent = "Add Recipe";
+  $("#recipeSubmitButton").textContent = "Add Recipe";
+  $("#cancelRecipeEditButton").hidden = true;
 }
 
 function formData(form) {
@@ -613,12 +646,15 @@ async function handleBarcodeSubmit(event) {
 
 async function handleRecipeSubmit(event) {
   event.preventDefault();
-  const form = event.currentTarget;
-  const payload = compactPayload(formData(form));
+  const payload = compactPayload(formData(event.currentTarget));
   payload.ingredients = parseIngredients(payload.ingredients || "");
-  await api("/api/recipes", { method: "POST", body: JSON.stringify(payload) });
-  form.reset();
-  showToast("Recipe added");
+  const editingId = state.editingRecipeId;
+  await api(editingId ? `/api/recipes/${encodeURIComponent(editingId)}` : "/api/recipes", {
+    method: editingId ? "PATCH" : "POST",
+    body: JSON.stringify(payload),
+  });
+  resetRecipeEditor();
+  showToast(editingId ? "Recipe updated" : "Recipe added");
   await refresh();
 }
 
@@ -859,6 +895,24 @@ async function handlePageClick(event) {
     return;
   }
 
+  const recipeEdit = target.dataset.recipeEdit;
+  if (recipeEdit) {
+    startRecipeEdit(recipeEdit);
+    return;
+  }
+
+  const recipeDelete = target.dataset.recipeDelete;
+  if (recipeDelete) {
+    if (!window.confirm("Delete this recipe?")) return;
+    await api(`/api/recipes/${encodeURIComponent(recipeDelete)}`, { method: "DELETE" });
+    if (state.editingRecipeId === recipeDelete) {
+      resetRecipeEditor();
+    }
+    showToast("Recipe deleted");
+    await refresh();
+    return;
+  }
+
   const missingRecipe = target.dataset.missing;
   if (missingRecipe) {
     await api(`/api/recipes/${encodeURIComponent(missingRecipe)}/shopping`, { method: "POST" });
@@ -930,6 +984,7 @@ async function handleLogout() {
   state.csrfToken = "";
   state.activeCookingSession = null;
   state.activeReceipt = null;
+  resetRecipeEditor();
   state.purchases = [];
   state.activePurchase = null;
   state.activePriceAnalysis = null;
@@ -961,6 +1016,7 @@ async function main() {
   $("#barcodeCameraButton").addEventListener("click", () => startBarcodeScanner().catch(handleActionError));
   $("#barcodeStopButton").addEventListener("click", stopBarcodeScanner);
   $("#recipeForm").addEventListener("submit", (event) => handleRecipeSubmit(event).catch(handleActionError));
+  $("#cancelRecipeEditButton").addEventListener("click", resetRecipeEditor);
   $("#purchaseForm").addEventListener("submit", (event) => handlePurchaseSubmit(event).catch(handleActionError));
   $("#receiptForm").addEventListener("submit", (event) => handleReceiptSubmit(event).catch(handleActionError));
   $("#receiptReviewForm").addEventListener("submit", (event) => handleReceiptReviewSubmit(event).catch(handleActionError));
@@ -984,6 +1040,7 @@ async function main() {
   $("#resetButton").addEventListener("click", async () => {
     state.activeCookingSession = null;
     state.activeReceipt = null;
+    resetRecipeEditor();
     state.activePurchase = null;
     state.activePriceAnalysis = null;
     state.priceError = "";

@@ -177,12 +177,16 @@
           </section>
 
           <section class="tool-panel">
-            <h2>Add Recipe</h2>
+            <h2 id="recipeFormTitle">Add Recipe</h2>
             <form id="recipeForm" class="form-grid">
               <label>Name<input name="name" required placeholder="Chicken Alfredo" /></label>
               <label>Minutes<input name="prep_minutes" inputmode="numeric" placeholder="25" /></label>
               <label>Ingredients<textarea name="ingredients" required placeholder="Chicken Breast,1,lb&#10;Pasta,16,oz"></textarea></label>
-              <button type="submit">Add Recipe</button>
+              <label>Instructions<textarea name="instructions" placeholder="Optional prep notes"></textarea></label>
+              <div class="row">
+                <button id="recipeSubmitButton" type="submit">Add Recipe</button>
+                <button id="cancelRecipeEditButton" class="quiet" type="button" hidden>Cancel</button>
+              </div>
             </form>
           </section>
         </aside>

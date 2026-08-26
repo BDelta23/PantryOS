@@ -619,7 +619,7 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
                 csrf_token=csrf_token,
                 payload={"location": "Kitchen/Refrigerator/Top Shelf"},
             )
-            request_json(
+            recipe = request_json(
                 f"{base}/api/recipes",
                 method="POST",
                 cookie=cookie,
@@ -629,19 +629,53 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
                     "ingredients": [{"name": "Browser Rice", "quantity": "1", "unit": "cup"}],
                 },
             )
+            updated_recipe = request_json(
+                f"{base}/api/recipes/{recipe['recipe']['id']}",
+                method="PATCH",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={
+                    "name": "Browser Rice Bowl Deluxe",
+                    "prep_minutes": 18,
+                    "instructions": "Warm rice and plate it.",
+                    "ingredients": [
+                        {"name": "Browser Rice", "quantity": "1", "unit": "cup"},
+                        {"name": "Browser Scallion", "quantity": "1", "unit": "count"},
+                    ],
+                },
+            )
             request_json(
                 f"{base}/api/meal-plan",
                 method="POST",
                 cookie=cookie,
                 csrf_token=csrf_token,
-                payload={"day": "Tonight", "recipe_name": "Browser Rice Bowl"},
+                payload={"day": "Tonight", "recipe_name": "Browser Rice Bowl Deluxe"},
+            )
+            blocked_delete_status, blocked_delete = request_error(
+                f"{base}/api/recipes/{recipe['recipe']['id']}",
+                method="DELETE",
+                cookie=cookie,
+                csrf_token=csrf_token,
+            )
+            delete_recipe = request_json(
+                f"{base}/api/recipes",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"name": "Browser Delete Soup", "ingredients": [{"name": "Water", "quantity": "1", "unit": "cup"}]},
+            )
+            deleted_recipe = request_json(
+                f"{base}/api/recipes/{delete_recipe['recipe']['id']}",
+                method="DELETE",
+                cookie=cookie,
+                csrf_token=csrf_token,
             )
             started = request_json(
                 f"{base}/api/cooking/sessions",
                 method="POST",
                 cookie=cookie,
                 csrf_token=csrf_token,
-                payload={"recipe_name": "Browser Rice Bowl", "planned_servings": "1"},
+                payload={"recipe_name": "Browser Rice Bowl Deluxe", "planned_servings": "1"},
             )
             completed = request_json(
                 f"{base}/api/cooking/sessions/{started['session']['id']}/complete",
@@ -664,11 +698,22 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     assert purchase["lots"][0]["name"] == "Browser Oats"
     assert moved["item"]["location"] == "Kitchen/Refrigerator/Top Shelf"
     assert moved["revision"] > rice["revision"]
+    assert updated_recipe["recipe"]["id"] == recipe["recipe"]["id"]
+    assert updated_recipe["recipe"]["name"] == "Browser Rice Bowl Deluxe"
+    assert updated_recipe["recipe"]["prep_minutes"] == 18
+    assert len(updated_recipe["recipe"]["ingredients"]) == 2
+    assert blocked_delete_status == 400
+    assert blocked_delete["code"] == "validation_error"
+    assert deleted_recipe["ok"] is True
     assert started["session"]["status"] == "cooking"
     assert completed["session"]["status"] == "completed"
     assert completed["leftovers"][0]["name"] == "Browser Rice Bowl Leftovers"
     browser_rice = next(item for item in state["items"] if item["name"] == "Browser Rice")
     assert browser_rice["quantity"] == "1"
+    recipe_names = [recipe["name"] for recipe in state["recipes"]]
+    assert "Browser Rice Bowl Deluxe" in recipe_names
+    assert "Browser Rice Bowl" not in recipe_names
+    assert "Browser Delete Soup" not in recipe_names
     assert any(item["name"] == "Browser Rice Bowl Leftovers" for item in state["leftovers"])
 
 
@@ -948,6 +993,12 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "Manual barcode entry is available" in app_js
     assert "handleStartCooking" in app_js
     assert "handlePurchaseSubmit" in app_js
+    assert "startRecipeEdit" in app_js
+    assert "resetRecipeEditor" in app_js
+    assert "data-recipe-edit" in app_js
+    assert "data-recipe-delete" in app_js
+    assert "PATCH" in app_js
+    assert "DELETE" in app_js
     assert "renderKnownLocations" in app_js
     assert "data-move-location" in app_js
     assert "/move" in app_js
@@ -960,6 +1011,10 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "rel=\"manifest\" href=\"/manifest.webmanifest\"" in index_html
     assert "name=\"theme-color\"" in index_html
     assert "id=\"cookingForm\"" in index_html
+    assert "id=\"recipeFormTitle\"" in index_html
+    assert "id=\"recipeSubmitButton\"" in index_html
+    assert "id=\"cancelRecipeEditButton\"" in index_html
+    assert "name=\"instructions\"" in index_html
     assert "id=\"knownLocations\"" in index_html
     assert "id=\"purchaseForm\"" in index_html
     assert "id=\"purchaseHistoryList\"" in index_html
