@@ -70,6 +70,16 @@ Run the dependency-free verifier in Docker:
 $env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
 docker compose run --rm pantryos python scripts/check.py
 ```
+
+Run the Docker release smoke after Docker Desktop is started:
+
+```powershell
+$env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
+python scripts/container_smoke.py
+```
+
+The container smoke builds and starts the Compose service, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/app/data`, compares source/restored counts, and runs the dependency-free verifier inside the image.
+
 ## Home Assistant Integration
 
 Copy `custom_components/pantryos` into your Home Assistant config directory:
@@ -275,6 +285,3 @@ Run the scripted add-to-use-soon cross-surface release smoke:
 $env:PANTRYOS_API_TOKEN = "e2e-smoke-token"
 python scripts/smoke_e2e.py
 ```
-
-
-

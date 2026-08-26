@@ -33,3 +33,17 @@ def test_scripted_demo_proves_supported_surface_vertical_slice() -> None:
     assert "cooking.started" in result["event_types"]
     assert "cooking.completed" in result["event_types"]
     assert result["revision"] > 0
+
+
+def test_container_smoke_script_is_release_runner_ready() -> None:
+    from scripts import container_smoke
+
+    args = container_smoke.build_parser().parse_args(["--skip-image-verifier"])
+    assert args.base_url == "http://127.0.0.1:8765"
+    assert args.service == "pantryos"
+    assert args.container == "pantryos"
+    assert args.skip_image_verifier is True
+
+    nested_lot = {"id": "lot_nested", "product_name": "Nested Rice"}
+    assert container_smoke.dashboard_lots({"core": {"lots": [nested_lot]}}) == [nested_lot]
+    assert container_smoke.dashboard_lots({"lots": [{"id": "lot_top"}]}) == [{"id": "lot_top"}]
