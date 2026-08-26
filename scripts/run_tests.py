@@ -22,6 +22,7 @@ TEST_MODULES = (
     "tests.test_container_contract",
     "tests.test_ha_contract",
     "tests.test_openapi_contract",
+    "tests.test_release_smoke",
     "tests.core.test_sqlite_core",
 )
 

@@ -269,5 +269,12 @@ $env:PANTRYOS_API_TOKEN = "browser-smoke-token"
 
 For a normal Node toolchain, install Playwright and Chromium first, then run `node scripts/browser_smoke.cjs` with `PYTHON` pointing at the Python runtime to use for `app/server.py`.
 
+Run the scripted add-to-use-soon cross-surface release smoke:
+
+```powershell
+$env:PANTRYOS_API_TOKEN = "e2e-smoke-token"
+python scripts/smoke_e2e.py
+```
+
 
 
