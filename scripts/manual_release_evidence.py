@@ -331,13 +331,16 @@ def _validate_check_specific_details(
         if SHA256_DIGEST_RE.fullmatch(digest_value) is None:
             problems.append({"field": f"{prefix}.details.digest", "problem": "must be a sha256:<64 lowercase hex> digest"})
         image = details.get("image")
-        if isinstance(image, str) and digest_value and digest_value not in image:
+        image_value = image.strip() if isinstance(image, str) else ""
+        if image_value and digest_value and digest_value not in image_value:
             problems.append({"field": f"{prefix}.details.image", "problem": "must include the recorded digest"})
         signature_identity = details.get("signature_identity")
         identity_value = signature_identity.strip() if isinstance(signature_identity, str) else ""
         command = details.get("verification_command")
         if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
+        elif image_value and image_value not in command:
+            problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded image reference"})
         elif digest_value and digest_value not in command:
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded digest"})
         elif identity_value and identity_value not in command:
