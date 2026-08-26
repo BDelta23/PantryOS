@@ -3,14 +3,26 @@ const state = {
   filter: "",
   activeCookingSession: null,
   activeReceipt: null,
+  authenticated: false,
+  csrfToken: "",
 };
 
 const $ = (selector) => document.querySelector(selector);
 
 async function api(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && state.csrfToken) {
+    headers["X-CSRF-Token"] = state.csrfToken;
+  }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    method,
+    credentials: "same-origin",
+    headers,
   });
   const data = await response.json();
   if (!response.ok) {
@@ -570,7 +582,65 @@ async function handlePageClick(event) {
   }
 }
 
+function setAuthenticated(authenticated) {
+  state.authenticated = authenticated;
+  $("#loginPanel").hidden = authenticated;
+  $("#appShell").hidden = !authenticated;
+  $("#seedButton").hidden = !authenticated;
+  $("#resetButton").hidden = !authenticated;
+  $("#logoutButton").hidden = !authenticated;
+}
+
+async function bootstrapApp() {
+  await refresh();
+  if (!state.data.items.length && !state.data.recipes.length) {
+    await api("/api/seed", { method: "POST" });
+    await refresh();
+  }
+}
+
+async function loadSession() {
+  const session = await api("/api/session");
+  state.csrfToken = session.csrf_token || "";
+  setAuthenticated(Boolean(session.authenticated));
+  if (state.authenticated) {
+    await bootstrapApp();
+  }
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const error = $("#loginError");
+  error.textContent = "";
+  try {
+    const session = await api("/api/session/login", {
+      method: "POST",
+      body: JSON.stringify({ token: form.elements.token.value }),
+    });
+    state.csrfToken = session.csrf_token || "";
+    form.reset();
+    setAuthenticated(true);
+    await bootstrapApp();
+  } catch (loginError) {
+    error.textContent = loginError.message;
+  }
+}
+
+async function handleLogout() {
+  await api("/api/session/logout", { method: "POST" });
+  state.data = null;
+  state.csrfToken = "";
+  state.activeCookingSession = null;
+  state.activeReceipt = null;
+  setAuthenticated(false);
+  showToast("Signed out");
+}
+
 async function main() {
+  setAuthenticated(false);
+  $("#loginForm").addEventListener("submit", (event) => handleLogin(event).catch(handleActionError));
+  $("#logoutButton").addEventListener("click", () => handleLogout().catch(handleActionError));
   $("#itemForm").addEventListener("submit", (event) => handleItemSubmit(event).catch(handleActionError));
   $("#barcodeForm").addEventListener("submit", (event) => handleBarcodeSubmit(event).catch(handleActionError));
   $("#recipeForm").addEventListener("submit", (event) => handleRecipeSubmit(event).catch(handleActionError));
@@ -580,7 +650,9 @@ async function main() {
   $("#cookingForm").addEventListener("submit", (event) => handleCookingSubmit(event).catch(handleActionError));
   $("#inventoryFilter").addEventListener("input", (event) => {
     state.filter = event.target.value;
-    renderInventory(state.data.items);
+    if (state.data) {
+      renderInventory(state.data.items);
+    }
   });
   $("#promoteButton").addEventListener("click", async () => {
     await api("/api/shopping/promote-suggestions", { method: "POST" });
@@ -604,11 +676,7 @@ async function main() {
   $("#rejectReceiptButton").addEventListener("click", () => handleRejectReceipt().catch(handleActionError));
   document.addEventListener("click", (event) => handlePageClick(event).catch(handleActionError));
 
-  await refresh();
-  if (!state.data.items.length && !state.data.recipes.length) {
-    await api("/api/seed", { method: "POST" });
-    await refresh();
-  }
+  await loadSession();
 }
 
 function handleActionError(error) {

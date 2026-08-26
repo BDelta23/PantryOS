@@ -38,6 +38,9 @@ DEFAULT_RATE_LIMIT_REQUESTS = 20
 DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60
 PROBLEM_BASE_URL = "https://pantryos.local/problems"
 PUBLIC_V1_ENDPOINTS = {"/api/v1/health/live", "/api/v1/health/ready"}
+BROWSER_SESSION_COOKIE = "pantryos_session"
+DEFAULT_BROWSER_SESSION_SECONDS = 12 * 60 * 60
+SESSION_ENDPOINTS = {"/api/session", "/api/session/login", "/api/session/logout"}
 
 
 class RequestBodyTooLarge(ValueError):
@@ -78,6 +81,44 @@ class RateLimiter:
                 retry_after = max(1, int(self.window_seconds - elapsed))
                 raise RateLimitExceeded(retry_after)
             self._windows[key] = (window_start, count + 1)
+
+
+class BrowserSessionStore:
+    """In-process session store for the local browser UI."""
+
+    def __init__(self, *, ttl_seconds: int) -> None:
+        self.ttl_seconds = max(60, ttl_seconds)
+        self._lock = threading.Lock()
+        self._sessions: dict[str, dict[str, str | float]] = {}
+
+    def create(self) -> dict[str, str | float]:
+        session_id = secrets.token_urlsafe(32)
+        session = {
+            "id": session_id,
+            "csrf_token": secrets.token_urlsafe(32),
+            "expires_at": time.time() + self.ttl_seconds,
+        }
+        with self._lock:
+            self._sessions[session_id] = session
+        return session
+
+    def get(self, session_id: str | None) -> dict[str, str | float] | None:
+        if not session_id:
+            return None
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if float(session["expires_at"]) <= time.time():
+                self._sessions.pop(session_id, None)
+                return None
+            return session
+
+    def delete(self, session_id: str | None) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            self._sessions.pop(session_id, None)
 
 
 def demo_seed_document() -> dict[str, Any]:
@@ -460,10 +501,39 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
     core: PantryCore
     api_token: str | None = None
     rate_limiter: RateLimiter
+    session_store: BrowserSessionStore
+
+    def do_OPTIONS(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            if not self._origin_allowed():
+                self._send_problem(
+                    HTTPStatus.FORBIDDEN,
+                    "Cross-origin browser requests are not allowed.",
+                    code="origin_forbidden",
+                    title="Forbidden",
+                )
+                return
+            self._send_empty_response(
+                HTTPStatus.NO_CONTENT,
+                headers={
+                    **self._cors_headers(),
+                    "Allow": "GET, POST, PATCH, DELETE, OPTIONS",
+                    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, X-Request-ID, Authorization",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Max-Age": "600",
+                },
+            )
+            return
+        self._send_empty_response(HTTPStatus.NO_CONTENT, headers={"Allow": "GET, POST, PATCH, DELETE, OPTIONS"})
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if not self._authorize(parsed.path):
+            return
+        if parsed.path == "/api/session":
+            self._send_session_status()
             return
         if parsed.path == "/api/v1/openapi.json":
             self._send_json(openapi_document())
@@ -547,6 +617,12 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         try:
             self._enforce_rate_limit(parsed.path)
             body = self._read_json()
+            if parsed.path == "/api/session/login":
+                self._handle_session_login(body)
+                return
+            if parsed.path == "/api/session/logout":
+                self._handle_session_logout()
+                return
             if parsed.path in ("/api/items", "/api/v1/inventory/lots"):
                 result = self.core.add_inventory_lot(body)
                 self._send_json({"item": lot_to_item(result["lot"]), "revision": result["revision"]}, HTTPStatus.CREATED)
@@ -779,8 +855,48 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         return payload
 
     def _authorize(self, path: str) -> bool:
-        if not is_versioned_api(path) or path in PUBLIC_V1_ENDPOINTS:
-            return True
+        if path in SESSION_ENDPOINTS:
+            if self._origin_allowed():
+                return True
+            self._send_problem(
+                HTTPStatus.FORBIDDEN,
+                "Cross-origin browser requests are not allowed.",
+                code="origin_forbidden",
+                title="Forbidden",
+            )
+            return False
+        if is_versioned_api(path) and path not in PUBLIC_V1_ENDPOINTS:
+            return self._authorize_bearer()
+        if is_browser_api(path):
+            if not self._origin_allowed():
+                self._send_problem(
+                    HTTPStatus.FORBIDDEN,
+                    "Cross-origin browser requests are not allowed.",
+                    code="origin_forbidden",
+                    title="Forbidden",
+                )
+                return False
+            session = self._current_browser_session()
+            if session is None:
+                self._send_problem(
+                    HTTPStatus.UNAUTHORIZED,
+                    "A valid PantryOS browser session is required.",
+                    code="browser_session_required",
+                    title="Unauthorized",
+                )
+                return False
+            if is_unsafe_method(self.command) and not self._csrf_matches(session):
+                self._send_problem(
+                    HTTPStatus.FORBIDDEN,
+                    "A valid CSRF token is required.",
+                    code="csrf_required",
+                    title="Forbidden",
+                )
+                return False
+            self._pantryos_browser_session = session
+        return True
+
+    def _authorize_bearer(self) -> bool:
         token = self.api_token
         if not token:
             self._send_problem(
@@ -802,6 +918,99 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             )
             return False
         return True
+
+    def _handle_session_login(self, body: dict[str, Any]) -> None:
+        token = self.api_token
+        if not token:
+            self._send_problem(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "PANTRYOS_API_TOKEN is required before starting a browser session.",
+                code="auth_not_configured",
+                title="Authentication not configured",
+            )
+            return
+        supplied_token = str(body.get("token") or "")
+        if not secrets.compare_digest(supplied_token, token):
+            self._send_problem(
+                HTTPStatus.UNAUTHORIZED,
+                "A valid setup token is required.",
+                code="unauthorized",
+                title="Unauthorized",
+            )
+            return
+        session = self.session_store.create()
+        self._send_session_status(session, headers={"Set-Cookie": self._session_cookie(str(session["id"]))})
+
+    def _handle_session_logout(self) -> None:
+        self.session_store.delete(self._session_id())
+        self._send_json(
+            {"ok": True, "authenticated": False},
+            headers={"Set-Cookie": self._clear_session_cookie()},
+        )
+
+    def _send_session_status(self, session: dict[str, str | float] | None = None, *, headers: dict[str, str] | None = None) -> None:
+        current = session or self._current_browser_session()
+        authenticated = current is not None
+        self._send_json(
+            {
+                "authenticated": authenticated,
+                "csrf_token": str(current["csrf_token"]) if current else "",
+                "expires_in_seconds": max(0, int(float(current["expires_at"]) - time.time())) if current else 0,
+                "cookie": {
+                    "name": BROWSER_SESSION_COOKIE,
+                    "http_only": True,
+                    "same_site": "Lax",
+                    "secure": False,
+                },
+            },
+            headers=headers,
+        )
+
+    def _current_browser_session(self) -> dict[str, str | float] | None:
+        cached = getattr(self, "_pantryos_browser_session", None)
+        if cached is not None:
+            return cached
+        session = self.session_store.get(self._session_id())
+        if session is not None:
+            self._pantryos_browser_session = session
+        return session
+
+    def _session_id(self) -> str | None:
+        return self._cookies().get(BROWSER_SESSION_COOKIE)
+
+    def _cookies(self) -> dict[str, str]:
+        cookies: dict[str, str] = {}
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, separator, value = part.strip().partition("=")
+            if separator and name:
+                cookies[name] = value
+        return cookies
+
+    def _csrf_matches(self, session: dict[str, str | float]) -> bool:
+        supplied = self.headers.get("X-CSRF-Token", "")
+        expected = str(session["csrf_token"])
+        return bool(supplied) and secrets.compare_digest(supplied, expected)
+
+    def _origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        parsed_origin = urlparse(origin)
+        if parsed_origin.scheme not in {"http", "https"} or not parsed_origin.netloc:
+            return False
+        return parsed_origin.netloc.casefold() == self.headers.get("Host", "").casefold()
+
+    def _cors_headers(self) -> dict[str, str]:
+        origin = self.headers.get("Origin")
+        if not origin or not self._origin_allowed():
+            return {}
+        return {"Access-Control-Allow-Origin": origin, "Vary": "Origin"}
+
+    def _session_cookie(self, session_id: str) -> str:
+        return f"{BROWSER_SESSION_COOKIE}={session_id}; Path=/; Max-Age={self.session_store.ttl_seconds}; HttpOnly; SameSite=Lax"
+
+    def _clear_session_cookie(self) -> str:
+        return f"{BROWSER_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
 
     def _request_id(self) -> str:
         request_id = getattr(self, "_pantryos_request_id", None)
@@ -869,6 +1078,14 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _send_empty_response(self, status: HTTPStatus, *, headers: dict[str, str] | None = None) -> None:
+        self.send_response(status.value)
+        self.send_header("Content-Length", "0")
+        self.send_header("X-Request-ID", self._request_id())
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+
     def _serve_static(self, path: str) -> None:
         target = STATIC_DIR / "index.html" if path in ("/", "") else STATIC_DIR / path.lstrip("/")
         try:
@@ -890,6 +1107,14 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
 
 def is_versioned_api(path: str) -> bool:
     return path == "/api/v1" or path.startswith("/api/v1/")
+
+
+def is_browser_api(path: str) -> bool:
+    return (path == "/api" or path.startswith("/api/")) and not is_versioned_api(path) and path not in SESSION_ENDPOINTS
+
+
+def is_unsafe_method(method: str) -> bool:
+    return method.upper() not in {"GET", "HEAD", "OPTIONS"}
 
 
 def rate_limit_bucket(path: str) -> str | None:
@@ -1262,6 +1487,9 @@ def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler.rate_limiter = RateLimiter(
         limit=int(os.environ.get("PANTRYOS_RATE_LIMIT_REQUESTS", str(DEFAULT_RATE_LIMIT_REQUESTS))),
         window_seconds=int(os.environ.get("PANTRYOS_RATE_LIMIT_WINDOW_SECONDS", str(DEFAULT_RATE_LIMIT_WINDOW_SECONDS))),
+    )
+    handler.session_store = BrowserSessionStore(
+        ttl_seconds=int(os.environ.get("PANTRYOS_BROWSER_SESSION_SECONDS", str(DEFAULT_BROWSER_SESSION_SECONDS)))
     )
     handler.core.migrate()
     if LEGACY_JSON_PATH.exists() and handler.core.dashboard()["summary"]["product_count"] == 0:

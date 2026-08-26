@@ -13,12 +13,22 @@
         <h1>PantryOS</h1>
       </div>
       <div class="actions">
-        <button id="seedButton" type="button">Seed Demo</button>
-        <button id="resetButton" type="button">Reset Demo</button>
+        <button id="seedButton" type="button" hidden>Seed Demo</button>
+        <button id="resetButton" type="button" hidden>Reset Demo</button>
+        <button id="logoutButton" class="quiet" type="button" hidden>Sign Out</button>
       </div>
     </header>
 
-    <main class="shell">
+    <section id="loginPanel" class="login-panel">
+      <form id="loginForm" class="login-form">
+        <h2>Sign In</h2>
+        <label>Setup token<input name="token" type="password" required autocomplete="current-password" /></label>
+        <button type="submit">Sign In</button>
+        <p id="loginError" class="form-error" role="alert"></p>
+      </form>
+    </section>
+
+    <main id="appShell" class="shell" hidden>
       <section class="status-grid" aria-label="Kitchen dashboard">
         <article class="panel tonight-panel">
           <div class="panel-heading">

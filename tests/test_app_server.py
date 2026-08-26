@@ -39,7 +39,34 @@ def request_json(
     *,
     token: str | None = None,
     request_id: str | None = None,
+    cookie: str | None = None,
+    csrf_token: str | None = None,
+    origin: str | None = None,
 ) -> dict:
+    data, _headers = request_json_with_headers(
+        url,
+        method=method,
+        payload=payload,
+        token=token,
+        request_id=request_id,
+        cookie=cookie,
+        csrf_token=csrf_token,
+        origin=origin,
+    )
+    return data
+
+
+def request_json_with_headers(
+    url: str,
+    method: str = "GET",
+    payload: dict | None = None,
+    *,
+    token: str | None = None,
+    request_id: str | None = None,
+    cookie: str | None = None,
+    csrf_token: str | None = None,
+    origin: str | None = None,
+) -> tuple[dict, dict[str, str]]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, method=method)
     request.add_header("Content-Type", "application/json")
@@ -47,8 +74,14 @@ def request_json(
         request.add_header("Authorization", f"Bearer {token}")
     if request_id is not None:
         request.add_header("X-Request-ID", request_id)
+    if cookie is not None:
+        request.add_header("Cookie", cookie)
+    if csrf_token is not None:
+        request.add_header("X-CSRF-Token", csrf_token)
+    if origin is not None:
+        request.add_header("Origin", origin)
     with urlopen(request, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return json.loads(response.read().decode("utf-8")), dict(response.headers.items())
 
 
 def request_error(
@@ -58,6 +91,9 @@ def request_error(
     *,
     token: str | None = None,
     request_id: str | None = None,
+    cookie: str | None = None,
+    csrf_token: str | None = None,
+    origin: str | None = None,
 ) -> tuple[int, dict]:
     status, problem, _headers = request_error_with_headers(
         url,
@@ -65,6 +101,9 @@ def request_error(
         payload=payload,
         token=token,
         request_id=request_id,
+        cookie=cookie,
+        csrf_token=csrf_token,
+        origin=origin,
     )
     return status, problem
 
@@ -76,13 +115,47 @@ def request_error_with_headers(
     *,
     token: str | None = None,
     request_id: str | None = None,
+    cookie: str | None = None,
+    csrf_token: str | None = None,
+    origin: str | None = None,
 ) -> tuple[int, dict, dict[str, str]]:
     try:
-        request_json(url, method=method, payload=payload, token=token, request_id=request_id)
+        request_json(
+            url,
+            method=method,
+            payload=payload,
+            token=token,
+            request_id=request_id,
+            cookie=cookie,
+            csrf_token=csrf_token,
+            origin=origin,
+        )
     except HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8")), dict(exc.headers.items())
     raise AssertionError("Expected request to fail")
 
+
+def browser_login(base: str, token: str = "test-token") -> tuple[str, str, str]:
+    session, headers = request_json_with_headers(
+        f"{base}/api/session/login",
+        method="POST",
+        payload={"token": token},
+        origin=base,
+    )
+    set_cookie = headers["Set-Cookie"]
+    return set_cookie.split(";", 1)[0], session["csrf_token"], set_cookie
+
+
+def request_options(url: str, *, origin: str) -> tuple[int, dict[str, str]]:
+    request = Request(url, method="OPTIONS")
+    request.add_header("Origin", origin)
+    try:
+        with urlopen(request, timeout=5) as response:
+            response.read()
+            return response.status, dict(response.headers.items())
+    except HTTPError as exc:
+        exc.read()
+        return exc.code, dict(exc.headers.items())
 
 
 def request_text(
@@ -187,10 +260,13 @@ def test_http_api_serves_state_and_accepts_items() -> None:
         thread.start()
         try:
             base = f"http://127.0.0.1:{httpd.server_port}"
-            request_json(f"{base}/api/seed?reset=true", method="POST")
+            cookie, csrf_token, _set_cookie = browser_login(base)
+            request_json(f"{base}/api/seed?reset=true", method="POST", cookie=cookie, csrf_token=csrf_token)
             created = request_json(
                 f"{base}/api/items",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={
                     "name": "Heavy Cream",
                     "quantity": "1",
@@ -199,7 +275,7 @@ def test_http_api_serves_state_and_accepts_items() -> None:
                     "expires": "2026-08-30",
                 },
             )
-            state = request_json(f"{base}/api/state")
+            state = request_json(f"{base}/api/state", cookie=cookie)
             instance = request_json(f"{base}/api/v1/instance", token="test-token")
         finally:
             httpd.shutdown()
@@ -212,6 +288,79 @@ def test_http_api_serves_state_and_accepts_items() -> None:
     assert instance["schema_version"] == 4
     assert instance["state_revision"] >= 1
 
+
+def test_browser_routes_require_session_csrf_and_same_origin() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            anonymous_session = request_json(f"{base}/api/session")
+            status, unauth = request_error(f"{base}/api/state", request_id="browser-unauth")
+            wrong_status, wrong_login = request_error(
+                f"{base}/api/session/login",
+                method="POST",
+                payload={"token": "wrong-token"},
+                origin=base,
+            )
+            cookie, csrf_token, set_cookie = browser_login(base)
+            session = request_json(f"{base}/api/session", cookie=cookie)
+            csrf_status, csrf_problem = request_error(
+                f"{base}/api/items",
+                method="POST",
+                cookie=cookie,
+                payload={"name": "Missing CSRF", "quantity": "1"},
+            )
+            origin_status, origin_problem = request_error(
+                f"{base}/api/items",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                origin="http://evil.local",
+                payload={"name": "Evil Origin", "quantity": "1"},
+            )
+            bad_preflight_status, bad_preflight_headers = request_options(
+                f"{base}/api/items",
+                origin="http://evil.local",
+            )
+            preflight_status, preflight_headers = request_options(f"{base}/api/items", origin=base)
+            created = request_json(
+                f"{base}/api/items",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                origin=base,
+                payload={"name": "Session Apples", "quantity": "3", "unit": "count"},
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert anonymous_session["authenticated"] is False
+    assert anonymous_session["csrf_token"] == ""
+    assert status == 401
+    assert unauth["code"] == "browser_session_required"
+    assert unauth["request_id"] == "browser-unauth"
+    assert wrong_status == 401
+    assert wrong_login["code"] == "unauthorized"
+    assert set_cookie.startswith("pantryos_session=")
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=Lax" in set_cookie
+    assert session["authenticated"] is True
+    assert session["csrf_token"] == csrf_token
+    assert csrf_status == 403
+    assert csrf_problem["code"] == "csrf_required"
+    assert origin_status == 403
+    assert origin_problem["code"] == "origin_forbidden"
+    assert bad_preflight_status == 403
+    assert bad_preflight_headers.get("Access-Control-Allow-Origin") is None
+    assert preflight_status == 204
+    assert preflight_headers["Access-Control-Allow-Origin"] == base
+    assert preflight_headers["Access-Control-Allow-Credentials"] == "true"
+    assert created["item"]["name"] == "Session Apples"
 
 def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
@@ -329,10 +478,13 @@ def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
         thread.start()
         try:
             base = f"http://127.0.0.1:{httpd.server_port}"
-            unknown = request_json(f"{base}/api/barcodes/000111222333")
+            cookie, csrf_token, _set_cookie = browser_login(base)
+            unknown = request_json(f"{base}/api/barcodes/000111222333", cookie=cookie)
             mapping = request_json(
                 f"{base}/api/barcodes/mappings",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={
                     "barcode": "000111222333",
                     "name": "Browser Barcode Soup",
@@ -343,6 +495,8 @@ def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
             browser_added = request_json(
                 f"{base}/api/barcodes/000111222333/add-lot",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={"location": "Kitchen/Pantry", "estimated_cost": "4.50"},
             )
             versioned_resolved = request_json(f"{base}/api/v1/barcodes/000111222333", token="test-token")
@@ -360,23 +514,33 @@ def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
     assert versioned_resolved["mapping"]["package_unit"] == "can"
 
 def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
-    with TemporaryDirectory() as directory:
+    with TemporaryDirectory() as directory, api_token("test-token"):
         data_path = Path(directory) / "pantryos.sqlite3"
         httpd = server_module.make_server("127.0.0.1", 0, data_path)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
             base = f"http://127.0.0.1:{httpd.server_port}"
-            request_json(f"{base}/api/seed?reset=true", method="POST")
+            cookie, csrf_token, _set_cookie = browser_login(base)
+            request_json(f"{base}/api/seed?reset=true", method="POST", cookie=cookie, csrf_token=csrf_token)
             shopping = request_json(
                 f"{base}/api/shopping",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={"name": "Browser Oats", "quantity": "2", "unit": "count"},
             )
-            checked = request_json(f"{base}/api/shopping/{shopping['item']['id']}/check", method="POST")
+            checked = request_json(
+                f"{base}/api/shopping/{shopping['item']['id']}/check",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+            )
             purchase = request_json(
                 f"{base}/api/shopping/complete-purchase",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={
                     "store": "Browser Market",
                     "location": "Kitchen/Pantry",
@@ -386,31 +550,45 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
             rice = request_json(
                 f"{base}/api/items",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={"name": "Browser Rice", "quantity": "2", "unit": "cup", "location": "Kitchen/Pantry"},
             )
             request_json(
                 f"{base}/api/recipes",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={
                     "name": "Browser Rice Bowl",
                     "ingredients": [{"name": "Browser Rice", "quantity": "1", "unit": "cup"}],
                 },
             )
-            request_json(f"{base}/api/meal-plan", method="POST", payload={"day": "Tonight", "recipe_name": "Browser Rice Bowl"})
+            request_json(
+                f"{base}/api/meal-plan",
+                method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                payload={"day": "Tonight", "recipe_name": "Browser Rice Bowl"},
+            )
             started = request_json(
                 f"{base}/api/cooking/sessions",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={"recipe_name": "Browser Rice Bowl", "planned_servings": "1"},
             )
             completed = request_json(
                 f"{base}/api/cooking/sessions/{started['session']['id']}/complete",
                 method="POST",
+                cookie=cookie,
+                csrf_token=csrf_token,
                 payload={
                     "allocations": [{"lot_id": rice["item"]["id"], "quantity": "1", "unit": "cup"}],
                     "leftovers": [{"name": "Browser Rice Bowl Leftovers", "quantity": "1", "unit": "serving"}],
                 },
             )
-            state = request_json(f"{base}/api/state")
+            state = request_json(f"{base}/api/state", cookie=cookie)
         finally:
             httpd.shutdown()
             thread.join(timeout=5)
@@ -425,7 +603,6 @@ def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     browser_rice = next(item for item in state["items"] if item["name"] == "Browser Rice")
     assert browser_rice["quantity"] == "1"
     assert any(item["name"] == "Browser Rice Bowl Leftovers" for item in state["leftovers"])
-
 
 
 def test_receipt_api_review_commit_and_price_history() -> None:

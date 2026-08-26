@@ -128,6 +128,30 @@ h2 {
   gap: 8px;
 }
 
+.login-panel {
+  display: grid;
+  min-height: calc(100vh - 94px);
+  place-items: start center;
+  padding: 48px clamp(16px, 3vw, 36px);
+}
+
+.login-form {
+  display: grid;
+  width: min(100%, 380px);
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.form-error {
+  min-height: 1.2em;
+  color: var(--red);
+  font-size: 0.86rem;
+}
+
 .shell {
   display: grid;
   gap: 20px;

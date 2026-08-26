@@ -5,7 +5,7 @@ PantryOS is a home food intelligence system with two surfaces:
 - A runnable local kitchen dashboard in `app/` for the v1 vertical slice.
 - A Home Assistant custom integration in `custom_components/pantryos` for sensors, services, and automation.
 
-Home Assistant is intended to be one interface into the food database, not the database itself. PantryOS Core owns the local SQLite database. The Home Assistant integration uses the authenticated Core API, while the browser still uses temporary `/api/*` compatibility routes until the browser session and CSRF work is complete.
+Home Assistant is intended to be one interface into the food database, not the database itself. PantryOS Core owns the local SQLite database. The Home Assistant integration uses the authenticated Core API. The browser dashboard uses same-site session cookies and CSRF-protected `/api/*` compatibility routes backed by the same Core.
 
 ## V1 Vertical Slice
 
@@ -38,7 +38,7 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The dashboard imports legacy JSON on first startup when available and can seed demo data when the SQLite database is empty. You can also use **Seed Demo** or **Reset Demo** from the UI.
+The dashboard imports legacy JSON on first startup when available and can seed demo data when the SQLite database is empty. Sign in with `PANTRYOS_API_TOKEN` to start the local browser session. You can also use **Seed Demo** or **Reset Demo** from the UI after signing in.
 
 
 ## Docker
@@ -132,6 +132,8 @@ data:
 
 The versioned API requires `Authorization: Bearer <PANTRYOS_API_TOKEN>` except for health checks. Errors use a stable problem shape with `type`, `title`, `status`, `code`, `detail`, `errors`, and `request_id`. The current OpenAPI 3.1 document is served at authenticated endpoint `GET /api/v1/openapi.json`.
 
+The browser signs in through `POST /api/session/login` with the same local setup token. Successful login creates an in-memory `pantryos_session` cookie with `HttpOnly`, `SameSite=Lax`, `Path=/`, a default `Max-Age` of `43,200` seconds, and returns a per-session CSRF token. Browser compatibility routes under `/api/*` require that cookie; unsafe methods also require `X-CSRF-Token`. CORS does not use wildcards: preflight and browser-origin checks only echo the current same-origin `Origin`. The browser session TTL can be overridden with `PANTRYOS_BROWSER_SESSION_SECONDS`.
+
 Non-empty JSON request bodies must use `Content-Type: application/json` or a `+json` media type and are limited to `1,000,000` bytes. Receipt uploads currently support reviewed local text ingestion only: `text/plain` `.txt` and `text/csv` `.csv`, up to `64,000` UTF-8 bytes. Receipt filenames must be basenames, not paths; stored receipt payloads live under the data directory's private `receipts/` folder and are not served from `app/static` or returned by API responses. Receipt upload and extraction endpoints have a fixed-window local rate limit of `20` requests per `60` seconds per client by default; override with `PANTRYOS_RATE_LIMIT_REQUESTS` and `PANTRYOS_RATE_LIMIT_WINDOW_SECONDS`.
 
 Current versioned endpoints:
@@ -179,8 +181,11 @@ Current versioned endpoints:
 - `POST /api/v1/cooking/sessions/{id}/cancel`
 - `GET /api/v1/leftovers`
 
-The browser still uses these temporary compatibility routes while its session/auth flow is built:
+The browser uses these session-protected compatibility routes:
 
+- `GET /api/session`
+- `POST /api/session/login`
+- `POST /api/session/logout`
 - `GET /api/state`
 - `POST /api/seed?reset=true`
 - `POST /api/items`
