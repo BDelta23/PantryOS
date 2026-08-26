@@ -105,3 +105,74 @@ def test_openapi_endpoint_is_authenticated_and_serves_contract() -> None:
     assert "/api/v1/locations/{id}" in document["paths"]
     assert document["paths"]["/api/v1/locations/{id}"]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/LocationUpdateRequest"
     assert "/api/v1/openapi.json" in document["paths"]
+
+def success_schema_ref(document: dict, path: str, method: str, status: str = "200") -> str:
+    return document["paths"][path][method]["responses"][status]["content"]["application/json"]["schema"]["$ref"]
+
+
+def test_openapi_success_responses_use_concrete_resource_schemas() -> None:
+    document = openapi_document()
+    schemas = document["components"]["schemas"]
+
+    assert success_schema_ref(document, "/api/v1/dashboard", "get") == "#/components/schemas/DashboardResponse"
+    assert success_schema_ref(document, "/api/v1/inventory/lots", "post", "201") == "#/components/schemas/InventoryLotResponse"
+    assert success_schema_ref(document, "/api/v1/inventory/lots/{id}/consume", "post") == "#/components/schemas/ConsumeResponse"
+    assert success_schema_ref(document, "/api/v1/receipts/{id}/commit", "post", "201") == "#/components/schemas/ReceiptCommitResponse"
+    assert success_schema_ref(document, "/api/v1/products/{id}/prices", "get") == "#/components/schemas/ProductPriceResponse"
+    assert success_schema_ref(document, "/api/v1/shopping/complete-purchase", "post", "201") == "#/components/schemas/PurchaseCompleteResponse"
+    assert success_schema_ref(document, "/api/v1/cooking/sessions/{id}/complete", "post") == "#/components/schemas/CookingCompleteResponse"
+
+    dashboard = schemas["DashboardResponse"]
+    assert dashboard["properties"]["summary"]["$ref"] == "#/components/schemas/DashboardSummary"
+    assert dashboard["properties"]["items"]["items"]["$ref"] == "#/components/schemas/InventoryLot"
+    assert schemas["InventoryLotResponse"]["required"] == ["item", "revision"]
+    assert schemas["InventoryLot"]["properties"]["quantity"]["pattern"] == r"^-?\d+(\.\d+)?$"
+    assert schemas["ReceiptCommitResponse"]["properties"]["duplicate"]["type"] == "boolean"
+    assert schemas["PriceAnalysis"]["required"] == ["baseline_policy"]
+    assert schemas["CookingCompleteResponse"]["properties"]["leftovers"]["items"]["$ref"] == "#/components/schemas/InventoryLot"
+
+    for path, methods in document["paths"].items():
+        for method, operation in methods.items():
+            for response in operation["responses"].values():
+                schema = response.get("content", {}).get("application/json", {}).get("schema")
+                if schema:
+                    assert schema["$ref"] != "#/components/schemas/ObjectEnvelope", f"{method.upper()} {path} still uses ObjectEnvelope"
+
+
+def test_openapi_empty_post_operations_do_not_claim_json_request_body() -> None:
+    document = openapi_document()
+
+    for path in (
+        "/api/v1/receipts/{id}/extract",
+        "/api/v1/receipts/{id}/commit",
+        "/api/v1/recipes/{recipe_name}/shopping",
+        "/api/v1/shopping/rebuild",
+        "/api/v1/shopping/{id}/check",
+        "/api/v1/shopping/{id}/uncheck",
+        "/api/v1/shopping/promote-suggestions",
+        "/api/v1/cooking/sessions/{id}/cancel",
+    ):
+        assert "requestBody" not in document["paths"][path]["post"]
+
+def collect_schema_refs(value) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, dict):
+        ref = value.get("$ref")
+        if isinstance(ref, str):
+            refs.add(ref)
+        for child in value.values():
+            refs.update(collect_schema_refs(child))
+    elif isinstance(value, list):
+        for child in value:
+            refs.update(collect_schema_refs(child))
+    return refs
+
+
+def test_openapi_component_refs_resolve() -> None:
+    document = openapi_document()
+    schemas = document["components"]["schemas"]
+
+    for ref in sorted(collect_schema_refs(document)):
+        if ref.startswith("#/components/schemas/"):
+            schema_name = ref.removeprefix("#/components/schemas/")
+            assert schema_name in schemas, ref
