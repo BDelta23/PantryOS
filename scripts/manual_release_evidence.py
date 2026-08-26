@@ -125,22 +125,33 @@ def write_template(
 
 def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, commit: str | None = None) -> dict[str, Any]:
     problems: list[dict[str, str]] = []
-    if not path.exists():
-        return _result(path, root=root, ok=False, problems=[{"field": "file", "problem": f"missing {display_path(path, root=root)}"}])
+    evidence_path = path if path.is_absolute() else root / path
+    if not evidence_path.exists():
+        return _result(
+            evidence_path,
+            root=root,
+            ok=False,
+            problems=[{"field": "file", "problem": f"missing {display_path(evidence_path, root=root)}"}],
+        )
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(evidence_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        return _result(path, root=root, ok=False, problems=[{"field": "file", "problem": f"invalid JSON: {exc.msg}"}])
+        return _result(evidence_path, root=root, ok=False, problems=[{"field": "file", "problem": f"invalid JSON: {exc.msg}"}])
 
     if not isinstance(data, dict):
-        return _result(path, root=root, ok=False, problems=[{"field": "file", "problem": "root value must be a JSON object"}])
+        return _result(evidence_path, root=root, ok=False, problems=[{"field": "file", "problem": "root value must be a JSON object"}])
 
     try:
         expected_commit = resolve_target_commit(commit, root=root)
     except ManualReleaseEvidenceError as exc:
-        return _result(path, root=root, ok=False, problems=[{"field": "target_commit", "problem": str(exc)}])
+        return _result(evidence_path, root=root, ok=False, problems=[{"field": "target_commit", "problem": str(exc)}])
     require_git_tracking = _is_git_worktree(root)
+    expected_evidence_path = _rooted_path(DEFAULT_EVIDENCE_PATH, root=root)
+    if evidence_path.resolve() != expected_evidence_path.resolve():
+        problems.append({"field": "file", "problem": "must be docs/release/manual-validation.json"})
+    elif require_git_tracking and not _is_git_tracked(evidence_path, root=root):
+        problems.append({"field": "file", "problem": "must be tracked by git"})
     release_commit = data.get("release_commit")
     if data.get("schema_version") != 1:
         problems.append({"field": "schema_version", "problem": "must be 1"})
@@ -182,7 +193,7 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
             )
         )
 
-    return _result(path, root=root, ok=not problems, problems=problems)
+    return _result(evidence_path, root=root, ok=not problems, problems=problems)
 
 
 def _validate_check(

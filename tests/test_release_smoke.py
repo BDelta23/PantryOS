@@ -7,12 +7,73 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _git_available() -> bool:
     return shutil.which("git") is not None
+
+
+def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -> list[dict[str, Any]]:
+    checks = []
+    for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
+        details = {field: f"value-{field}" for field in rule["details"]}
+        if check_id == "physical-barcode-camera":
+            details.update(
+                {
+                    "app_url": "http://127.0.0.1:8765",
+                    "known_barcode": "012345678905",
+                    "known_result": "Resolved known product and created lot lot_known",
+                    "unknown_barcode": "999999999999",
+                    "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                }
+            )
+        elif check_id == "real-receipt-ocr":
+            details.update(
+                {
+                    "receipt_id": "receipt_123",
+                    "purchase_id": "purchase_123",
+                    "committed_lot_count": "2",
+                    "price_history_result": "Price history displayed store, date, package quantity, total, and unit price",
+                }
+            )
+        elif check_id == "published-image-signature":
+            details.update(
+                {
+                    "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                    "digest": "sha256:" + "1" * 64,
+                    "tag": "v1.0.0",
+                    "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                    "signature_identity": "release@example.test",
+                }
+            )
+        elif check_id == "independent-full-review":
+            details.update(
+                {
+                    "review_path": "docs/reviews/independent-review.md",
+                    "reviewed_commit": commit,
+                    "decision": "PASS",
+                    "open_critical_high": "0",
+                    "release_blocking_medium": "0",
+                }
+            )
+        checks.append(
+            {
+                "id": check_id,
+                "result": "PASS",
+                "operator": "release-operator",
+                "timestamp_utc": "2026-08-26T12:00:00Z",
+                "acceptance": list(rule["acceptance"]),
+                "details": details,
+                "evidence": {
+                    "summary": f"{check_id} passed against the release candidate.",
+                    "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                },
+            }
+        )
+    return checks
 
 
 def test_scripted_demo_proves_supported_surface_vertical_slice() -> None:
@@ -422,6 +483,14 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
             encoding="utf-8",
         )
 
+        subprocess.run(
+            ["git", "add", "docs/release/manual-validation.json"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
 
     assert result["ok"] is True
@@ -518,6 +587,75 @@ def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir(
         and problem["problem"] == "must be under docs/release/evidence"
         for problem in result["problems"]
     )
+
+
+def test_manual_release_evidence_rejects_non_release_evidence_path() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "e" * 40
+        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        evidence_path = evidence_dir / "manual-validation.json"
+        evidence_path.write_text(
+            json.dumps(
+                {"schema_version": 1, "release_commit": commit, "checks": _complete_manual_release_checks(manual_release_evidence, commit)}
+            ),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {problem["field"]: problem["problem"] for problem in result["problems"]}["file"] == "must be docs/release/manual-validation.json"
+
+
+def test_manual_release_evidence_rejects_untracked_evidence_file() -> None:
+    from scripts import manual_release_evidence
+
+    if not _git_available():
+        return
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "e" * 40
+        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps(
+                {"schema_version": 1, "release_commit": commit, "checks": _complete_manual_release_checks(manual_release_evidence, commit)}
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", "docs/release/evidence/manual-check.md", "docs/reviews/independent-review.md"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {problem["field"]: problem["problem"] for problem in result["problems"]}["file"] == "must be tracked by git"
 
 
 def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
