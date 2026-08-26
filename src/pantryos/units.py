@@ -103,18 +103,14 @@ def assert_compatible(from_unit: str, to_unit: str) -> None:
     source = UNITS[unit_code(from_unit)]
     target = UNITS[unit_code(to_unit)]
     if source.dimension != target.dimension:
-        raise ValidationError(
-            f"Cannot convert {from_unit} to {to_unit}: incompatible dimensions"
-        )
+        raise ValidationError(f"Cannot convert {from_unit} to {to_unit}: incompatible dimensions")
 
 
 def convert(value: Decimal, from_unit: str, to_unit: str) -> Decimal:
     source = UNITS[unit_code(from_unit)]
     target = UNITS[unit_code(to_unit)]
     if source.dimension != target.dimension:
-        raise ValidationError(
-            f"Cannot convert {from_unit} to {to_unit}: incompatible dimensions"
-        )
+        raise ValidationError(f"Cannot convert {from_unit} to {to_unit}: incompatible dimensions")
     return (value * source.to_base / target.to_base).normalize()
 
 

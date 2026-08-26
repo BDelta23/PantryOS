@@ -88,16 +88,12 @@ def tracked_source_files() -> list[Path]:
 
 
 def source_manifest() -> list[dict[str, str]]:
-    return [
-        {"path": path.relative_to(ROOT).as_posix(), "sha256": file_sha256(path)}
-        for path in tracked_source_files()
-    ]
+    return [{"path": path.relative_to(ROOT).as_posix(), "sha256": file_sha256(path)} for path in tracked_source_files()]
 
 
 def source_tree_digest(files: list[dict[str, str]]) -> str:
     material = "\n".join(f"{item['sha256']}  {item['path']}" for item in files)
     return sha256(material.encode("utf-8")).hexdigest()
-
 
 
 def os_packages(image: str) -> list[dict[str, str]]:
@@ -227,7 +223,11 @@ def check_file(path: Path, expected: dict[str, Any], checks: list[SupplyChainChe
     except FileNotFoundError:
         checks.append(SupplyChainCheck(path.name, False, f"Missing {path.relative_to(ROOT).as_posix()}"))
         return
-    checks.append(SupplyChainCheck(path.name, actual == expected, f"{path.relative_to(ROOT).as_posix()} matches current Docker image and source manifest."))
+    checks.append(
+        SupplyChainCheck(
+            path.name, actual == expected, f"{path.relative_to(ROOT).as_posix()} matches current Docker image and source manifest."
+        )
+    )
 
 
 def policy_checks() -> list[SupplyChainCheck]:
@@ -237,7 +237,11 @@ def policy_checks() -> list[SupplyChainCheck]:
         return [SupplyChainCheck("supply-chain-policy", False, "Missing docs/release/SUPPLY_CHAIN.md")]
     required_terms = ["digest-pinned", "container-image.lock.json", "pantryos-image-sbom.spdx.json", "cosign", "No signing keys"]
     missing = [term for term in required_terms if term not in policy]
-    return [SupplyChainCheck("supply-chain-policy", not missing, "Supply-chain policy covers digest pinning, lock file, SBOM, and signing key handling.")]
+    return [
+        SupplyChainCheck(
+            "supply-chain-policy", not missing, "Supply-chain policy covers digest pinning, lock file, SBOM, and signing key handling."
+        )
+    ]
 
 
 def run_audit(args: argparse.Namespace) -> dict[str, Any]:

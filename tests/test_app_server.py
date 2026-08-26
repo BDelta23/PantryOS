@@ -192,6 +192,7 @@ def request_text(
     with urlopen(request, timeout=5) as response:
         return response.headers.get("Content-Type", ""), response.read().decode("utf-8")
 
+
 def request_raw_error(
     url: str,
     body: bytes,
@@ -413,6 +414,7 @@ def test_browser_session_status_reports_missing_setup_token() -> None:
     assert status == 503
     assert problem["code"] == "auth_not_configured"
 
+
 def test_browser_session_persists_across_server_restart_and_logout_removes_it() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
         data_path = Path(directory) / "pantryos.sqlite3"
@@ -479,6 +481,7 @@ def test_browser_secure_cookie_mode_is_explicit_and_reported() -> None:
     assert "Secure" in set_cookie
     assert session["cookie"]["secure"] is True
 
+
 def test_structured_request_logs_include_request_id_without_sensitive_values() -> None:
     log_stream = io.StringIO()
     handler = logging.StreamHandler(log_stream)
@@ -534,6 +537,7 @@ def test_structured_request_logs_include_request_id_without_sensitive_values() -
     assert session_cookie_value not in serialized_logs
     assert "Private Market" not in serialized_logs
     assert "Private Apples" not in serialized_logs
+
 
 def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
@@ -643,6 +647,7 @@ def test_v1_json_requests_enforce_content_type_and_body_size() -> None:
     assert oversized_problem["code"] == "request_body_too_large"
     assert oversized_problem["request_id"] == "too-large"
 
+
 def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
         data_path = Path(directory) / "pantryos.sqlite3"
@@ -685,6 +690,7 @@ def test_barcode_api_and_browser_routes_map_and_add_lots() -> None:
     assert browser_added["item"]["unit"] == "can"
     assert versioned_resolved["matched"] is True
     assert versioned_resolved["mapping"]["package_unit"] == "can"
+
 
 def test_browser_routes_complete_purchase_and_cooking_workflows() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
@@ -958,7 +964,13 @@ def test_receipt_api_accepts_image_upload_and_extracts_with_local_ocr_boundary()
                     payload={
                         "filename": "image-receipt.png",
                         "mime_type": "image/png",
-                        "content_base64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (120).to_bytes(4, "big") + (80).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00").decode("ascii"),
+                        "content_base64": base64.b64encode(
+                            b"\x89PNG\r\n\x1a\n"
+                            + b"\x00\x00\x00\rIHDR"
+                            + (120).to_bytes(4, "big")
+                            + (80).to_bytes(4, "big")
+                            + b"\x08\x02\x00\x00\x00"
+                        ).decode("ascii"),
                     },
                 )
                 extracted = request_json(
@@ -1122,6 +1134,7 @@ def test_receipt_upload_and_extract_are_rate_limited() -> None:
     assert extract_problem["request_id"] == "extract-limit"
     assert int(extract_headers["Retry-After"]) >= 1
 
+
 def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):
         data_path = Path(directory) / "pantryos.sqlite3"
@@ -1139,7 +1152,9 @@ def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
             )
             events = request_json(f"{base}/api/v1/inventory/events?limit=5", token="test-token")
             event_detail = request_json(f"{base}/api/v1/events/{events['items'][-1]['id']}", token="test-token")
-            content_type, stream = request_text(f"{base}/api/v1/events?timeout=0.1&heartbeat=0.1", token="test-token", accept="text/event-stream")
+            content_type, stream = request_text(
+                f"{base}/api/v1/events?timeout=0.1&heartbeat=0.1", token="test-token", accept="text/event-stream"
+            )
         finally:
             httpd.shutdown()
             thread.join(timeout=5)
@@ -1261,6 +1276,7 @@ def test_location_api_and_browser_routes_update_stable_location_records() -> Non
     assert problem["code"] == "validation_error"
     assert browser_update["location"]["path"] == "Kitchen/Refrigerator/Door Shelf"
 
+
 def test_static_browser_workflows_are_not_stubbed() -> None:
     static_dir = Path(__file__).resolve().parents[1] / "app" / "static"
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
@@ -1278,7 +1294,7 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "setup_token_configured" in app_js
     assert "loginFailureMessage" in app_js
     assert '<main id="loginPanel"' in index_html
-    assert "</form>\n    </main>\n\n    <main id=\"appShell\"" in index_html
+    assert '</form>\n    </main>\n\n    <main id="appShell"' in index_html
     assert '<main id="appShell"' in index_html
     assert 'aria-label="Barcode camera preview"' in index_html
     assert "--amber: #8a4b10" in styles
@@ -1302,7 +1318,7 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "nativeBarcodeScannerAdapter" in app_js
     assert "BarcodeDetector" in app_js
     assert "navigator.mediaDevices.getUserMedia" in app_js
-    assert "facingMode: { ideal: \"environment\" }" in app_js
+    assert 'facingMode: { ideal: "environment" }' in app_js
     assert "track.stop()" in app_js
     assert "Manual barcode entry is available" in app_js
     assert "handleStartCooking" in app_js
@@ -1328,27 +1344,27 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "data-product-save" in app_js
     assert "minimum_stock_quantity" in app_js
     assert "recent_median_compatible_unit" not in app_js
-    assert "navigator.serviceWorker.register(\"/service-worker.js\")" in app_js
+    assert 'navigator.serviceWorker.register("/service-worker.js")' in app_js
     assert "PantryOS Core is offline; the request was not committed." in app_js
-    assert "rel=\"manifest\" href=\"/manifest.webmanifest\"" in index_html
-    assert "name=\"theme-color\"" in index_html
-    assert "id=\"cookingForm\"" in index_html
-    assert "id=\"recipeFormTitle\"" in index_html
-    assert "id=\"recipeSubmitButton\"" in index_html
-    assert "id=\"cancelRecipeEditButton\"" in index_html
-    assert "name=\"instructions\"" in index_html
-    assert "id=\"knownLocations\"" in index_html
-    assert "id=\"purchaseForm\"" in index_html
-    assert "id=\"purchaseHistoryList\"" in index_html
-    assert "id=\"purchaseDetail\"" in index_html
-    assert "id=\"priceAnalysis\"" in index_html
-    assert "id=\"productSettingsList\"" in index_html
-    assert "id=\"locationSettingsList\"" in index_html
-    assert "id=\"barcodeForm\"" in index_html
-    assert "id=\"barcodeScannerPanel\"" in index_html
-    assert "id=\"barcodeVideo\"" in index_html
-    assert "id=\"barcodeCameraButton\"" in index_html
-    assert "id=\"barcodeStopButton\"" in index_html
+    assert 'rel="manifest" href="/manifest.webmanifest"' in index_html
+    assert 'name="theme-color"' in index_html
+    assert 'id="cookingForm"' in index_html
+    assert 'id="recipeFormTitle"' in index_html
+    assert 'id="recipeSubmitButton"' in index_html
+    assert 'id="cancelRecipeEditButton"' in index_html
+    assert 'name="instructions"' in index_html
+    assert 'id="knownLocations"' in index_html
+    assert 'id="purchaseForm"' in index_html
+    assert 'id="purchaseHistoryList"' in index_html
+    assert 'id="purchaseDetail"' in index_html
+    assert 'id="priceAnalysis"' in index_html
+    assert 'id="productSettingsList"' in index_html
+    assert 'id="locationSettingsList"' in index_html
+    assert 'id="barcodeForm"' in index_html
+    assert 'id="barcodeScannerPanel"' in index_html
+    assert 'id="barcodeVideo"' in index_html
+    assert 'id="barcodeCameraButton"' in index_html
+    assert 'id="barcodeStopButton"' in index_html
     assert manifest["display"] == "standalone"
     assert manifest["start_url"] == "/"
     assert manifest["scope"] == "/"

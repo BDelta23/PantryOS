@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ class HAInstalledSmokeFailure(AssertionError):
     """Raised when the installed Home Assistant smoke cannot prove its contract."""
 
 
-CONTAINER_SMOKE = r'''
+CONTAINER_SMOKE = r"""
 from __future__ import annotations
 
 import asyncio
@@ -214,7 +215,7 @@ async def scenario():
 
 
 print(json.dumps(asyncio.run(scenario()), sort_keys=True))
-'''
+"""
 
 
 def run_command(args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:

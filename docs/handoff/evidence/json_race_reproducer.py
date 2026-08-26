@@ -30,6 +30,7 @@ def main() -> None:
 
         def worker(name: str) -> None:
             try:
+
                 def mutate(manager: object) -> None:
                     manager.add_item(  # type: ignore[attr-defined]
                         {

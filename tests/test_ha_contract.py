@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import types
-from contextlib import contextmanager, suppress
-from types import SimpleNamespace
 import json
 import sys
+import types
+from contextlib import contextmanager, suppress
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -315,6 +315,7 @@ def test_home_assistant_coordinator_continuous_listener_signals_change_and_cance
 
     asyncio.run(scenario())
 
+
 @contextmanager
 def fake_homeassistant_modules():
     module_names = [
@@ -423,7 +424,6 @@ def fake_homeassistant_modules():
     cv.positive_int = int
     cv.ensure_list = lambda value: value if isinstance(value, list) else [value]
 
-
     ha.config_entries = config_entries
     ha.helpers = helpers
     helpers.config_validation = cv
@@ -516,6 +516,7 @@ class FakeHass:
         self.tasks.append(task)
         return task
 
+
 class FakeTask:
     def __init__(self, coroutine) -> None:
         self.coroutine = coroutine
@@ -562,10 +563,16 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
             async def async_refresh(self):
                 self.refresh_count += 1
                 self.available = True
-                return {"revision": self.refresh_count, "summary": {"total_items": self.refresh_count, "state_revision": self.refresh_count}}
+                return {
+                    "revision": self.refresh_count,
+                    "summary": {"total_items": self.refresh_count, "state_revision": self.refresh_count},
+                }
 
             async def async_events(self, *, limit=25, after_revision=None):
-                return {"items": [{"id": "evt-1", "event_type": "cooking.started", "revision": self.refresh_count + 1}], "revision": self.refresh_count + 1}
+                return {
+                    "items": [{"id": "evt-1", "event_type": "cooking.started", "revision": self.refresh_count + 1}],
+                    "revision": self.refresh_count + 1,
+                }
 
             async def async_add_item(self, data):
                 self.added_items.append(data)

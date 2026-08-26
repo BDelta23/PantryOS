@@ -233,7 +233,16 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     require(gid == "10001", f"Container process should run as GID 10001, got {status_fields.get('Gid')!r}")
     require(status_fields.get("NoNewPrivs") == "1", "Container process should have no-new-privileges enabled")
     app_write = run_command(
-        ["docker", "exec", "--user", "10001:10001", args.container, "python", "-c", "import pathlib; pathlib.Path('/app/container-smoke-forbidden').write_text('x')"],
+        [
+            "docker",
+            "exec",
+            "--user",
+            "10001:10001",
+            args.container,
+            "python",
+            "-c",
+            "import pathlib; pathlib.Path('/app/container-smoke-forbidden').write_text('x')",
+        ],
         timeout=30,
         check=False,
     )
@@ -295,10 +304,24 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     log("running CLI backup and restore inside the image")
-    doctor = docker_json(args.container, ["python", "scripts/pantryos.py", "--db", "/app/data/pantryos.sqlite3", "doctor"], user="10001:10001")
-    backup = docker_json(args.container, ["python", "scripts/pantryos.py", "--db", "/app/data/pantryos.sqlite3", "backup", "--output", backup_path], user="10001:10001")
-    verify = docker_json(args.container, ["python", "scripts/pantryos.py", "--db", restored_db, "restore", "--input", backup_path, "--verify-only"], user="10001:10001")
-    restore = docker_json(args.container, ["python", "scripts/pantryos.py", "--db", restored_db, "restore", "--input", backup_path, "--verify"], user="10001:10001")
+    doctor = docker_json(
+        args.container, ["python", "scripts/pantryos.py", "--db", "/app/data/pantryos.sqlite3", "doctor"], user="10001:10001"
+    )
+    backup = docker_json(
+        args.container,
+        ["python", "scripts/pantryos.py", "--db", "/app/data/pantryos.sqlite3", "backup", "--output", backup_path],
+        user="10001:10001",
+    )
+    verify = docker_json(
+        args.container,
+        ["python", "scripts/pantryos.py", "--db", restored_db, "restore", "--input", backup_path, "--verify-only"],
+        user="10001:10001",
+    )
+    restore = docker_json(
+        args.container,
+        ["python", "scripts/pantryos.py", "--db", restored_db, "restore", "--input", backup_path, "--verify"],
+        user="10001:10001",
+    )
     restored_doctor = docker_json(args.container, ["python", "scripts/pantryos.py", "--db", restored_db, "doctor"], user="10001:10001")
     require(backup.get("format") == "archive", f"Expected archive backup, got {backup}")
     require(backup.get("receipt_upload_count", 0) >= 1, f"Backup archive did not include receipt uploads: {backup}")
@@ -339,7 +362,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--container", default=os.environ.get("PANTRYOS_CONTAINER") or DEFAULT_CONTAINER)
     parser.add_argument("--ready-timeout", type=int, default=90)
     parser.add_argument("--build-timeout", type=int, default=300)
-    parser.add_argument("--skip-image-verifier", action="store_true", help="Skip docker exec python scripts/check.py after backup/restore checks.")
+    parser.add_argument(
+        "--skip-image-verifier", action="store_true", help="Skip docker exec python scripts/check.py after backup/restore checks."
+    )
     return parser
 
 

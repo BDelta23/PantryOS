@@ -42,6 +42,22 @@ The dashboard imports legacy JSON on first startup when available and can seed d
 
 The browser shell includes PWA install metadata at `/manifest.webmanifest`, an SVG app icon at `/icon.svg`, and a service worker at `/service-worker.js`. The service worker caches only the app shell and static assets. API requests remain network-only; if PantryOS Core is offline, the service worker returns a `503 offline` problem response stating that the request was not committed. Offline writes are never queued or replayed.
 
+## Development Gates
+
+Create a local development environment and run the v1 quality gates with Python 3.12:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e '.[dev]'
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m mypy src custom_components\pantryos
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m coverage run -m pytest -q
+.\.venv\Scripts\python.exe -m coverage report
+```
+
+Coverage is configured to include subprocesses so CLI smoke tests executed from pytest count toward the measured gate. The current release threshold is 80% total coverage.
 ## Docker
 
 Build and run the v1 app with Docker Compose. Set `PANTRYOS_API_TOKEN` in your shell or copy `.env.example` to `.env` and replace the placeholder first:

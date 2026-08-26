@@ -277,21 +277,30 @@ def _path_parameter(name: str, description: str) -> dict[str, Any]:
 
 def _responses(schema_name: str, *, sse: bool = False, created: bool = False) -> dict[str, Any]:
     if sse:
-        success = {"description": "Bounded SSE hello, replay, live revision polling, and heartbeat stream.", "content": {"text/event-stream": {"schema": {"type": "string"}}}}
+        success = {
+            "description": "Bounded SSE hello, replay, live revision polling, and heartbeat stream.",
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        }
     else:
-        success = {"description": "Successful response.", "content": {"application/json": {"schema": {"$ref": f"#/components/schemas/{schema_name}"}}}}
+        success = {
+            "description": "Successful response.",
+            "content": {"application/json": {"schema": {"$ref": f"#/components/schemas/{schema_name}"}}},
+        }
     responses = {"201" if created else "200": success}
     responses.update(_problem_responses())
     return responses
 
 
 def _problem_responses() -> dict[str, Any]:
-    problem = {"description": "Stable PantryOS problem response.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}}
+    problem = {
+        "description": "Stable PantryOS problem response.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}},
+    }
     return {status: deepcopy(problem) for status in ("400", "401", "404", "409", "413", "415", "429", "503")}
 
 
 def _components() -> dict[str, Any]:
-    schemas = {
+    schemas: dict[str, Any] = {
         "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
         "schemas": {
             "Problem": {
@@ -311,24 +320,86 @@ def _components() -> dict[str, Any]:
             "Health": {"type": "object", "required": ["status"], "properties": {"status": {"type": "string"}}},
             "OpenAPI": {"type": "object"},
             "ObjectEnvelope": {"type": "object", "additionalProperties": True},
-            "LotCreate": _object_schema(["name", "quantity"], name="string", quantity="string", unit="string", location="string", expires="string", minimum_stock="string", estimated_cost="string", barcode="string"),
+            "LotCreate": _object_schema(
+                ["name", "quantity"],
+                name="string",
+                quantity="string",
+                unit="string",
+                location="string",
+                expires="string",
+                minimum_stock="string",
+                estimated_cost="string",
+                barcode="string",
+            ),
             "ConsumeRequest": _object_schema(["quantity"], quantity="string", reason="string"),
             "MoveRequest": _object_schema(["location"], location="string"),
             "LotOpenRequest": _object_schema([], opened_at="string"),
             "DiscardRequest": _object_schema(["reason"], reason="string"),
-            "BarcodeMappingRequest": _object_schema(["barcode", "name"], barcode="string", name="string", package_quantity="string", package_unit="string", brand="string", size_text="string"),
-            "ReceiptUploadRequest": _object_schema(["filename", "mime_type"], filename="string", mime_type="string", text="string", content="string", content_base64="string"),
+            "BarcodeMappingRequest": _object_schema(
+                ["barcode", "name"],
+                barcode="string",
+                name="string",
+                package_quantity="string",
+                package_unit="string",
+                brand="string",
+                size_text="string",
+            ),
+            "ReceiptUploadRequest": _object_schema(
+                ["filename", "mime_type"], filename="string", mime_type="string", text="string", content="string", content_base64="string"
+            ),
             "RejectReceiptRequest": _object_schema([], reason="string"),
             "ReceiptReviewRequest": {"type": "object", "additionalProperties": True},
-            "ProductUpdateRequest": _object_schema([], category="string", default_unit="string", minimum_stock_quantity="string", minimum_stock_unit="string", preferred_location="string", default_shelf_life_days="integer", opened_shelf_life_days="integer"),
-            "LocationUpdateRequest": _object_schema([], name="string", parent_id="string", parent_path="string", type="string", temperature_entity_id="string"),
-            "RecipeRequest": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "prep_minutes": {"type": "integer"}, "instructions": {"type": "string"}, "ingredients": {"type": "array", "items": {"type": "object", "additionalProperties": True}}}, "additionalProperties": True},
+            "ProductUpdateRequest": _object_schema(
+                [],
+                category="string",
+                default_unit="string",
+                minimum_stock_quantity="string",
+                minimum_stock_unit="string",
+                preferred_location="string",
+                default_shelf_life_days="integer",
+                opened_shelf_life_days="integer",
+            ),
+            "LocationUpdateRequest": _object_schema(
+                [], name="string", parent_id="string", parent_path="string", type="string", temperature_entity_id="string"
+            ),
+            "RecipeRequest": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "prep_minutes": {"type": "integer"},
+                    "instructions": {"type": "string"},
+                    "ingredients": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                },
+                "additionalProperties": True,
+            },
             "MealPlanRequest": _object_schema(["day", "recipe_name"], day="string", recipe_name="string"),
-            "ShoppingRequest": _object_schema(["name", "quantity"], name="string", quantity="string", unit="string", note="string", store="string", source_key="string"),
+            "ShoppingRequest": _object_schema(
+                ["name", "quantity"], name="string", quantity="string", unit="string", note="string", store="string", source_key="string"
+            ),
             "ShoppingUpdateRequest": _object_schema([], quantity="string", unit="string", note="string", store="string", checked="boolean"),
-            "PurchaseRequest": {"type": "object", "required": ["items"], "properties": {"store": {"type": "string"}, "location": {"type": "string"}, "items": {"type": "array", "items": {"type": "object", "additionalProperties": True}}}, "additionalProperties": True},
-            "CookingStartRequest": _object_schema([], recipe_id="string", recipe_name="string", planned_servings="string", meal_plan_entry_id="string", notes="string"),
-            "CookingCompleteRequest": {"type": "object", "properties": {"allocations": {"type": "array", "items": {"type": "object", "additionalProperties": True}}, "leftovers": {"type": "array", "items": {"type": "object", "additionalProperties": True}}, "actual_servings": {"type": "string"}}, "additionalProperties": True},
+            "PurchaseRequest": {
+                "type": "object",
+                "required": ["items"],
+                "properties": {
+                    "store": {"type": "string"},
+                    "location": {"type": "string"},
+                    "items": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                },
+                "additionalProperties": True,
+            },
+            "CookingStartRequest": _object_schema(
+                [], recipe_id="string", recipe_name="string", planned_servings="string", meal_plan_entry_id="string", notes="string"
+            ),
+            "CookingCompleteRequest": {
+                "type": "object",
+                "properties": {
+                    "allocations": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "leftovers": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "actual_servings": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
         },
     }
     schemas["schemas"].update(_response_schemas())
@@ -361,55 +432,256 @@ def _response_schemas() -> dict[str, Any]:
     date = {"type": "string", "format": "date"}
     date_time = {"type": "string", "format": "date-time"}
     return {
-        "InstanceResponse": _schema(["instance_id", "schema_version", "state_revision", "capabilities"], instance_id=string, schema_version=integer, state_revision=revision, capabilities={"type": "array", "items": string}),
-        "DashboardSummary": _schema(["total_items", "state_revision"], total_items=integer, expiring_soon=integer, shopping_list_count=integer, leftover_count=integer, state_revision=revision, suggested_purchase_count=integer, possible_meals=integer, food_waste_this_month=decimal, location_counts={"type": "object", "additionalProperties": integer}, location_values={"type": "object", "additionalProperties": decimal}),
-        "DashboardResponse": _schema(["revision", "summary"], revision=revision, summary=_object_ref("DashboardSummary"), items=_array_ref("InventoryLot"), leftovers=_array_ref("InventoryLot"), recipes=_array_ref("Recipe"), meal_plan={"type": "object", "additionalProperties": string}, shopping=_array_ref("ShoppingItem"), core=_object_ref("CoreSnapshot")),
-        "CoreSnapshot": _schema([], products=_array_ref("Product"), locations=_array_ref("Location"), events=_array_ref("InventoryEvent"), lots=_array_ref("InventoryLot")),
-        "Product": _schema(["id", "name"], id=string, name=string, category=string, default_unit=string, minimum_stock_quantity=decimal, minimum_stock_unit=string, preferred_location=string, default_shelf_life_days=integer, opened_shelf_life_days=integer),
-        "Location": _schema(["id", "name", "path", "type"], id=string, name=string, path=string, parent_id=string, type=string, temperature_entity_id=string),
-        "InventoryLot": _schema(["id", "product_id", "name", "quantity", "unit", "location", "status"], id=string, product_id=string, name=string, quantity=decimal, unit=string, location=string, location_id=string, purchased=date, expires=date, opened=boolean, opened_at=date_time, status=string, estimated_cost=decimal, barcode=string, version=integer),
-        "InventoryEvent": _schema(["id", "revision"], id=string, type=string, event_type=string, revision=revision, created_at=date_time, product_id=string, lot_id=string, quantity=decimal, unit=string, reason=string, source=string, data={"type": "object", "additionalProperties": True}),
+        "InstanceResponse": _schema(
+            ["instance_id", "schema_version", "state_revision", "capabilities"],
+            instance_id=string,
+            schema_version=integer,
+            state_revision=revision,
+            capabilities={"type": "array", "items": string},
+        ),
+        "DashboardSummary": _schema(
+            ["total_items", "state_revision"],
+            total_items=integer,
+            expiring_soon=integer,
+            shopping_list_count=integer,
+            leftover_count=integer,
+            state_revision=revision,
+            suggested_purchase_count=integer,
+            possible_meals=integer,
+            food_waste_this_month=decimal,
+            location_counts={"type": "object", "additionalProperties": integer},
+            location_values={"type": "object", "additionalProperties": decimal},
+        ),
+        "DashboardResponse": _schema(
+            ["revision", "summary"],
+            revision=revision,
+            summary=_object_ref("DashboardSummary"),
+            items=_array_ref("InventoryLot"),
+            leftovers=_array_ref("InventoryLot"),
+            recipes=_array_ref("Recipe"),
+            meal_plan={"type": "object", "additionalProperties": string},
+            shopping=_array_ref("ShoppingItem"),
+            core=_object_ref("CoreSnapshot"),
+        ),
+        "CoreSnapshot": _schema(
+            [],
+            products=_array_ref("Product"),
+            locations=_array_ref("Location"),
+            events=_array_ref("InventoryEvent"),
+            lots=_array_ref("InventoryLot"),
+        ),
+        "Product": _schema(
+            ["id", "name"],
+            id=string,
+            name=string,
+            category=string,
+            default_unit=string,
+            minimum_stock_quantity=decimal,
+            minimum_stock_unit=string,
+            preferred_location=string,
+            default_shelf_life_days=integer,
+            opened_shelf_life_days=integer,
+        ),
+        "Location": _schema(
+            ["id", "name", "path", "type"], id=string, name=string, path=string, parent_id=string, type=string, temperature_entity_id=string
+        ),
+        "InventoryLot": _schema(
+            ["id", "product_id", "name", "quantity", "unit", "location", "status"],
+            id=string,
+            product_id=string,
+            name=string,
+            quantity=decimal,
+            unit=string,
+            location=string,
+            location_id=string,
+            purchased=date,
+            expires=date,
+            opened=boolean,
+            opened_at=date_time,
+            status=string,
+            estimated_cost=decimal,
+            barcode=string,
+            version=integer,
+        ),
+        "InventoryEvent": _schema(
+            ["id", "revision"],
+            id=string,
+            type=string,
+            event_type=string,
+            revision=revision,
+            created_at=date_time,
+            product_id=string,
+            lot_id=string,
+            quantity=decimal,
+            unit=string,
+            reason=string,
+            source=string,
+            data={"type": "object", "additionalProperties": True},
+        ),
         "EventListResponse": _schema(["items", "revision", "limit"], items=_array_ref("InventoryEvent"), revision=revision, limit=integer),
-        "BarcodeMapping": _schema(["barcode", "product_id", "name"], barcode=string, product_id=string, name=string, package_quantity=decimal, package_unit=string, brand=string, size_text=string),
-        "BarcodeLookupResponse": _schema(["barcode", "matched"], barcode=string, matched=boolean, mapping=_object_ref("BarcodeMapping"), product=_object_ref("Product")),
+        "BarcodeMapping": _schema(
+            ["barcode", "product_id", "name"],
+            barcode=string,
+            product_id=string,
+            name=string,
+            package_quantity=decimal,
+            package_unit=string,
+            brand=string,
+            size_text=string,
+        ),
+        "BarcodeLookupResponse": _schema(
+            ["barcode", "matched"], barcode=string, matched=boolean, mapping=_object_ref("BarcodeMapping"), product=_object_ref("Product")
+        ),
         "LocationListResponse": _schema(["items", "revision"], items=_array_ref("Location"), revision=revision),
         "LocationResponse": _schema(["location", "revision"], location=_object_ref("Location"), revision=revision),
-        "LocationSummaryResponse": _schema(["items", "revision"], items={"type": "array", "items": _schema(["location", "count", "value"], location=string, count=integer, value=decimal)}, revision=revision),
-        "WasteMonthlyResponse": _schema(["food_waste_this_month", "currency", "revision"], food_waste_this_month=decimal, currency=string, revision=revision),
+        "LocationSummaryResponse": _schema(
+            ["items", "revision"],
+            items={"type": "array", "items": _schema(["location", "count", "value"], location=string, count=integer, value=decimal)},
+            revision=revision,
+        ),
+        "WasteMonthlyResponse": _schema(
+            ["food_waste_this_month", "currency", "revision"], food_waste_this_month=decimal, currency=string, revision=revision
+        ),
         "Purchase": _schema(["id", "store", "purchased_at"], id=string, store=string, purchased_at=date_time, total=decimal),
-        "PurchaseLine": _schema(["id", "purchase_id", "display_name", "quantity", "unit"], id=string, purchase_id=string, product_id=string, display_name=string, quantity=decimal, unit=string, total_cost=decimal, comparable_unit=string, unit_price=decimal),
+        "PurchaseLine": _schema(
+            ["id", "purchase_id", "display_name", "quantity", "unit"],
+            id=string,
+            purchase_id=string,
+            product_id=string,
+            display_name=string,
+            quantity=decimal,
+            unit=string,
+            total_cost=decimal,
+            comparable_unit=string,
+            unit_price=decimal,
+        ),
         "PurchaseListResponse": _schema(["items", "revision"], items=_array_ref("Purchase"), revision=revision),
-        "PurchaseDetailResponse": _schema(["purchase", "lines", "prices", "revision"], purchase=_object_ref("Purchase"), lines=_array_ref("PurchaseLine"), prices=_array_ref("PricePoint"), revision=revision),
-        "PricePoint": _schema(["unit_price", "comparable_unit"], unit_price=decimal, comparable_unit=string, purchased_at=date_time, store=string, quantity=decimal, unit=string),
-        "PriceAnalysis": _schema(["baseline_policy"], baseline_policy=string, latest={"type": "object", "additionalProperties": True}, baseline={"type": "object", "additionalProperties": True}, samples={"type": "array", "items": {"type": "object", "additionalProperties": True}}),
-        "ProductPriceResponse": _schema(["product", "prices", "analysis", "revision"], product=_object_ref("Product"), prices=_array_ref("PricePoint"), analysis=_object_ref("PriceAnalysis"), revision=revision),
-        "ShoppingItem": _schema(["id", "name", "quantity", "unit", "checked", "source"], id=string, product_id=string, name=string, quantity=decimal, unit=string, checked=boolean, note=string, store=string, source=string, source_kind=string, source_key=string),
+        "PurchaseDetailResponse": _schema(
+            ["purchase", "lines", "prices", "revision"],
+            purchase=_object_ref("Purchase"),
+            lines=_array_ref("PurchaseLine"),
+            prices=_array_ref("PricePoint"),
+            revision=revision,
+        ),
+        "PricePoint": _schema(
+            ["unit_price", "comparable_unit"],
+            unit_price=decimal,
+            comparable_unit=string,
+            purchased_at=date_time,
+            store=string,
+            quantity=decimal,
+            unit=string,
+        ),
+        "PriceAnalysis": _schema(
+            ["baseline_policy"],
+            baseline_policy=string,
+            latest={"type": "object", "additionalProperties": True},
+            baseline={"type": "object", "additionalProperties": True},
+            samples={"type": "array", "items": {"type": "object", "additionalProperties": True}},
+        ),
+        "ProductPriceResponse": _schema(
+            ["product", "prices", "analysis", "revision"],
+            product=_object_ref("Product"),
+            prices=_array_ref("PricePoint"),
+            analysis=_object_ref("PriceAnalysis"),
+            revision=revision,
+        ),
+        "ShoppingItem": _schema(
+            ["id", "name", "quantity", "unit", "checked", "source"],
+            id=string,
+            product_id=string,
+            name=string,
+            quantity=decimal,
+            unit=string,
+            checked=boolean,
+            note=string,
+            store=string,
+            source=string,
+            source_kind=string,
+            source_key=string,
+        ),
         "ShoppingListResponse": _schema(["items", "revision"], items=_array_ref("ShoppingItem"), revision=revision),
         "ShoppingItemResponse": _schema(["item", "revision"], item=_object_ref("ShoppingItem"), revision=revision),
-        "Receipt": _schema(["id", "filename", "mime_type", "status"], id=string, filename=string, mime_type=string, status=string, created_at=date_time, extracted_at=date_time),
-        "ReceiptLineReview": _schema(["name", "quantity", "unit"], name=string, quantity=decimal, unit=string, total_cost=decimal, barcode=string),
+        "Receipt": _schema(
+            ["id", "filename", "mime_type", "status"],
+            id=string,
+            filename=string,
+            mime_type=string,
+            status=string,
+            created_at=date_time,
+            extracted_at=date_time,
+        ),
+        "ReceiptLineReview": _schema(
+            ["name", "quantity", "unit"], name=string, quantity=decimal, unit=string, total_cost=decimal, barcode=string
+        ),
         "ReceiptReview": _schema(["items"], store=string, purchased_at=date_time, location=string, items=_array_ref("ReceiptLineReview")),
         "ReceiptUploadResponse": _schema(["receipt", "revision"], receipt=_object_ref("Receipt"), revision=revision),
-        "ReceiptReviewResponse": _schema(["receipt", "review", "revision"], receipt=_object_ref("Receipt"), review=_object_ref("ReceiptReview"), revision=revision),
-        "ReceiptCommitResponse": _schema(["receipt", "purchase", "lines", "lots", "duplicate", "revision"], receipt=_object_ref("Receipt"), purchase=_object_ref("Purchase"), lines=_array_ref("PurchaseLine"), lots=_array_ref("InventoryLot"), prices=_array_ref("PricePoint"), duplicate=boolean, revision=revision),
+        "ReceiptReviewResponse": _schema(
+            ["receipt", "review", "revision"], receipt=_object_ref("Receipt"), review=_object_ref("ReceiptReview"), revision=revision
+        ),
+        "ReceiptCommitResponse": _schema(
+            ["receipt", "purchase", "lines", "lots", "duplicate", "revision"],
+            receipt=_object_ref("Receipt"),
+            purchase=_object_ref("Purchase"),
+            lines=_array_ref("PurchaseLine"),
+            lots=_array_ref("InventoryLot"),
+            prices=_array_ref("PricePoint"),
+            duplicate=boolean,
+            revision=revision,
+        ),
         "RecipeIngredient": _schema(["name", "quantity", "unit"], name=string, product_id=string, quantity=decimal, unit=string),
-        "Recipe": _schema(["id", "name", "ingredients"], id=string, name=string, prep_minutes=integer, instructions=string, active=boolean, ingredients=_array_ref("RecipeIngredient")),
+        "Recipe": _schema(
+            ["id", "name", "ingredients"],
+            id=string,
+            name=string,
+            prep_minutes=integer,
+            instructions=string,
+            active=boolean,
+            ingredients=_array_ref("RecipeIngredient"),
+        ),
         "RecipeResponse": _schema(["recipe", "revision"], recipe=_object_ref("Recipe"), revision=revision),
         "MealPlanResponse": _schema(["ok", "revision"], ok=boolean, revision=revision),
         "InventoryLotResponse": _schema(["item", "revision"], item=_object_ref("InventoryLot"), revision=revision),
         "ConsumeAllocation": _schema(["lot_id", "quantity", "unit"], lot_id=string, quantity=decimal, unit=string),
         "ConsumeResponse": _schema(["allocations", "revision"], allocations=_array_ref("ConsumeAllocation"), revision=revision),
         "LotOpenResponse": _schema(["item", "opened", "revision"], item=_object_ref("InventoryLot"), opened=boolean, revision=revision),
-        "DiscardResponse": _schema(["item", "discarded_value", "revision"], item=_object_ref("InventoryLot"), discarded_value=decimal, revision=revision),
+        "DiscardResponse": _schema(
+            ["item", "discarded_value", "revision"], item=_object_ref("InventoryLot"), discarded_value=decimal, revision=revision
+        ),
         "BarcodeMappingResponse": _schema(["mapping", "revision"], mapping=_object_ref("BarcodeMapping"), revision=revision),
-        "PurchaseCompleteResponse": _schema(["purchase", "lines", "lots", "revision"], purchase=_object_ref("Purchase"), lines=_array_ref("PurchaseLine"), lots=_array_ref("InventoryLot"), revision=revision),
-        "CookingSession": _schema(["id", "status"], id=string, recipe_id=string, recipe_name=string, status=string, planned_servings=decimal, actual_servings=decimal, started_at=date_time, completed_at=date_time, notes=string),
+        "PurchaseCompleteResponse": _schema(
+            ["purchase", "lines", "lots", "revision"],
+            purchase=_object_ref("Purchase"),
+            lines=_array_ref("PurchaseLine"),
+            lots=_array_ref("InventoryLot"),
+            revision=revision,
+        ),
+        "CookingSession": _schema(
+            ["id", "status"],
+            id=string,
+            recipe_id=string,
+            recipe_name=string,
+            status=string,
+            planned_servings=decimal,
+            actual_servings=decimal,
+            started_at=date_time,
+            completed_at=date_time,
+            notes=string,
+        ),
         "CookingSessionResponse": _schema(["session", "revision"], session=_object_ref("CookingSession"), revision=revision),
-        "CookingCompleteResponse": _schema(["session", "allocations", "leftovers", "revision"], session=_object_ref("CookingSession"), allocations=_array_ref("ConsumeAllocation"), leftovers=_array_ref("InventoryLot"), revision=revision),
+        "CookingCompleteResponse": _schema(
+            ["session", "allocations", "leftovers", "revision"],
+            session=_object_ref("CookingSession"),
+            allocations=_array_ref("ConsumeAllocation"),
+            leftovers=_array_ref("InventoryLot"),
+            revision=revision,
+        ),
         "LeftoversResponse": _schema(["items", "revision"], items=_array_ref("InventoryLot"), revision=revision),
         "ProductResponse": _schema(["product", "revision"], product=_object_ref("Product"), revision=revision),
         "DeleteResponse": _schema(["ok", "revision"], ok=boolean, revision=revision),
-        "BarcodeAddLotRequest": _object_schema([], quantity="string", location="string", expires="string", purchased="string", estimated_cost="string"),
+        "BarcodeAddLotRequest": _object_schema(
+            [], quantity="string", location="string", expires="string", purchased="string", estimated_cost="string"
+        ),
         "EmptyRequest": _schema([]),
     }
 

@@ -28,7 +28,7 @@ class HACoreLiveSmokeFailure(AssertionError):
     """Raised when the live Home Assistant Core smoke cannot prove its contract."""
 
 
-CONTAINER_SMOKE = r'''
+CONTAINER_SMOKE = r"""
 from __future__ import annotations
 
 import asyncio
@@ -193,7 +193,7 @@ async def main():
 
 
 asyncio.run(main())
-'''
+"""
 
 
 def redact(text: str, secrets: list[str]) -> str:

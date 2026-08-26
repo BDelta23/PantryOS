@@ -15,21 +15,23 @@ import sys
 import threading
 from contextlib import contextmanager
 from datetime import date, timedelta
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-from importlib.util import module_from_spec, spec_from_file_location
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-for candidate in (SRC, ROOT):
-    if str(candidate) not in sys.path:
-        sys.path.insert(0, str(candidate))
+for candidate in (ROOT / "scripts", ROOT, SRC):
+    candidate_text = str(candidate)
+    while candidate_text in sys.path:
+        sys.path.remove(candidate_text)
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(SRC))
 
 from app import server as server_module  # noqa: E402
-
 
 _API_CLIENT_SPEC = spec_from_file_location("pantryos_smoke_api_client", ROOT / "custom_components" / "pantryos" / "api_client.py")
 if _API_CLIENT_SPEC is None or _API_CLIENT_SPEC.loader is None:
@@ -204,7 +206,10 @@ async def run_demo(base_url: str) -> dict[str, Any]:
         }
     )
     require(purchase["purchase"]["store"] == "Smoke Market", "Purchase completion did not record store")
-    require(any((lot.get("product_name") or lot.get("name")) == "Smoke Sauce" for lot in purchase["lots"]), "Purchase did not create Smoke Sauce lot")
+    require(
+        any((lot.get("product_name") or lot.get("name")) == "Smoke Sauce" for lot in purchase["lots"]),
+        "Purchase did not create Smoke Sauce lot",
+    )
 
     started = await ha_client.async_start_cooking_session({"recipe_name": "Smoke Rice Bowl", "planned_servings": "1"})
     session_id = started["session"]["id"]

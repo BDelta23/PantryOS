@@ -5,8 +5,8 @@ import json
 import shutil
 import sqlite3
 import tempfile
-from contextlib import closing
 import threading
+from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -64,9 +64,7 @@ def test_legacy_import_is_backed_up_and_idempotent() -> None:
                             ],
                         }
                     ],
-                    "shopping_list": [
-                        {"name": "Milk", "quantity": "1", "unit": "gallon", "source": "manual"}
-                    ],
+                    "shopping_list": [{"name": "Milk", "quantity": "1", "unit": "gallon", "source": "manual"}],
                     "meal_plan": {"Tonight": "Omelette"},
                 }
             ),
@@ -90,7 +88,6 @@ def test_legacy_import_is_backed_up_and_idempotent() -> None:
         assert snapshot_after_second["summary"] == snapshot_after_first["summary"]
 
 
-
 def test_location_rename_and_move_preserve_lot_references_and_reject_invalid_hierarchy() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
@@ -102,13 +99,13 @@ def test_location_rename_and_move_preserve_lot_references_and_reject_invalid_hie
                 "location": "Kitchen/Refrigerator/Door",
             }
         )
-        core.add_inventory_lot(
-            {"name": "Location Rice", "quantity": "1", "unit": "bag", "location": "Kitchen/Pantry"}
-        )
+        core.add_inventory_lot({"name": "Location Rice", "quantity": "1", "unit": "bag", "location": "Kitchen/Pantry"})
         lot_id = created["lot"]["id"]
         original_location_id = created["lot"]["location_id"]
         with closing(core.connect()) as connection:
-            original_lot_row = dict(connection.execute("SELECT location_id, version FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone())
+            original_lot_row = dict(
+                connection.execute("SELECT location_id, version FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone()
+            )
 
         locations = {row["path"]: row for row in core.list_locations()["items"]}
         renamed = core.update_location(original_location_id, {"name": "Top Shelf", "type": "shelf"})
@@ -149,6 +146,7 @@ def test_location_rename_and_move_preserve_lot_references_and_reject_invalid_hie
             assert "Location type" in str(exc)
         else:
             raise AssertionError("invalid location type should fail")
+
 
 def test_twenty_concurrent_mutations_do_not_lose_successful_writes() -> None:
     with tempfile.TemporaryDirectory() as directory:
@@ -237,6 +235,8 @@ def test_failed_pending_migration_restores_prior_database_and_leaves_backup() ->
         assert lot_count == 1
         assert core.dashboard()["summary"] == before_summary
         core.integrity_check()
+
+
 def test_consume_product_uses_fefo_and_rejects_over_consumption() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
@@ -346,9 +346,7 @@ def test_shopping_lifecycle_and_purchase_completion_are_transactional() -> None:
                 source_id=None,
                 accepted=True,
             )
-            shopping_id = connection.execute(
-                "SELECT id FROM shopping_demands WHERE source_key = 'manual:coffee'"
-            ).fetchone()[0]
+            shopping_id = connection.execute("SELECT id FROM shopping_demands WHERE source_key = 'manual:coffee'").fetchone()[0]
 
         updated = core.update_shopping_item(shopping_id, {"quantity": "2", "note": "whole bean", "store": "Market"})
         checked = core.set_shopping_checked(shopping_id, True)
@@ -443,6 +441,8 @@ def test_shopping_items_can_be_removed_or_suppressed_without_deleting_history() 
         assert rows["Rice"]["status"] == "removed"
         assert rows["Beans"]["status"] == "suppressed"
         assert rows["Beans"]["accepted"] == 0
+
+
 def test_barcode_mapping_resolves_adds_lot_and_persists() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
@@ -494,7 +494,9 @@ Total: 8.49
         assert uploaded["receipt"]["original_filename"] == "receipt.txt"
         assert "storage_path" not in uploaded["receipt"]
         with closing(core.connect()) as connection:
-            storage_path = Path(connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (uploaded["receipt"]["id"],)).fetchone()[0])
+            storage_path = Path(
+                connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (uploaded["receipt"]["id"],)).fetchone()[0]
+            )
         assert storage_path.exists()
         assert storage_path.parent == Path(directory) / "receipts"
         assert core.dashboard()["summary"]["active_lot_count"] == 0
@@ -548,12 +550,7 @@ def test_price_history_uses_recent_median_compatible_unit_anomaly() -> None:
                 {
                     "filename": f"price-{purchased_at}.txt",
                     "mime_type": "text/plain",
-                    "text": (
-                        "Store: Price Market\n"
-                        f"Date: {purchased_at}\n"
-                        f"Anomaly Apples,10,count,{total_cost}\n"
-                        f"Total: {total_cost}\n"
-                    ),
+                    "text": (f"Store: Price Market\nDate: {purchased_at}\nAnomaly Apples,10,count,{total_cost}\nTotal: {total_cost}\n"),
                 }
             )
             core.extract_receipt(uploaded["receipt"]["id"])
@@ -635,14 +632,18 @@ def test_receipt_image_upload_validates_base64_magic_size_and_ocr_availability()
             raise AssertionError("invalid image base64 should fail")
 
         try:
-            core.upload_receipt({"filename": "receipt.png", "mime_type": "image/png", "content_base64": base64.b64encode(b"not a png").decode("ascii")})
+            core.upload_receipt(
+                {"filename": "receipt.png", "mime_type": "image/png", "content_base64": base64.b64encode(b"not a png").decode("ascii")}
+            )
         except ValidationError as exc:
             assert "does not match MIME type" in str(exc)
         else:
             raise AssertionError("image magic mismatch should fail")
 
         try:
-            core.upload_receipt({"filename": "huge.png", "mime_type": "image/png", "content_base64": base64.b64encode(b"x" * 750001).decode("ascii")})
+            core.upload_receipt(
+                {"filename": "huge.png", "mime_type": "image/png", "content_base64": base64.b64encode(b"x" * 750001).decode("ascii")}
+            )
         except ValidationError as exc:
             assert "image upload exceeds 750000 bytes" in str(exc)
         else:
@@ -702,7 +703,9 @@ def test_receipt_retention_purges_old_uncommitted_payloads_and_keeps_committed()
             connection.execute("UPDATE receipt_uploads SET updated_at = ? WHERE id IN (?, ?)", (old_timestamp, rejected_id, committed_id))
             rows = {
                 row[0]: Path(row[1])
-                for row in connection.execute("SELECT id, storage_path FROM receipt_uploads WHERE id IN (?, ?)", (rejected_id, committed_id))
+                for row in connection.execute(
+                    "SELECT id, storage_path FROM receipt_uploads WHERE id IN (?, ?)", (rejected_id, committed_id)
+                )
             }
             connection.commit()
         rejected_path = rows[rejected_id]
@@ -744,7 +747,9 @@ def test_receipt_retention_purges_old_uncommitted_payloads_and_keeps_committed()
         assert reuploaded["receipt"]["id"] == rejected_id
         assert reuploaded["receipt"]["status"] == "uploaded"
         with closing(core.connect()) as connection:
-            reuploaded_path = Path(connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (rejected_id,)).fetchone()[0])
+            reuploaded_path = Path(
+                connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (rejected_id,)).fetchone()[0]
+            )
         assert reuploaded_path.exists()
 
 
@@ -782,6 +787,7 @@ def test_receipt_retention_refuses_to_delete_paths_outside_data_directory() -> N
         with closing(core.connect()) as connection:
             status = connection.execute("SELECT status FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()[0]
         assert status == "rejected"
+
 
 def test_discard_records_monthly_waste_and_location_values() -> None:
     with tempfile.TemporaryDirectory() as directory:
@@ -837,12 +843,11 @@ def test_discard_records_monthly_waste_and_location_values() -> None:
             }
         ]
 
+
 def test_cooking_session_start_complete_leftover_and_rollback() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
-        lot = core.add_inventory_lot(
-            {"name": "Soup Base", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"}
-        )["lot"]
+        lot = core.add_inventory_lot({"name": "Soup Base", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"})["lot"]
         with core.transaction() as connection:
             core._upsert_recipe(connection, {"name": "Soup Night", "ingredients": []})
 
@@ -880,9 +885,7 @@ def test_cooking_session_start_complete_leftover_and_rollback() -> None:
         assert any(event["event_type"] == "cooking.completed" for event in after_complete["events"])
         assert any(event["event_type"] == "LEFTOVER_CREATE" for event in after_complete["events"])
 
-        second_lot = core.add_inventory_lot(
-            {"name": "Sauce", "quantity": "1", "unit": "cup", "location": "Kitchen/Refrigerator"}
-        )["lot"]
+        second_lot = core.add_inventory_lot({"name": "Sauce", "quantity": "1", "unit": "cup", "location": "Kitchen/Refrigerator"})["lot"]
         failed_session = core.start_cooking_session({"recipe_name": "Soup Night"})["session"]
         before_failed = core.dashboard()
         try:
@@ -910,9 +913,7 @@ def test_cooking_session_start_complete_leftover_and_rollback() -> None:
 def test_cooking_session_cancel_does_not_consume_inventory() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
-        lot = core.add_inventory_lot(
-            {"name": "Rice", "quantity": "3", "unit": "cup", "location": "Kitchen/Pantry"}
-        )["lot"]
+        lot = core.add_inventory_lot({"name": "Rice", "quantity": "3", "unit": "cup", "location": "Kitchen/Pantry"})["lot"]
         with core.transaction() as connection:
             core._upsert_recipe(connection, {"name": "Rice Bowls", "ingredients": []})
         session = core.start_cooking_session({"recipe_name": "Rice Bowls"})["session"]
@@ -923,6 +924,7 @@ def test_cooking_session_cancel_does_not_consume_inventory() -> None:
         assert cancelled["session"]["status"] == "cancelled"
         assert rice_lot["quantity"] == "3"
         assert any(event["event_type"] == "cooking.cancelled" for event in snapshot["events"])
+
 
 def test_open_lot_is_idempotent_and_applies_opened_shelf_life_without_extending_expiration() -> None:
     with tempfile.TemporaryDirectory() as directory:
@@ -957,9 +959,7 @@ def test_open_lot_is_idempotent_and_applies_opened_shelf_life_without_extending_
 def test_opened_lot_creation_uses_opened_shelf_life_policy() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
-        product_lot = core.add_inventory_lot(
-            {"name": "Salsa", "quantity": "1", "unit": "count", "location": "Kitchen/Pantry"}
-        )["lot"]
+        product_lot = core.add_inventory_lot({"name": "Salsa", "quantity": "1", "unit": "count", "location": "Kitchen/Pantry"})["lot"]
         core.update_product(product_lot["product_id"], {"opened_shelf_life_days": 5})
 
         opened_lot = core.add_inventory_lot(

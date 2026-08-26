@@ -36,7 +36,7 @@ CORPUS_CASES: tuple[dict[str, Any], ...] = (
     },
 )
 
-CONTAINER_RUNNER = r'''
+CONTAINER_RUNNER = r"""
 from __future__ import annotations
 
 import json
@@ -116,7 +116,7 @@ def main() -> None:
 
 
 main()
-'''
+"""
 
 
 class ReceiptOcrCorpusSmokeFailure(AssertionError):

@@ -89,7 +89,9 @@ def test_pantryos_cli_doctor_backup_restore_and_legacy_dry_run() -> None:
         restore = run_cli("--db", str(restored_db), "restore", "--input", str(backup_path), "--verify")
         restored_doctor = run_cli("--db", str(restored_db), "doctor")
         dry_run = run_cli("--db", str(Path(directory) / "dry-run.sqlite3"), "import-legacy", "--path", str(legacy_path), "--dry-run")
-        imported = run_cli("--db", str(Path(directory) / "legacy.sqlite3"), "import-legacy", "--path", str(legacy_path), "--backup-dir", str(backup_dir))
+        imported = run_cli(
+            "--db", str(Path(directory) / "legacy.sqlite3"), "import-legacy", "--path", str(legacy_path), "--backup-dir", str(backup_dir)
+        )
 
         manifest = json.loads(Path(backup["manifest"]).read_text(encoding="utf-8"))
         assert doctor["ok"] is True

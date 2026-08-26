@@ -19,7 +19,7 @@ def test_dockerfile_drops_runtime_to_pantryos_user_and_limits_writable_volume() 
     assert "os.setgid(user.pw_gid)" in entrypoint
     assert "def chown_tree" in entrypoint
     assert "os.walk(path)" in entrypoint
-    assert "Path(\"/app/data\")" in entrypoint
+    assert 'Path("/app/data")' in entrypoint
     assert "pantryos-data:/app/data" in compose
     assert "read_only: true" in compose
     assert "/tmp:mode=1777,size=64m" in compose

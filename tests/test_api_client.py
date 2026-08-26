@@ -59,9 +59,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
 
         instance = await client.async_instance()
         initial = await client.async_refresh()
-        created = await client.async_add_item(
-            {"name": "HA Butter", "quantity": "1", "unit": "lb", "location": "Kitchen/Refrigerator"}
-        )
+        created = await client.async_add_item({"name": "HA Butter", "quantity": "1", "unit": "lb", "location": "Kitchen/Refrigerator"})
         opened = await client.async_open_item(created["item"]["id"], opened_at="2026-08-26")
         consumed = await client.async_consume_item(created["item"]["id"], "0.25", reason="client test")
         shopping = await client.async_add_shopping_item({"name": "Oats", "quantity": "1", "unit": "count"})
@@ -103,12 +101,12 @@ def test_api_client_maps_auth_failures() -> None:
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+
+
 def test_api_client_rebuilds_meal_plan_shopping_idempotently() -> None:
     async def scenario(base_url: str) -> None:
         client = PantryAPIClient(base_url, "test-token")
-        await client.async_add_item(
-            {"name": "Plan Flour", "quantity": "8", "unit": "oz", "location": "Kitchen/Pantry"}
-        )
+        await client.async_add_item({"name": "Plan Flour", "quantity": "8", "unit": "oz", "location": "Kitchen/Pantry"})
         await client.async_add_recipe(
             {
                 "name": "Plan Biscuits",
@@ -133,6 +131,8 @@ def test_api_client_rebuilds_meal_plan_shopping_idempotently() -> None:
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+
+
 def test_api_client_manages_shopping_lifecycle_and_purchase_completion() -> None:
     async def scenario(base_url: str) -> None:
         client = PantryAPIClient(base_url, "test-token")
@@ -168,6 +168,8 @@ def test_api_client_manages_shopping_lifecycle_and_purchase_completion() -> None
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+
+
 def test_api_client_reports_waste_and_location_values() -> None:
     async def scenario(base_url: str) -> None:
         client = PantryAPIClient(base_url, "test-token")
@@ -185,8 +187,12 @@ def test_api_client_reports_waste_and_location_values() -> None:
         discarded = await client.async_discard_item(created["item"]["id"], reason="spoiled")
         after_discard = await client.async_refresh()
 
-        assert Decimal(with_value["summary"]["location_values"]["Kitchen"]) == Decimal(before["summary"]["location_values"]["Kitchen"]) + Decimal("6.00")
-        assert Decimal(with_value["summary"]["location_values"]["Pantry"]) == Decimal(before["summary"]["location_values"]["Pantry"]) + Decimal("6.00")
+        assert Decimal(with_value["summary"]["location_values"]["Kitchen"]) == Decimal(
+            before["summary"]["location_values"]["Kitchen"]
+        ) + Decimal("6.00")
+        assert Decimal(with_value["summary"]["location_values"]["Pantry"]) == Decimal(
+            before["summary"]["location_values"]["Pantry"]
+        ) + Decimal("6.00")
         assert discarded["discarded_value"] == "6.00"
         assert after_discard["summary"]["food_waste_this_month"] == "6.00"
         assert Decimal(after_discard["summary"]["location_values"]["Pantry"]) == Decimal(before["summary"]["location_values"]["Pantry"])
@@ -194,12 +200,11 @@ def test_api_client_reports_waste_and_location_values() -> None:
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
 
+
 def test_api_client_completes_cooking_session_with_leftover() -> None:
     async def scenario(base_url: str) -> None:
         client = PantryAPIClient(base_url, "test-token")
-        lot = await client.async_add_item(
-            {"name": "Client Sauce", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"}
-        )
+        lot = await client.async_add_item({"name": "Client Sauce", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"})
         await client.async_add_recipe({"name": "Client Pasta", "ingredients": []})
         started = await client.async_start_cooking_session({"recipe_name": "Client Pasta", "planned_servings": "2"})
         snapshot_after_start = await client.async_refresh()
@@ -208,9 +213,7 @@ def test_api_client_completes_cooking_session_with_leftover() -> None:
             started["session"]["id"],
             {
                 "allocations": [{"lot_id": lot["item"]["id"], "quantity": "1", "unit": "cup"}],
-                "leftovers": [
-                    {"name": "Client Pasta Leftovers", "quantity": "1", "unit": "serving", "location": "Kitchen/Refrigerator"}
-                ],
+                "leftovers": [{"name": "Client Pasta Leftovers", "quantity": "1", "unit": "serving", "location": "Kitchen/Refrigerator"}],
             },
         )
         snapshot_after_complete = await client.async_refresh()
@@ -225,6 +228,7 @@ def test_api_client_completes_cooking_session_with_leftover() -> None:
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))
+
 
 def test_api_client_receipt_purchase_price_and_leftover_routes() -> None:
     async def scenario(base_url: str) -> None:

@@ -90,17 +90,26 @@ def _register_services(hass: HomeAssistant) -> None:
         )
 
     async def delete_item(call: ServiceCall) -> None:
-        await _run(call, lambda pantry, call: pantry.async_discard_item(str(call.data["item_id"]), reason="Home Assistant delete_item service"))
+        await _run(
+            call, lambda pantry, call: pantry.async_discard_item(str(call.data["item_id"]), reason="Home Assistant delete_item service")
+        )
 
     async def discard_item(call: ServiceCall) -> None:
-        await _run(call, lambda pantry, call: pantry.async_discard_item(str(call.data["item_id"]), reason=str(call.data.get("reason") or "Home Assistant discard_item service")))
+        await _run(
+            call,
+            lambda pantry, call: pantry.async_discard_item(
+                str(call.data["item_id"]), reason=str(call.data.get("reason") or "Home Assistant discard_item service")
+            ),
+        )
 
     async def move_item(call: ServiceCall) -> None:
         await _run(call, lambda pantry, call: pantry.async_move_item(str(call.data["item_id"]), str(call.data["location"])))
 
     async def open_item(call: ServiceCall) -> None:
         opened_at = call.data.get("opened_at")
-        await _run(call, lambda pantry, call: pantry.async_open_item(str(call.data["item_id"]), opened_at=str(opened_at) if opened_at else None))
+        await _run(
+            call, lambda pantry, call: pantry.async_open_item(str(call.data["item_id"]), opened_at=str(opened_at) if opened_at else None)
+        )
 
     async def add_recipe(call: ServiceCall) -> None:
         await _run(call, lambda pantry, call: pantry.async_add_recipe(dict(call.data)))
@@ -148,7 +157,10 @@ def _register_services(hass: HomeAssistant) -> None:
         )
 
     async def cancel_cooking(call: ServiceCall) -> None:
-        await _run(call, lambda pantry, call: pantry.async_cancel_cooking_session(str(call.data["session_id"]), {"reason": call.data.get("reason")}))
+        await _run(
+            call,
+            lambda pantry, call: pantry.async_cancel_cooking_session(str(call.data["session_id"]), {"reason": call.data.get("reason")}),
+        )
 
     registrations = {
         "add_item": (add_item, ADD_ITEM_SCHEMA),

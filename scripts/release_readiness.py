@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     if args.write:
-        content = write_readiness()
+        write_readiness()
         if not args.json:
             print(f"wrote {READINESS_PATH}")
     if args.check:

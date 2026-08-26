@@ -77,17 +77,9 @@ class InventoryItem:
             purchased=parse_date(data.get("purchased")),
             expires=parse_date(data.get("expires")),
             opened=bool(data.get("opened", False)),
-            minimum_stock=(
-                decimal_or_zero(data["minimum_stock"])
-                if data.get("minimum_stock") is not None
-                else None
-            ),
+            minimum_stock=(decimal_or_zero(data["minimum_stock"]) if data.get("minimum_stock") is not None else None),
             barcode=str(data["barcode"]).strip() if data.get("barcode") else None,
-            estimated_cost=(
-                decimal_or_zero(data["estimated_cost"])
-                if data.get("estimated_cost") is not None
-                else None
-            ),
+            estimated_cost=(decimal_or_zero(data["estimated_cost"]) if data.get("estimated_cost") is not None else None),
             tags=[str(tag).strip() for tag in data.get("tags", []) if str(tag).strip()],
             notes=str(data["notes"]).strip() if data.get("notes") else None,
         )
@@ -97,12 +89,8 @@ class InventoryItem:
         data["quantity"] = decimal_to_json(self.quantity)
         data["purchased"] = self.purchased.isoformat() if self.purchased else None
         data["expires"] = self.expires.isoformat() if self.expires else None
-        data["minimum_stock"] = (
-            decimal_to_json(self.minimum_stock) if self.minimum_stock is not None else None
-        )
-        data["estimated_cost"] = (
-            decimal_to_json(self.estimated_cost) if self.estimated_cost is not None else None
-        )
+        data["minimum_stock"] = decimal_to_json(self.minimum_stock) if self.minimum_stock is not None else None
+        data["estimated_cost"] = decimal_to_json(self.estimated_cost) if self.estimated_cost is not None else None
         return data
 
     @property
@@ -267,9 +255,7 @@ class InventoryManager:
             if item.minimum_stock is not None:
                 item.quantity = Decimal("0")
                 return item
-            self.state.items = [
-                candidate for candidate in self.state.items if candidate.id != item_id
-            ]
+            self.state.items = [candidate for candidate in self.state.items if candidate.id != item_id]
             return None
         return item
 
@@ -361,8 +347,7 @@ class InventoryManager:
                         "prep_minutes": recipe.prep_minutes,
                         "missing_count": len(missing),
                         "missing": [
-                            {"name": item["name"], "quantity": decimal_to_json(item["quantity"]), "unit": item["unit"]}
-                            for item in missing
+                            {"name": item["name"], "quantity": decimal_to_json(item["quantity"]), "unit": item["unit"]} for item in missing
                         ],
                     }
                 )
@@ -394,15 +379,23 @@ class InventoryManager:
             if item.minimum_stock is None:
                 continue
             key = (normalize_name(item.name), item.unit.casefold())
-            current = minimums.get(key)
-            if current is None or item.minimum_stock > current[2]:
+            minimum = minimums.get(key)
+            if minimum is None or item.minimum_stock > minimum[2]:
                 minimums[key] = (item.name, item.unit, item.minimum_stock)
 
         suggestions: list[dict[str, Any]] = []
         for key, (name, unit, minimum_stock) in minimums.items():
-            current = totals.get(key, Decimal("0"))
-            if current < minimum_stock:
-                suggestions.append({"name": name, "quantity": minimum_stock - current, "unit": unit, "current": current, "minimum_stock": minimum_stock})
+            current_quantity = totals.get(key, Decimal("0"))
+            if current_quantity < minimum_stock:
+                suggestions.append(
+                    {
+                        "name": name,
+                        "quantity": minimum_stock - current_quantity,
+                        "unit": unit,
+                        "current": current_quantity,
+                        "minimum_stock": minimum_stock,
+                    }
+                )
         return sorted(suggestions, key=lambda item: item["name"])
 
     def location_count(self, prefix: str) -> int:
@@ -453,7 +446,9 @@ class InventoryManager:
             "location_counts": {
                 "Kitchen": self.location_count("Kitchen"),
                 "Refrigerator": self.location_count("Kitchen/Refrigerator"),
-                "Freezer": self.location_count("Kitchen/Freezer") + self.location_count("Garage/Chest Freezer") + self.location_count("Garage/Freezer"),
+                "Freezer": self.location_count("Kitchen/Freezer")
+                + self.location_count("Garage/Chest Freezer")
+                + self.location_count("Garage/Freezer"),
                 "Pantry": self.location_count("Kitchen/Pantry"),
             },
         }
@@ -465,8 +460,10 @@ class InventoryManager:
             (
                 item
                 for item in self.state.shopping_list
-                if not item.checked and normalize_name(item.name) == wanted_name and item.unit.casefold() == wanted_unit and item.source == source
+                if not item.checked
+                and normalize_name(item.name) == wanted_name
+                and item.unit.casefold() == wanted_unit
+                and item.source == source
             ),
             None,
         )
-

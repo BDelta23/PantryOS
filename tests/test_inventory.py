@@ -1,6 +1,6 @@
+import sys
 from datetime import date
 from decimal import Decimal
-import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -76,9 +76,7 @@ def test_recipe_matching_allows_missing_threshold() -> None:
     meals = manager.possible_meals(max_missing=1)
 
     assert meals[0]["name"] == "Chicken Alfredo"
-    assert meals[0]["missing"] == [
-        {"name": "Heavy Cream", "quantity": "1", "unit": "cup"}
-    ]
+    assert meals[0]["missing"] == [{"name": "Heavy Cream", "quantity": "1", "unit": "cup"}]
 
 
 def test_add_missing_to_shopping_list_merges_recipe_rows() -> None:
@@ -164,8 +162,6 @@ def test_state_round_trip_preserves_dates_and_decimals() -> None:
     assert item.purchased == date(2026, 8, 21)
     assert item.expires == date(2026, 9, 2)
     assert item.estimated_cost == Decimal("12.50")
-
-
 
 
 def test_consumed_minimum_stock_item_remains_suggestible() -> None:

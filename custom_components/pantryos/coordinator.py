@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from inspect import isawaitable
 from typing import Any
 
-
 DEFAULT_SUMMARY: dict[str, Any] = {
     "total_items": 0,
     "state_revision": 0,

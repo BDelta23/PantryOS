@@ -6,12 +6,12 @@ import argparse
 import json
 import logging
 import mimetypes
-import time
 import os
 import secrets
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import closing
 from decimal import Decimal
@@ -23,13 +23,16 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+for candidate in (ROOT / "scripts", SRC):
+    candidate_text = str(candidate)
+    while candidate_text in sys.path:
+        sys.path.remove(candidate_text)
+sys.path.insert(0, str(SRC))
 
 from pantryos.core import PantryCore, normalize_name  # noqa: E402
+from pantryos.errors import PantryOSError  # noqa: E402
 from pantryos.openapi import openapi_document  # noqa: E402
 from pantryos.paths import path_within  # noqa: E402
-from pantryos.errors import PantryOSError  # noqa: E402
 from pantryos.units import convert, decimal_text, require_non_negative, unit_code  # noqa: E402
 
 STATIC_DIR = ROOT / "app" / "static"
@@ -317,7 +320,13 @@ def public_state(core: PantryCore) -> dict[str, Any]:
         "meal_plan": meal_plan_legacy(core),
         "leftovers": [lot_to_item(lot) for lot in lots if lot["status"] == "active" and lot["lot_type"] == "leftover"],
         "meals_with_two_or_fewer_missing": recipe_matches(core, recipes, max_missing=2),
-        "core": {"products": products, "lots": lots, "events": dashboard["events"], "locations": dashboard["locations"], "summary": dashboard["summary"]},
+        "core": {
+            "products": products,
+            "lots": lots,
+            "events": dashboard["events"],
+            "locations": dashboard["locations"],
+            "summary": dashboard["summary"],
+        },
     }
 
 
@@ -452,7 +461,11 @@ def location_counts(lots: list[dict[str, Any]]) -> dict[str, int]:
     active = [lot for lot in lots if lot["status"] == "active"]
     return {
         "Kitchen": sum(1 for lot in active if lot["location_name"] != "Chest Freezer"),
-        "Refrigerator": sum(1 for lot in active if "Refrigerator" in lot["location_name"] or lot["location_name"] in {"Door", "Crisper", "Top Shelf", "Bottom Shelf"}),
+        "Refrigerator": sum(
+            1
+            for lot in active
+            if "Refrigerator" in lot["location_name"] or lot["location_name"] in {"Door", "Crisper", "Top Shelf", "Bottom Shelf"}
+        ),
         "Freezer": sum(1 for lot in active if "Freezer" in lot["location_name"]),
         "Pantry": sum(1 for lot in active if "Pantry" in lot["location_name"] or "Shelf" in lot["location_name"]),
     }
@@ -460,9 +473,7 @@ def location_counts(lots: list[dict[str, Any]]) -> dict[str, int]:
 
 def recipe_matches(core: PantryCore, recipes: list[dict[str, Any]], max_missing: int) -> list[dict[str, Any]]:
     with closing(core.connect()) as connection:
-        lot_rows = connection.execute(
-            "SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0"
-        ).fetchall()
+        lot_rows = connection.execute("SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0").fetchall()
     available: dict[str, list[dict[str, Any]]] = {}
     today = datetime_date()
     for row in lot_rows:
@@ -521,9 +532,7 @@ def minimum_stock_suggestions(core: PantryCore) -> list[dict[str, Any]]:
         products = connection.execute(
             "SELECT * FROM products WHERE active = 1 AND minimum_stock_quantity IS NOT NULL ORDER BY name"
         ).fetchall()
-        lots = connection.execute(
-            "SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0"
-        ).fetchall()
+        lots = connection.execute("SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0").fetchall()
     by_product: dict[str, list[dict[str, Any]]] = {}
     for row in lots:
         by_product.setdefault(row["product_id"], []).append(dict(row))
@@ -635,7 +644,15 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.core.cooking_session(cooking_session_id))
             return
         if parsed.path == "/api/v1/leftovers":
-            self._send_json({"items": [lot_to_item(row) for row in public_state(self.core)["core"]["lots"] if row["status"] == "active" and row["lot_type"] == "leftover"]})
+            self._send_json(
+                {
+                    "items": [
+                        lot_to_item(row)
+                        for row in public_state(self.core)["core"]["lots"]
+                        if row["status"] == "active" and row["lot_type"] == "leftover"
+                    ]
+                }
+            )
             return
         receipt_review_id = receipt_review_path(parsed.path)
         if receipt_review_id is not None:
@@ -864,7 +881,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._send_problem(HTTPStatus.BAD_REQUEST, "Request body must be valid JSON.", code="invalid_json", title="Invalid JSON")
             return
         except KeyError as exc:
-            self._send_problem(HTTPStatus.BAD_REQUEST, f"Missing required field: {exc.args[0]}", code="missing_field", title="Missing field")
+            self._send_problem(
+                HTTPStatus.BAD_REQUEST, f"Missing required field: {exc.args[0]}", code="missing_field", title="Missing field"
+            )
             return
         except PantryOSError as exc:
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
@@ -910,6 +929,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._send_problem(domain_status(exc), str(exc), code=problem_code(exc), title=problem_title(exc))
             return
         self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 
@@ -1184,7 +1204,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         next_heartbeat = time.monotonic()
         while time.monotonic() < deadline:
             if time.monotonic() >= next_heartbeat:
-                self.wfile.write(f": heartbeat {int(time.time())}\n\n".encode("utf-8"))
+                self.wfile.write(f": heartbeat {int(time.time())}\n\n".encode())
                 self.wfile.flush()
                 next_heartbeat = time.monotonic() + heartbeat_seconds
             events = self.core.events(limit=25, after_revision=last_sent_revision)
@@ -1199,9 +1219,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
 
     def _write_sse(self, event_type: str, event_id: str, data: dict[str, Any]) -> None:
         payload = json.dumps(data, separators=(",", ":"))
-        self.wfile.write(f"id: {event_id}\n".encode("utf-8"))
-        self.wfile.write(f"event: {event_type}\n".encode("utf-8"))
-        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+        self.wfile.write(f"id: {event_id}\n".encode())
+        self.wfile.write(f"event: {event_type}\n".encode())
+        self.wfile.write(f"data: {payload}\n\n".encode())
 
     def _send_json(
         self,
@@ -1254,6 +1274,7 @@ def static_content_type(path: Path) -> str:
     if path.suffix == ".webmanifest":
         return "application/manifest+json"
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
 
 def is_versioned_api(path: str) -> bool:
     return path == "/api/v1" or path.startswith("/api/v1/")
@@ -1355,6 +1376,7 @@ def event_detail_path(path: str) -> str | None:
         return None
     return unquote(suffix)
 
+
 def receipt_review_path(path: str) -> str | None:
     for prefix in ("/api/receipts/", "/api/v1/receipts/"):
         if not path.startswith(prefix):
@@ -1420,6 +1442,7 @@ def location_path(path: str) -> str | None:
             return None
         return unquote(suffix)
     return None
+
 
 def barcode_lookup_path(path: str) -> str | None:
     for prefix in ("/api/barcodes/", "/api/v1/barcodes/"):
@@ -1703,6 +1726,7 @@ def _browser_session_store_path(db_path: Path) -> Path | None:
         return Path(configured)
     return db_path.parent / "browser_sessions.json"
 
+
 def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
     handler.core = PantryCore(db_path)
@@ -1731,9 +1755,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     data_path = (
-        path_within(args.data, os.environ["PANTRYOS_DATA_DIR"], "Database path")
-        if os.environ.get("PANTRYOS_DATA_DIR")
-        else args.data
+        path_within(args.data, os.environ["PANTRYOS_DATA_DIR"], "Database path") if os.environ.get("PANTRYOS_DATA_DIR") else args.data
     )
     server = make_server(args.host, args.port, data_path)
     print(f"PantryOS running at http://{args.host}:{args.port}", flush=True)
@@ -1742,4 +1764,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

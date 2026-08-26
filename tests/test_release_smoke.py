@@ -49,6 +49,7 @@ def test_container_smoke_script_is_release_runner_ready() -> None:
     assert container_smoke.dashboard_lots({"core": {"lots": [nested_lot]}}) == [nested_lot]
     assert container_smoke.dashboard_lots({"lots": [{"id": "lot_top"}]}) == [{"id": "lot_top"}]
 
+
 def test_home_assistant_installed_smoke_runner_is_documented_and_scoped() -> None:
     from scripts import ha_installed_smoke
 
@@ -82,6 +83,7 @@ def test_receipt_ocr_corpus_smoke_runner_is_documented_and_scoped() -> None:
     assert "python scripts/receipt_ocr_corpus_smoke.py" in readme
     assert "temporary SQLite database" in readme
     assert "does not mutate your PantryOS database" in readme
+
 
 def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     from scripts import release_readiness
@@ -130,6 +132,7 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     assert "Status: **NOT READY**" in markdown
     assert "python scripts/container_smoke.py" in markdown
     assert "Independent review pending." in markdown
+
 
 def test_release_artifact_audit_blocks_unallowed_completion_debt() -> None:
     from scripts import release_artifact_audit

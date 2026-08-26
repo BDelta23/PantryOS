@@ -6,18 +6,19 @@ import base64
 import binascii
 import hashlib
 import json
-import subprocess
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import uuid
 import zipfile
-from contextlib import closing, contextmanager
+from collections.abc import Iterator
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
-from decimal import Decimal
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .errors import InsufficientInventoryError, NotFoundError, ValidationError
 from .units import UNITS, convert, decimal_text, require_non_negative, require_positive, unit_code
@@ -91,10 +92,8 @@ class PantryCore:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 10000")
-        try:
+        with suppress(sqlite3.DatabaseError):
             connection.execute("PRAGMA journal_mode = WAL")
-        except sqlite3.DatabaseError:
-            pass
         return connection
 
     def migrate(self) -> None:
@@ -111,10 +110,7 @@ class PantryCore:
                     connection.execute(
                         "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
                     )
-                    applied = {
-                        row["version"]
-                        for row in connection.execute("SELECT version FROM schema_migrations")
-                    }
+                    applied = {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
                     for path in migration_paths:
                         version = int(path.stem.split("_", 1)[0])
                         if version in applied:
@@ -138,9 +134,7 @@ class PantryCore:
             raise
 
     def _applied_migration_versions(self, connection: sqlite3.Connection) -> set[int]:
-        exists = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
-        ).fetchone()
+        exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").fetchone()
         if exists is None:
             return set()
         return {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
@@ -175,10 +169,8 @@ class PantryCore:
             sidecar.unlink(missing_ok=True)
 
     def _sqlite_sidecars(self, database: Path) -> list[Path]:
-        return [
-            database.with_name(database.name + suffix)
-            for suffix in ("-wal", "-shm", "-journal")
-        ]
+        return [database.with_name(database.name + suffix) for suffix in ("-wal", "-shm", "-journal")]
+
     def integrity_check(self) -> None:
         with closing(self.connect()) as connection:
             result = connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -267,10 +259,7 @@ class PantryCore:
         with self.transaction() as connection:
             product = self._find_product(connection, product_id, product_name)
             lots = self._usable_lots(connection, product["id"])
-            available = sum(
-                convert(require_non_negative(lot["quantity"]), lot["unit"], wanted_unit)
-                for lot in lots
-            )
+            available = sum((convert(require_non_negative(lot["quantity"]), lot["unit"], wanted_unit) for lot in lots), Decimal("0"))
             if available < amount:
                 raise InsufficientInventoryError(decimal_text(amount), decimal_text(available), wanted_unit)
 
@@ -357,7 +346,11 @@ class PantryCore:
             if lot["status"] != "active":
                 raise ValidationError(f"Inventory lot is not active: {lot_id}")
             if lot["opened_at"]:
-                return {"lot": self.get_lot(connection, lot_id), "opened": False, "revision": int(self._metadata(connection, "state_revision"))}
+                return {
+                    "lot": self.get_lot(connection, lot_id),
+                    "opened": False,
+                    "revision": int(self._metadata(connection, "state_revision")),
+                }
 
             opened_timestamp = self._normalize_opened_at(opened_at)
             expires_at = self._opened_expiration(lot["expires_at"], opened_timestamp, lot["opened_shelf_life_days"])
@@ -670,10 +663,7 @@ class PantryCore:
         receipt_dir.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(db_path)) as connection:
             connection.row_factory = sqlite3.Row
-            rows = {
-                row["id"]: row
-                for row in connection.execute("SELECT id, content_hash FROM receipt_uploads WHERE status != 'purged'")
-            }
+            rows = {row["id"]: row for row in connection.execute("SELECT id, content_hash FROM receipt_uploads WHERE status != 'purged'")}
             if len(rows) != len(receipts):
                 raise ValidationError("PantryOS backup archive does not include every receipt upload")
             connection.execute("BEGIN IMMEDIATE")
@@ -730,6 +720,7 @@ class PantryCore:
             "shopping_count": len(data.get("shopping_list", [])),
             "meal_plan_count": len(data.get("meal_plan", {})),
         }
+
     def import_legacy_json(self, path: Path | str, backup_dir: Path | str | None = None) -> ImportResult:
         self.migrate()
         source_path = Path(path)
@@ -805,8 +796,8 @@ class PantryCore:
                 recipe_id = self._upsert_recipe(connection, recipe)
                 connection.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
                 for position, ingredient in enumerate(recipe.get("ingredients", [])):
-                    product_id = product_by_name.get(normalize_name(ingredient["name"]))
-                    self._insert_recipe_ingredient(connection, recipe_id, ingredient, product_id, position)
+                    ingredient_product_id = product_by_name.get(normalize_name(ingredient["name"]))
+                    self._insert_recipe_ingredient(connection, recipe_id, ingredient, ingredient_product_id, position)
 
             for item in data.get("shopping_list", []):
                 source = item.get("source") or "manual"
@@ -905,7 +896,11 @@ class PantryCore:
         with self.transaction() as connection:
             existing = connection.execute("SELECT * FROM receipt_uploads WHERE content_hash = ?", (content_hash,)).fetchone()
             if existing is not None and existing["status"] != "purged":
-                return {"receipt": self._receipt_snapshot(existing), "duplicate": True, "revision": int(self._metadata(connection, "state_revision"))}
+                return {
+                    "receipt": self._receipt_snapshot(existing),
+                    "duplicate": True,
+                    "revision": int(self._metadata(connection, "state_revision")),
+                }
             if existing is not None:
                 receipt_id = existing["id"]
                 connection.execute(
@@ -1042,7 +1037,12 @@ class PantryCore:
             receipt = self._receipt_row(connection, receipt_id)
             if receipt["committed_purchase_id"]:
                 snapshot = self._purchase_snapshot(connection, receipt["committed_purchase_id"])
-                return {**snapshot, "receipt": self._receipt_snapshot(receipt), "duplicate": True, "revision": int(self._metadata(connection, "state_revision"))}
+                return {
+                    **snapshot,
+                    "receipt": self._receipt_snapshot(receipt),
+                    "duplicate": True,
+                    "revision": int(self._metadata(connection, "state_revision")),
+                }
             if receipt["status"] == "rejected":
                 raise ValidationError("Rejected receipt cannot be committed")
             if receipt["status"] == "purged":
@@ -1105,7 +1105,16 @@ class PantryCore:
                     total = ?, currency = ?, review_json = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (purchase_id, review.get("store"), purchased_at, total_text, currency, json.dumps(review, sort_keys=True), utc_now(), receipt_id),
+                (
+                    purchase_id,
+                    review.get("store"),
+                    purchased_at,
+                    total_text,
+                    currency,
+                    json.dumps(review, sort_keys=True),
+                    utc_now(),
+                    receipt_id,
+                ),
             )
             revision = self._append_event(
                 connection,
@@ -1115,7 +1124,14 @@ class PantryCore:
             )
             updated_receipt = self._receipt_row(connection, receipt_id)
             purchase = dict(connection.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone())
-        return {"purchase": purchase, "lines": purchase_lines, "lots": created_lots, "receipt": self._receipt_snapshot(updated_receipt), "duplicate": False, "revision": revision}
+        return {
+            "purchase": purchase,
+            "lines": purchase_lines,
+            "lots": created_lots,
+            "receipt": self._receipt_snapshot(updated_receipt),
+            "duplicate": False,
+            "revision": revision,
+        }
 
     def reject_receipt(self, receipt_id: str, *, reason: str = "rejected", source: str = "api") -> dict[str, Any]:
         self.migrate()
@@ -1213,7 +1229,12 @@ class PantryCore:
                     connection,
                     "receipt.purged",
                     source=source,
-                    metadata={"receipt_count": len(rows), "deleted_files": deleted_files, "missing_files": missing_files, "statuses": sorted(selected_statuses)},
+                    metadata={
+                        "receipt_count": len(rows),
+                        "deleted_files": deleted_files,
+                        "missing_files": missing_files,
+                        "statuses": sorted(selected_statuses),
+                    },
                 )
         return {
             "ok": True,
@@ -1228,10 +1249,14 @@ class PantryCore:
             "committed_retained": committed_retained,
             "revision": revision,
         }
+
     def purchases(self) -> list[dict[str, Any]]:
         self.migrate()
         with closing(self.connect()) as connection:
-            return [self._purchase_snapshot(connection, row["id"])["purchase"] for row in connection.execute("SELECT id FROM purchases ORDER BY purchased_at DESC, created_at DESC")]
+            return [
+                self._purchase_snapshot(connection, row["id"])["purchase"]
+                for row in connection.execute("SELECT id FROM purchases ORDER BY purchased_at DESC, created_at DESC")
+            ]
 
     def purchase(self, purchase_id: str) -> dict[str, Any]:
         self.migrate()
@@ -1417,13 +1442,19 @@ class PantryCore:
             )
             product = connection.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
             return {"product": dict(product), "revision": revision}
+
     def product_prices(self, product_id: str) -> dict[str, Any]:
         self.migrate()
         with closing(self.connect()) as connection:
             product = connection.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
             if product is None:
                 raise NotFoundError(f"Product not found: {product_id}")
-            rows = [dict(row) for row in connection.execute("SELECT * FROM price_history WHERE product_id = ? ORDER BY purchased_at DESC, created_at DESC", (product_id,))]
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM price_history WHERE product_id = ? ORDER BY purchased_at DESC, created_at DESC", (product_id,)
+                )
+            ]
         return {"product": dict(product), "prices": rows, "analysis": self._price_history_analysis(rows)}
 
     def events(self, *, limit: int = 25, after_revision: int | None = None) -> dict[str, Any]:
@@ -1452,6 +1483,7 @@ class PantryCore:
             if row is None:
                 raise NotFoundError(f"Event not found: {event_id}")
             return self._event_snapshot(row)
+
     def resolve_barcode(self, barcode: str) -> dict[str, Any]:
         self.migrate()
         barcode_text = self._normalize_barcode(barcode)
@@ -1690,7 +1722,12 @@ class PantryCore:
                     allocations_json = ?, version = version + 1
                 WHERE id = ?
                 """,
-                (decimal_text(require_positive(actual_servings, "actual_servings")), completed_at, json.dumps(applied_allocations), session_id),
+                (
+                    decimal_text(require_positive(actual_servings, "actual_servings")),
+                    completed_at,
+                    json.dumps(applied_allocations),
+                    session_id,
+                ),
             )
             if session["meal_plan_entry_id"]:
                 connection.execute(
@@ -1736,6 +1773,7 @@ class PantryCore:
         self.migrate()
         with closing(self.connect()) as connection:
             return self._cooking_session_snapshot(connection, session_id)
+
     def shopping_items(self) -> list[dict[str, Any]]:
         self.migrate()
         with closing(self.connect()) as connection:
@@ -1923,6 +1961,7 @@ class PantryCore:
             )
             purchase = dict(connection.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone())
         return {"purchase": purchase, "lines": purchase_lines, "lots": created_lots, "revision": revision}
+
     def rebuild_shopping_demand(self) -> dict[str, Any]:
         """Rebuild idempotent generated shopping demand from active meal plans."""
         self.migrate()
@@ -1964,8 +2003,7 @@ class PantryCore:
                 entry["sources"].append({"meal_plan_id": row["meal_plan_id"], "recipe_name": row["recipe_name"]})
 
             existing_generated = {
-                row["source_key"]
-                for row in connection.execute("SELECT source_key FROM shopping_demands WHERE source_kind = 'meal_plan'")
+                row["source_key"] for row in connection.execute("SELECT source_key FROM shopping_demands WHERE source_kind = 'meal_plan'")
             }
             active_keys: set[str] = set()
             for identity, entry in generated.items():
@@ -2003,9 +2041,7 @@ class PantryCore:
                 revision = int(self._metadata(connection, "state_revision"))
             rows = [
                 dict(row)
-                for row in connection.execute(
-                    "SELECT * FROM shopping_demands WHERE source_kind = 'meal_plan' ORDER BY display_name, unit"
-                )
+                for row in connection.execute("SELECT * FROM shopping_demands WHERE source_kind = 'meal_plan' ORDER BY display_name, unit")
             ]
         return {"items": rows, "changed_source_keys": sorted(changed_keys), "revision": revision}
 
@@ -2029,6 +2065,7 @@ class PantryCore:
                 continue
             total += convert(require_non_negative(lot["quantity"]), lot["unit"], unit)
         return total
+
     def ensure_product(
         self,
         connection: sqlite3.Connection,
@@ -2329,6 +2366,7 @@ class PantryCore:
             "reason": row["reason"],
             "data": data,
         }
+
     def _receipt_row(self, connection: sqlite3.Connection, receipt_id: str) -> sqlite3.Row:
         row = connection.execute("SELECT * FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()
         if row is None:
@@ -2413,14 +2451,14 @@ class PantryCore:
                 continue
             if index + 2 > len(payload):
                 break
-            length = int.from_bytes(payload[index:index + 2], "big")
+            length = int.from_bytes(payload[index : index + 2], "big")
             if length < 2 or index + length > len(payload):
                 break
             if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
                 if length < 7:
                     break
-                height = int.from_bytes(payload[index + 3:index + 5], "big")
-                width = int.from_bytes(payload[index + 5:index + 7], "big")
+                height = int.from_bytes(payload[index + 3 : index + 5], "big")
+                width = int.from_bytes(payload[index + 5 : index + 7], "big")
                 return width, height
             index += length
         raise ValidationError("Receipt image dimensions are invalid")
@@ -2504,7 +2542,9 @@ class PantryCore:
         if data.get("total") not in (None, ""):
             review["total"] = decimal_text(require_non_negative(data["total"], "total"))
         else:
-            total = sum(require_non_negative(item.get("total_cost", "0"), "total_cost") for item in items if isinstance(item, dict))
+            total = sum(
+                (require_non_negative(item.get("total_cost", "0"), "total_cost") for item in items if isinstance(item, dict)), Decimal("0")
+            )
             review["total"] = decimal_text(total)
         for item in items:
             if not isinstance(item, dict):
@@ -2528,7 +2568,10 @@ class PantryCore:
         purchase = connection.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
         if purchase is None:
             raise NotFoundError(f"Purchase not found: {purchase_id}")
-        lines = [dict(row) for row in connection.execute("SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY created_at, id", (purchase_id,))]
+        lines = [
+            dict(row)
+            for row in connection.execute("SELECT * FROM purchase_lines WHERE purchase_id = ? ORDER BY created_at, id", (purchase_id,))
+        ]
         lots: list[dict[str, Any]] = []
         for line in lines:
             lots.extend(
@@ -2606,10 +2649,7 @@ class PantryCore:
             return None
         ordered = sorted(rows)
         midpoint = len(ordered) // 2
-        if len(ordered) % 2:
-            median = ordered[midpoint]
-        else:
-            median = (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2")
+        median = ordered[midpoint] if len(ordered) % 2 else (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2")
         return {
             "unit_price": median,
             "sample_count": len(rows),
@@ -2724,7 +2764,9 @@ class PantryCore:
         if recipe_id:
             row = connection.execute("SELECT * FROM recipes WHERE id = ? AND active = 1", (recipe_id,)).fetchone()
         elif recipe_name:
-            row = connection.execute("SELECT * FROM recipes WHERE normalized_name = ? AND active = 1", (normalize_name(str(recipe_name)),)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM recipes WHERE normalized_name = ? AND active = 1", (normalize_name(str(recipe_name)),)
+            ).fetchone()
         else:
             raise ValidationError("Cooking session requires recipe_id or recipe_name")
         if row is None:
@@ -2742,6 +2784,7 @@ class PantryCore:
         session = dict(row)
         session["allocations"] = json.loads(session.pop("allocations_json") or "[]")
         return session
+
     def _shopping_row(self, connection: sqlite3.Connection, demand_id: str) -> sqlite3.Row:
         row = connection.execute("SELECT * FROM shopping_demands WHERE id = ?", (demand_id,)).fetchone()
         if row is None:
@@ -2853,20 +2896,24 @@ class PantryCore:
         revision = int(self._metadata(connection, "state_revision"))
         products = [dict(row) for row in connection.execute("SELECT * FROM products ORDER BY name")]
         location_paths = self._location_paths(connection)
-        lots = [dict(row) for row in connection.execute("""
+        lots = [
+            dict(row)
+            for row in connection.execute("""
             SELECT l.*, p.name AS product_name, p.minimum_stock_quantity,
                    p.minimum_stock_unit, loc.name AS location_name
             FROM inventory_lots l
             JOIN products p ON p.id = l.product_id
             JOIN locations loc ON loc.id = l.location_id
             ORDER BY p.name, l.expires_at IS NULL, l.expires_at, l.created_at
-        """)]
+        """)
+        ]
         for lot in lots:
             lot["location_path"] = location_paths.get(lot["location_id"], lot["location_name"])
-            lot["estimated_value"] = self._money_text(
-                self._lot_value_for_quantity(connection, lot, require_non_negative(lot["quantity"]))
-            )
-        recipes = [self._recipe_snapshot(connection, row["id"]) for row in connection.execute("SELECT id FROM recipes WHERE active = 1 ORDER BY name")]
+            lot["estimated_value"] = self._money_text(self._lot_value_for_quantity(connection, lot, require_non_negative(lot["quantity"])))
+        recipes = [
+            self._recipe_snapshot(connection, row["id"])
+            for row in connection.execute("SELECT id FROM recipes WHERE active = 1 ORDER BY name")
+        ]
         shopping = [dict(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name")]
         events = [dict(row) for row in connection.execute("SELECT * FROM inventory_events ORDER BY revision DESC LIMIT 25")]
         locations = self._location_records(connection)
@@ -3116,5 +3163,3 @@ class PantryCore:
         if "cabinet" in normalized:
             return "cabinet"
         return "other"
-
-

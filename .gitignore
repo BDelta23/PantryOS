@@ -10,3 +10,5 @@ _PantryOS_Codex_Handoff/
 data/*.sqlite3
 data/*.sqlite3-*
 data/backups/
+.coverage
+*.egg-info/

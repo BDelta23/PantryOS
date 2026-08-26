@@ -6,9 +6,10 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = (
@@ -131,7 +132,6 @@ ALLOWANCES = (
         "No stub or fake-success control.",
         "Review checklist item, not application behavior.",
     ),
-
     Allowance(
         "docs/handoff/12_REVIEW_CHECKLIST.md",
         "fake-or-stub",
@@ -153,7 +153,7 @@ ALLOWANCES = (
     Allowance(
         "scripts/container_smoke.py",
         "skipped-release-check",
-        "verifier_tail = \"skipped\"",
+        'verifier_tail = "skipped"',
         "Initial sentinel text only; the default container smoke runs the image verifier.",
     ),
     Allowance(
@@ -325,11 +325,7 @@ def main() -> int:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif result["ok"]:
-        print(
-            "release artifact audit: ok "
-            f"scanned_files={result['scanned_files']} "
-            f"allowed_matches={len(result['allowed_matches'])}"
-        )
+        print(f"release artifact audit: ok scanned_files={result['scanned_files']} allowed_matches={len(result['allowed_matches'])}")
     else:
         print("release artifact audit: failed", file=sys.stderr)
         for finding in result["findings"][:25]:

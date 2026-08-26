@@ -77,7 +77,10 @@ def test_openapi_document_tracks_current_versioned_route_surface() -> None:
     assert document["security"] == [{"bearerAuth": []}]
     assert document["paths"]["/api/v1/events"]["get"]["responses"]["200"]["content"]["text/event-stream"]
     assert "201" in document["paths"]["/api/v1/inventory/lots"]["post"]["responses"]
-    assert document["paths"]["/api/v1/receipts"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ReceiptUploadRequest"
+    assert (
+        document["paths"]["/api/v1/receipts"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/ReceiptUploadRequest"
+    )
     receipt_schema = document["components"]["schemas"]["ReceiptUploadRequest"]
     assert "content_base64" in receipt_schema["properties"]
     assert receipt_schema["required"] == ["filename", "mime_type"]
@@ -103,8 +106,12 @@ def test_openapi_endpoint_is_authenticated_and_serves_contract() -> None:
     assert document["info"]["title"] == "PantryOS Core API"
     assert "/api/v1/inventory/lots" in document["paths"]
     assert "/api/v1/locations/{id}" in document["paths"]
-    assert document["paths"]["/api/v1/locations/{id}"]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/LocationUpdateRequest"
+    assert (
+        document["paths"]["/api/v1/locations/{id}"]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/LocationUpdateRequest"
+    )
     assert "/api/v1/openapi.json" in document["paths"]
+
 
 def success_schema_ref(document: dict, path: str, method: str, status: str = "200") -> str:
     return document["paths"][path][method]["responses"][status]["content"]["application/json"]["schema"]["$ref"]
@@ -119,7 +126,9 @@ def test_openapi_success_responses_use_concrete_resource_schemas() -> None:
     assert success_schema_ref(document, "/api/v1/inventory/lots/{id}/consume", "post") == "#/components/schemas/ConsumeResponse"
     assert success_schema_ref(document, "/api/v1/receipts/{id}/commit", "post", "201") == "#/components/schemas/ReceiptCommitResponse"
     assert success_schema_ref(document, "/api/v1/products/{id}/prices", "get") == "#/components/schemas/ProductPriceResponse"
-    assert success_schema_ref(document, "/api/v1/shopping/complete-purchase", "post", "201") == "#/components/schemas/PurchaseCompleteResponse"
+    assert (
+        success_schema_ref(document, "/api/v1/shopping/complete-purchase", "post", "201") == "#/components/schemas/PurchaseCompleteResponse"
+    )
     assert success_schema_ref(document, "/api/v1/cooking/sessions/{id}/complete", "post") == "#/components/schemas/CookingCompleteResponse"
 
     dashboard = schemas["DashboardResponse"]
@@ -153,6 +162,7 @@ def test_openapi_empty_post_operations_do_not_claim_json_request_body() -> None:
         "/api/v1/cooking/sessions/{id}/cancel",
     ):
         assert "requestBody" not in document["paths"][path]["post"]
+
 
 def collect_schema_refs(value) -> set[str]:
     refs: set[str] = set()
