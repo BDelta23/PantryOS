@@ -63,7 +63,29 @@ def test_container_smoke_script_is_release_runner_ready() -> None:
     assert args.base_url == "http://127.0.0.1:8765"
     assert args.service == "pantryos"
     assert args.container == "pantryos"
+    assert args.isolated is False
     assert args.skip_image_verifier is True
+
+    isolated = container_smoke.build_parser().parse_args(["--isolated", "--isolated-port", "9876"])
+    assert isolated.isolated is True
+    assert isolated.isolated_port == 9876
+    env = container_smoke.compose_env("token", project_name="pantryos-container-smoke-test", port=9876)
+    assert env["PANTRYOS_API_TOKEN"] == "token"
+    assert env["PANTRYOS_PORT"] == "9876"
+    assert env["COMPOSE_PROJECT_NAME"] == "pantryos-container-smoke-test"
+
+    with TemporaryDirectory() as directory:
+        container_smoke.configure_isolated_context(isolated, Path(directory))
+        assert isolated.base_url == "http://127.0.0.1:9876"
+        assert isolated.container.startswith("pantryos-container-smoke-")
+        assert isolated.isolated_volume.startswith("pantryos-container-smoke-data-")
+        assert isolated.compose_project_name.startswith("pantryos-container-smoke-")
+        assert len(isolated.compose_files) == 1
+        override = isolated.compose_files[0].read_text(encoding="utf-8")
+        assert isolated.container in override
+        assert isolated.isolated_volume in override
+        assert '"127.0.0.1:9876:8765"' in override
+        assert 'restart: "no"' in override
 
     nested_lot = {"id": "lot_nested", "product_name": "Nested Rice"}
     assert container_smoke.dashboard_lots({"core": {"lots": [nested_lot]}}) == [nested_lot]
@@ -151,7 +173,7 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     )
     assert "Status: **NOT READY**" in markdown
     assert "python scripts/concurrency_smoke.py" in markdown
-    assert "python scripts/container_smoke.py" in markdown
+    assert "python scripts/container_smoke.py --isolated" in markdown
     assert "Independent review pending." in markdown
 
 

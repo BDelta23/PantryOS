@@ -91,10 +91,10 @@ Run the Docker release smoke after Docker Desktop is started:
 
 ```powershell
 $env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
-python scripts/container_smoke.py
+python scripts/container_smoke.py --isolated
 ```
 
-The container smoke builds and starts the Compose service, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/app/data`, compares source/restored counts, and runs the dependency-free verifier inside the image.
+The isolated container smoke builds and starts the Compose service in a temporary Compose project with its own host port, container name, and Docker volume, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same generated volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/app/data`, compares source/restored counts, runs the dependency-free verifier inside the image, and removes its generated Docker resources before exit.
 
 Run the deterministic receipt OCR corpus smoke against the running PantryOS container:
 

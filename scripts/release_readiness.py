@@ -134,7 +134,7 @@ def release_commands() -> list[str]:
         "python scripts/smoke_e2e.py",
         "python scripts/concurrency_smoke.py",
         "node scripts/browser_smoke.cjs",
-        "python scripts/container_smoke.py",
+        "python scripts/container_smoke.py --isolated",
         "python scripts/receipt_ocr_corpus_smoke.py",
         "python scripts/image_hardening_audit.py",
         "python scripts/supply_chain_audit.py",

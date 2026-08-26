@@ -12,7 +12,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -74,19 +76,110 @@ def run_command(
     return completed
 
 
-def compose_env(token: str) -> dict[str, str]:
+def compose_env(token: str, *, project_name: str | None = None, port: int | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PANTRYOS_API_TOKEN"] = token
-    env.setdefault("PANTRYOS_PORT", "8765")
+    env["PANTRYOS_PORT"] = str(port or env.get("PANTRYOS_PORT") or "8765")
     env.setdefault("PANTRYOS_RATE_LIMIT_REQUESTS", "100")
     env.setdefault("PANTRYOS_RATE_LIMIT_WINDOW_SECONDS", "60")
     env.setdefault("PANTRYOS_BROWSER_SESSION_SECONDS", "43200")
     env.setdefault("PANTRYOS_BROWSER_SECURE_COOKIES", "false")
+    if project_name is not None:
+        env["COMPOSE_PROJECT_NAME"] = project_name
     return env
 
 
-def docker_compose(args: list[str], *, token: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
-    return run_command(["docker", "compose", *args], env=compose_env(token), timeout=timeout)
+def docker_compose(args: list[str], *, context: argparse.Namespace, token: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+    command = ["docker", "compose"]
+    for compose_file in getattr(context, "compose_files", [ROOT / "compose.yaml"]):
+        command.extend(["-f", str(compose_file)])
+    command.extend(args)
+    return run_command(
+        command,
+        env=compose_env(
+            token,
+            project_name=getattr(context, "compose_project_name", None),
+            port=getattr(context, "compose_port", None),
+        ),
+        timeout=timeout,
+    )
+
+
+def write_isolated_compose_file(directory: Path, *, container: str, volume: str, port: int | None) -> Path:
+    compose_file = directory / "compose.isolated.yaml"
+    port_mapping = f"127.0.0.1:{port}:8765" if port is not None else "127.0.0.1::8765"
+    build_context = ".."
+    compose_file.write_text(
+        f"""services:
+  pantryos:
+    build:
+      context: '{build_context}'
+    container_name: {container}
+    environment:
+      PANTRYOS_API_TOKEN: ${{PANTRYOS_API_TOKEN:?Set PANTRYOS_API_TOKEN before starting PantryOS}}
+      PANTRYOS_RATE_LIMIT_REQUESTS: ${{PANTRYOS_RATE_LIMIT_REQUESTS:-100}}
+      PANTRYOS_RATE_LIMIT_WINDOW_SECONDS: ${{PANTRYOS_RATE_LIMIT_WINDOW_SECONDS:-60}}
+      PANTRYOS_BROWSER_SESSION_SECONDS: ${{PANTRYOS_BROWSER_SESSION_SECONDS:-43200}}
+      PANTRYOS_BROWSER_SECURE_COOKIES: ${{PANTRYOS_BROWSER_SECURE_COOKIES:-false}}
+      PANTRYOS_DATA_DIR: /app/data
+      PANTRYOS_BACKUP_DIR: /app/data/backups
+    ports:
+      - "{port_mapping}"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    pids_limit: 256
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - {volume}:/app/data
+    restart: "no"
+volumes:
+  {volume}:
+""",
+        encoding="utf-8",
+    )
+    return compose_file
+
+
+def configure_isolated_context(args: argparse.Namespace, directory: Path) -> None:
+    suffix = uuid.uuid4().hex[:12]
+    host_port = args.isolated_port
+    container = f"pantryos-container-smoke-{suffix}"
+    volume = f"pantryos-container-smoke-data-{suffix}"
+    compose_file = write_isolated_compose_file(directory, container=container, volume=volume, port=host_port)
+    args.compose_files = [compose_file]
+    args.compose_project_name = f"pantryos-container-smoke-{suffix}"
+    args.compose_port = host_port
+    args.base_url = f"http://127.0.0.1:{host_port}" if host_port is not None else ""
+    args.container = container
+    args.isolated_volume = volume
+
+
+def cleanup_isolated_context(args: argparse.Namespace, *, token: str) -> None:
+    try:
+        docker_compose(["down", "--volumes", "--remove-orphans"], context=args, token=token, timeout=120)
+    except ContainerSmokeFailure as exc:
+        log(f"isolated cleanup failed: {exc}")
+
+
+def published_base_url(container: str) -> str:
+    completed = run_command(["docker", "port", container, "8765/tcp"], timeout=30)
+    for line in completed.stdout.splitlines():
+        endpoint = line.strip()
+        if not endpoint:
+            continue
+        _host, _separator, port = endpoint.rpartition(":")
+        if port.isdigit():
+            return f"http://127.0.0.1:{port}"
+        raise ContainerSmokeFailure(f"Unexpected docker port output for {container}: {endpoint}")
+    raise ContainerSmokeFailure(f"Docker did not publish port 8765/tcp for {container}")
 
 
 def docker_exec(
@@ -208,6 +301,27 @@ def process_status(container: str) -> dict[str, str]:
 
 def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     token = args.token or os.environ.get("PANTRYOS_API_TOKEN") or DEFAULT_TOKEN
+    args.compose_files = [ROOT / "compose.yaml"]
+    args.compose_project_name = None
+    args.compose_port = None
+    args.isolated_volume = None
+    if args.isolated:
+        with tempfile.TemporaryDirectory(prefix=".pantryos-container-smoke-", dir=ROOT) as directory:
+            configure_isolated_context(args, Path(directory))
+            try:
+                result = _run_smoke_in_context(args, token=token)
+                result["isolated"] = True
+                result["isolated_project"] = args.compose_project_name
+                result["isolated_volume"] = args.isolated_volume
+                return result
+            finally:
+                cleanup_isolated_context(args, token=token)
+    result = _run_smoke_in_context(args, token=token)
+    result["isolated"] = False
+    return result
+
+
+def _run_smoke_in_context(args: argparse.Namespace, *, token: str) -> dict[str, Any]:
     base_url = args.base_url
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     lot_name = f"Container Smoke Rice {stamp}"
@@ -219,10 +333,13 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     docker_version = run_command(["docker", "version", "--format", "{{.Server.Version}}"], timeout=30).stdout.strip()
 
     log("validating Compose file")
-    docker_compose(["config", "--quiet"], token=token, timeout=60)
+    docker_compose(["config", "--quiet"], context=args, token=token, timeout=60)
 
     log("building and starting PantryOS container")
-    docker_compose(["up", "--build", "--detach", args.service], token=token, timeout=args.build_timeout)
+    docker_compose(["up", "--build", "--detach", args.service], context=args, token=token, timeout=args.build_timeout)
+    if args.isolated and not base_url:
+        base_url = published_base_url(args.container)
+        args.base_url = base_url
     health = wait_ready(base_url, timeout=args.ready_timeout)
 
     log("verifying container hardening")
@@ -294,7 +411,10 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     require(revision_after_mutation > dashboard_before["revision"], "State revision did not advance after API mutations")
 
     log("restarting service and checking persisted state")
-    docker_compose(["restart", args.service], token=token, timeout=90)
+    docker_compose(["restart", args.service], context=args, token=token, timeout=90)
+    if args.isolated and args.isolated_port is None:
+        base_url = published_base_url(args.container)
+        args.base_url = base_url
     wait_ready(base_url, timeout=args.ready_timeout)
     dashboard_after_restart = request_json(f"{base_url}/api/v1/dashboard", token=token)
     find_lot(dashboard_after_restart, lot_id, lot_name)
@@ -360,6 +480,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", default=os.environ.get("PANTRYOS_API_TOKEN") or DEFAULT_TOKEN)
     parser.add_argument("--service", default=os.environ.get("PANTRYOS_COMPOSE_SERVICE") or DEFAULT_SERVICE)
     parser.add_argument("--container", default=os.environ.get("PANTRYOS_CONTAINER") or DEFAULT_CONTAINER)
+    parser.add_argument("--isolated", action="store_true", help="Run against a temporary Compose project, port, container, and volume.")
+    parser.add_argument("--isolated-port", type=int, help="Host port for --isolated; defaults to an available local port.")
     parser.add_argument("--ready-timeout", type=int, default=90)
     parser.add_argument("--build-timeout", type=int, default=300)
     parser.add_argument(
