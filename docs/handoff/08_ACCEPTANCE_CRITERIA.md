@@ -9,10 +9,10 @@ These are release gates, not aspirational notes. Codex should add automated cove
 - [ ] A3. Adding an item in the web UI changes Home Assistant state promptly without either process restarting.
 - [ ] A4. Consuming an item through a Home Assistant action changes the web UI promptly.
 - [ ] A5. Restarting PantryOS and Home Assistant preserves and reconciles the same state revision.
-- [ ] A6. A test with at least 20 concurrent supported mutations produces no lost successful writes and no corrupt database.
-- [ ] A7. Database transactions roll back all related changes on injected failure.
-- [ ] A8. Legacy JSON import is validated, backed up, atomic, and idempotent.
-- [ ] A9. A backup can be restored into a clean instance and passes an integrity/summary comparison.
+- [x] A6. A test with at least 20 concurrent supported mutations produces no lost successful writes and no corrupt database.
+- [x] A7. Database transactions roll back all related changes on injected failure.
+- [x] A8. Legacy JSON import is validated, backed up, atomic, and idempotent.
+- [x] A9. A backup can be restored into a clean instance and passes an integrity/summary comparison.
 
 ## B. Products, locations, lots, and events
 

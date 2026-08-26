@@ -88,6 +88,54 @@ def test_legacy_import_is_backed_up_and_idempotent() -> None:
         assert snapshot_after_second["summary"] == snapshot_after_first["summary"]
 
 
+def test_legacy_import_rolls_back_partial_rows_on_injected_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "legacy.json"
+        source.write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "id": "legacy-beans",
+                            "name": "Beans",
+                            "quantity": "2",
+                            "unit": "can",
+                            "location": "Kitchen/Pantry",
+                        }
+                    ],
+                    "shopping_list": [{"name": "Beans", "quantity": "1", "unit": "can", "source": "manual"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        core = make_core(directory)
+        original_upsert = PantryCore._upsert_shopping_demand
+
+        def fail_shopping_upsert(self: PantryCore, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("injected legacy import failure")
+
+        PantryCore._upsert_shopping_demand = fail_shopping_upsert
+        try:
+            try:
+                core.import_legacy_json(source)
+            except RuntimeError as exc:
+                assert "injected legacy import failure" in str(exc)
+            else:
+                raise AssertionError("legacy import should propagate injected failure")
+        finally:
+            PantryCore._upsert_shopping_demand = original_upsert
+
+        backups = list((Path(directory) / "backups").glob("legacy-*.json"))
+        assert len(backups) == 1
+        assert count_rows(core, "products") == 0
+        assert count_rows(core, "inventory_lots") == 0
+        assert count_rows(core, "inventory_events") == 0
+        assert count_rows(core, "shopping_demands") == 0
+        assert count_rows(core, "legacy_imports") == 0
+        assert core.instance()["state_revision"] == 0
+        core.integrity_check()
+
+
 def test_location_rename_and_move_preserve_lot_references_and_reject_invalid_hierarchy() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
