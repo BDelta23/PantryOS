@@ -1235,6 +1235,40 @@ def test_manual_release_evidence_rejects_invalid_physical_barcode_check_digits()
     assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be a valid 8 to 14 digit GTIN"
 
 
+def test_manual_release_evidence_rejects_incomplete_price_history_result() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "real-receipt-ocr":
+                check["details"]["price_history_result"] = "Price history was visible for the product"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[real-receipt-ocr].details.price_history_result",
+        "problem": "must describe price history visibility for store, date, package/quantity, total, unit price",
+    } in result["problems"]
+
+
 def test_manual_release_evidence_rejects_synthetic_receipt_source_and_manual_capture() -> None:
     from scripts import manual_release_evidence
 

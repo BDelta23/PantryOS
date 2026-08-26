@@ -62,6 +62,13 @@ BARCODE_RE = re.compile(r"^\d{8,14}$")
 SYNTHETIC_RECEIPT_SOURCE_TERMS = ("synthetic", "fixture", "generated", "mock", "sample", "test")
 OCR_CAPTURE_TERMS = ("ocr", "tesseract")
 IMAGE_CAPTURE_TERMS = ("photo", "image", "camera", "scan", "scanned", "jpeg", "jpg", "png")
+PRICE_HISTORY_REQUIREMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("store", ("store",)),
+    ("date", ("date",)),
+    ("package/quantity", ("package", "quantity")),
+    ("total", ("total",)),
+    ("unit price", ("unit price", "unit-price", "unit_price")),
+)
 
 
 class ManualReleaseEvidenceError(AssertionError):
@@ -349,8 +356,17 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.purchase_id", "problem": "must be a purchase_ identifier"})
         _require_positive_int_string(details.get("committed_lot_count"), f"{prefix}.details.committed_lot_count", problems)
         price_history_result = str(details.get("price_history_result", "")).strip().lower()
-        if price_history_result and "price" not in price_history_result:
-            problems.append({"field": f"{prefix}.details.price_history_result", "problem": "must describe price history visibility"})
+        if price_history_result:
+            missing_price_terms = [
+                label for label, options in PRICE_HISTORY_REQUIREMENTS if not any(option in price_history_result for option in options)
+            ]
+            if missing_price_terms:
+                problems.append(
+                    {
+                        "field": f"{prefix}.details.price_history_result",
+                        "problem": "must describe price history visibility for " + ", ".join(missing_price_terms),
+                    }
+                )
     elif check_id == "published-image-signature":
         digest = details.get("digest")
         digest_value = digest.strip() if isinstance(digest, str) else ""
