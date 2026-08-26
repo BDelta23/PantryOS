@@ -68,6 +68,8 @@ python -m mypy src custom_components/pantryos
 python -m pytest -q
 python -m pytest tests/migrations -q
 python -m pytest tests/home_assistant -q
+python scripts/check.py
+PANTRYOS_API_TOKEN=browser-smoke-token node scripts/browser_smoke.cjs
 
 # Only when a frontend toolchain is introduced
 npm ci

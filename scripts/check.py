@@ -32,22 +32,23 @@ def run_python_compile() -> None:
 
 
 def run_js_check() -> None:
-    app_js = ROOT / "app" / "static" / "app.js"
+    js_files = [ROOT / "app" / "static" / "app.js", ROOT / "scripts" / "browser_smoke.cjs"]
     node_candidates = [
         Path(r"C:\Users\Kronus\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"),
         Path("node"),
     ]
     for candidate in node_candidates:
         try:
-            subprocess.run(
-                [str(candidate), "--check", str(app_js)],
-                cwd=ROOT,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            print("javascript syntax: passed")
+            for js_file in js_files:
+                subprocess.run(
+                    [str(candidate), "--check", str(js_file)],
+                    cwd=ROOT,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            print(f"javascript syntax: {len(js_files)} files passed")
             return
         except (FileNotFoundError, subprocess.CalledProcessError):
             continue

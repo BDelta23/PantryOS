@@ -64,11 +64,11 @@ $env:PANTRYOS_PORT = "8770"
 docker compose up --build
 ```
 
-Run the dependency-free test runner in Docker:
+Run the dependency-free verifier in Docker:
 
 ```powershell
 $env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
-docker compose run --rm pantryos python scripts/run_tests.py
+docker compose run --rm pantryos python scripts/check.py
 ```
 ## Home Assistant Integration
 
@@ -249,11 +249,21 @@ Run tests when `pytest` is installed:
 python -m pytest
 ```
 
-In the Codex bundled Python runtime, `pytest` may not be installed. The test functions can still be smoke-run directly:
+In the Codex bundled Python runtime, `pytest` may not be installed. The dependency-light verifier still compiles Python, runs the smoke test module directly, and checks browser JavaScript syntax when Node is available:
 
 ```powershell
-python scripts/run_tests.py
+python scripts/check.py
 ```
+
+Run the browser viewport/accessibility smoke with Playwright available to Node and a Chromium browser installed for that Playwright runtime:
+
+```powershell
+$env:PYTHON = "C:\Users\Kronus\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$env:PANTRYOS_API_TOKEN = "browser-smoke-token"
+& "C:\Users\Kronus\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe" scripts\browser_smoke.cjs
+```
+
+For a normal Node toolchain, install Playwright and Chromium first, then run `node scripts/browser_smoke.cjs` with `PYTHON` pointing at the Python runtime to use for `app/server.py`.
 
 
 
