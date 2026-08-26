@@ -22,7 +22,7 @@ def test_scripted_demo_proves_supported_surface_vertical_slice() -> None:
         text=True,
         timeout=30,
     )
-    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    result = json.loads(completed.stdout)
 
     assert result["ok"] is True
     assert result["browser_added_lot_id"] == result["ha_synced_lot_id"]
@@ -34,6 +34,26 @@ def test_scripted_demo_proves_supported_surface_vertical_slice() -> None:
     assert "cooking.started" in result["event_types"]
     assert "cooking.completed" in result["event_types"]
     assert result["revision"] > 0
+
+
+def test_api_concurrency_smoke_proves_twenty_supported_mutations() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "concurrency_smoke.py")],
+        cwd=ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+    )
+    result = json.loads(completed.stdout)
+
+    assert result["ok"] is True
+    assert result["successful_mutations"] == 20
+    assert result["final_revision"] - result["baseline_revision"] == 20
+    assert result["event_count"] == result["final_revision"]
+    assert result["product_count"] >= 20
+    assert result["active_lot_count"] >= 16
 
 
 def test_container_smoke_script_is_release_runner_ready() -> None:
@@ -130,6 +150,7 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
         }
     )
     assert "Status: **NOT READY**" in markdown
+    assert "python scripts/concurrency_smoke.py" in markdown
     assert "python scripts/container_smoke.py" in markdown
     assert "Independent review pending." in markdown
 

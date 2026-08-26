@@ -62,6 +62,10 @@ def main() -> None:
     import scripts.run_tests as run_tests
 
     run_tests.main()
+    import scripts.concurrency_smoke as concurrency_smoke
+
+    concurrency = concurrency_smoke.run_smoke()
+    print(f"api concurrency smoke: {concurrency['successful_mutations']} mutations passed")
     import scripts.release_readiness as release_readiness
 
     release_readiness.check_readiness()

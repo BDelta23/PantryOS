@@ -132,6 +132,7 @@ def release_commands() -> list[str]:
     return [
         "python scripts/check.py",
         "python scripts/smoke_e2e.py",
+        "python scripts/concurrency_smoke.py",
         "node scripts/browser_smoke.cjs",
         "python scripts/container_smoke.py",
         "python scripts/receipt_ocr_corpus_smoke.py",

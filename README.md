@@ -353,6 +353,12 @@ $env:PANTRYOS_API_TOKEN = "e2e-smoke-token"
 python scripts/smoke_e2e.py
 ```
 
+Run the authenticated API concurrency smoke for the A6 durability gate. It starts a temporary local server, launches 20 concurrent add/open/consume/discard mutations, checks the final revision/event counts, and runs SQLite integrity verification:
+
+```powershell
+python scripts/concurrency_smoke.py
+```
+
 Generate or check the release-readiness ledger:
 
 ```powershell

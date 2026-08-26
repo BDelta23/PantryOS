@@ -49,9 +49,16 @@ DEFAULT_EVENT_STREAM_SECONDS = 30.0
 MAX_EVENT_STREAM_SECONDS = 300.0
 DEFAULT_EVENT_HEARTBEAT_SECONDS = 15.0
 MIN_EVENT_HEARTBEAT_SECONDS = 0.1
+DEFAULT_HTTP_REQUEST_QUEUE_SIZE = 64
 SESSION_ENDPOINTS = {"/api/session", "/api/session/login", "/api/session/logout"}
 LOGGER = logging.getLogger("pantryos.http")
 LOGGER.addHandler(logging.NullHandler())
+
+
+class PantryHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server sized for local bursty UI and API clients."""
+
+    request_queue_size = DEFAULT_HTTP_REQUEST_QUEUE_SIZE
 
 
 class RequestBodyTooLarge(ValueError):
@@ -1743,7 +1750,7 @@ def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler.core.migrate()
     if LEGACY_JSON_PATH.exists() and handler.core.dashboard()["summary"]["product_count"] == 0:
         handler.core.import_legacy_json(LEGACY_JSON_PATH)
-    return ThreadingHTTPServer((host, port), handler)
+    return PantryHTTPServer((host, port), handler)
 
 
 def main() -> None:
