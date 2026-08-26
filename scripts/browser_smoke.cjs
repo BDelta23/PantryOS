@@ -5,11 +5,53 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const TOKEN = process.env.PANTRYOS_API_TOKEN || "browser-smoke-token";
-const PYTHON = process.env.PYTHON || process.env.PYTHON_EXE || "python";
+
+function resolvePythonCandidate(candidate) {
+  if (!candidate) return null;
+  const isPath = path.isAbsolute(candidate) || candidate.includes("/") || candidate.includes("\\");
+  if (!isPath) return candidate;
+  if (!fs.existsSync(candidate)) return null;
+  const stat = fs.statSync(candidate);
+  if (stat.isFile()) return candidate;
+  if (stat.isDirectory()) {
+    const executable = path.join(candidate, process.platform === "win32" ? "python.exe" : "python");
+    return fs.existsSync(executable) && fs.statSync(executable).isFile() ? executable : null;
+  }
+  return null;
+}
+
+function resolvePython() {
+  const candidates = [
+    path.join(ROOT, ".venv", "Scripts", "python.exe"),
+    path.join(ROOT, ".venv", "bin", "python"),
+    "C:\\Users\\Kronus\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+    process.env.PYTHON,
+    process.env.PYTHON_EXE,
+    "python",
+    "py",
+  ];
+  for (const candidate of candidates) {
+    const resolved = resolvePythonCandidate(candidate);
+    if (resolved && supportsPython312(resolved)) return resolved;
+  }
+  throw new Error("Could not locate a Python 3.12+ interpreter for browser smoke tests");
+}
+
+function supportsPython312(candidate) {
+  const result = spawnSync(candidate, ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return false;
+  const [major, minor] = result.stdout.trim().split(".").map((value) => Number.parseInt(value, 10));
+  return major > 3 || (major === 3 && minor >= 12);
+}
+
+const PYTHON = resolvePython();
 
 function loadPlaywright() {
   try {

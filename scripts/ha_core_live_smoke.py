@@ -1,9 +1,9 @@
-"""Docker smoke for PantryOS against a real Home Assistant Core runtime and live Core API.
+"""Docker smoke for PantryOS against real Home Assistant Core and PantryOS Core.
 
-This smoke starts the public Home Assistant container, mounts the local PantryOS
-custom integration into a temporary config directory, and passes
-PANTRYOS_API_TOKEN through the container environment. It mutates the live
-PantryOS database by adding two uniquely named inventory lots.
+This smoke creates a disposable Docker network, a disposable PantryOS Core
+container, and a fixed non-secret smoke token on that private network. The Home
+Assistant container talks to that isolated Core instance, so the release proof
+does not require the user's live token and does not mutate the user's database.
 """
 
 from __future__ import annotations
@@ -15,13 +15,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_IMAGE = "ghcr.io/home-assistant/home-assistant:stable"
-DEFAULT_NETWORK = "pantryos_default"
-DEFAULT_BASE_URL = "http://pantryos:8765"
+DEFAULT_HA_IMAGE = "ghcr.io/home-assistant/home-assistant:stable"
+DEFAULT_CORE_IMAGE = "pantryos-pantryos:latest"
+SMOKE_TOKEN = "pantryos-ha-core-smoke-public-token"
 
 
 class HACoreLiveSmokeFailure(AssertionError):
@@ -32,6 +34,7 @@ CONTAINER_SMOKE = r"""
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -44,14 +47,17 @@ logging.getLogger().setLevel(logging.ERROR)
 
 from homeassistant.bootstrap import async_setup_hass
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_API_TOKEN, CONF_BASE_URL
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.runner import RuntimeConfig
 
-from custom_components.pantryos.const import DOMAIN
+from custom_components.pantryos.const import CONF_API_TOKEN, CONF_BASE_URL, DOMAIN
 
 BASE_URL = os.environ["PANTRYOS_BASE_URL"]
-TOKEN = os.environ["PANTRYOS_API_TOKEN"]
+TOKEN = "pantryos-ha-core-smoke-public-token"
+
+
+def progress(message):
+    print(f"[ha-core-smoke] {message}", file=sys.stderr, flush=True)
 
 
 def require(condition, message):
@@ -70,13 +76,16 @@ async def wait_for(predicate, *, timeout=45.0, interval=0.2):
 
 
 async def main():
-    hass = await async_setup_hass(RuntimeConfig(config_dir="/config", skip_pip=True, log_no_color=True))
+    progress("setting up Home Assistant")
+    hass = await asyncio.wait_for(async_setup_hass(RuntimeConfig(config_dir="/config", skip_pip=True, log_no_color=True)), timeout=90)
     require(hass is not None, "async_setup_hass returned None")
-    await hass.async_start()
-    await hass.async_block_till_done()
+    progress("starting Home Assistant")
+    await asyncio.wait_for(hass.async_start(), timeout=60)
+    await asyncio.wait_for(hass.async_block_till_done(), timeout=60)
 
     event_payloads = []
     unsubscribe_event = None
+    entry = None
     try:
         now = datetime.now(UTC)
         entry = ConfigEntry(
@@ -96,13 +105,23 @@ async def main():
             unique_id="pantryos-live-core-smoke",
             version=1,
         )
-        hass.config_entries.async_add(entry)
-        setup_ok = await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        progress("adding PantryOS config entry")
+        add_result = hass.config_entries.async_add(entry)
+        if inspect.isawaitable(add_result):
+            await add_result
+        if entry.state is ConfigEntryState.LOADED:
+            setup_ok = True
+            progress("config entry was loaded by async_add")
+        else:
+            progress("setting up PantryOS config entry")
+            setup_ok = await asyncio.wait_for(hass.config_entries.async_setup(entry.entry_id), timeout=60)
+            progress(f"config entry setup returned {setup_ok}")
+        await asyncio.sleep(0)
         require(setup_ok, f"Config entry setup failed: {entry.state}")
 
         runtime = entry.runtime_data
         coordinator = runtime.coordinator
+        progress("waiting for coordinator availability")
         await wait_for(lambda: coordinator.available, timeout=30)
         revision_before = coordinator.last_revision
 
@@ -115,8 +134,9 @@ async def main():
         require("add_item" in services, "pantryos.add_item service is missing")
         require("open_item" in services, "pantryos.open_item service is missing")
 
+        progress("calling pantryos.add_item service")
         ha_item_name = "Live HA Core Service Oats " + datetime.now(UTC).strftime("%H%M%S%f")
-        await hass.services.async_call(
+        await asyncio.wait_for(hass.services.async_call(
             DOMAIN,
             "add_item",
             {
@@ -126,27 +146,30 @@ async def main():
                 "location": "Pantry",
             },
             blocking=True,
-        )
-        await hass.async_block_till_done()
+        ), timeout=60)
+        await asyncio.sleep(0)
+        progress("waiting for service revision")
         revision_after_service = await wait_for(
             lambda: coordinator.last_revision if coordinator.last_revision > revision_before else None,
             timeout=45,
         )
 
+        progress("writing direct Core item through HA client")
         core_item_name = "Live HA Core Direct Rice " + datetime.now(UTC).strftime("%H%M%S%f")
-        await runtime.client.async_add_item(
+        await asyncio.wait_for(runtime.client.async_add_item(
             {
                 "name": core_item_name,
                 "quantity": "1",
                 "unit": "count",
                 "location": "Pantry",
             }
-        )
+        ), timeout=60)
+        progress("waiting for direct Core revision")
         revision_after_core_push = await wait_for(
             lambda: coordinator.last_revision if coordinator.last_revision > revision_after_service else None,
             timeout=45,
         )
-        await hass.async_block_till_done()
+        await asyncio.sleep(0)
 
         sensor_ids = sorted(entity_id for entity_id in hass.states.async_entity_ids("sensor") if "pantryos" in entity_id)
         state_revision_entity = next((entity_id for entity_id in sensor_ids if entity_id.endswith("state_revision")), None)
@@ -156,8 +179,9 @@ async def main():
         state_revision_state = hass.states.get(state_revision_entity).state
         total_items_state = hass.states.get(total_items_entity).state
 
-        unloaded = await hass.config_entries.async_unload(entry.entry_id)
-        await hass.async_block_till_done()
+        progress("unloading PantryOS config entry")
+        unloaded = await asyncio.wait_for(hass.config_entries.async_unload(entry.entry_id), timeout=60)
+        await asyncio.sleep(0)
         remaining_services = sorted(hass.services.async_services().get(DOMAIN, {}))
         require(unloaded, "Config entry unload returned false")
 
@@ -185,33 +209,33 @@ async def main():
                 sort_keys=True,
             )
         )
+        sys.stdout.flush()
+        os._exit(0)
     finally:
         if unsubscribe_event is not None:
             unsubscribe_event()
-        await hass.async_stop()
-        await hass.async_block_till_done()
+        runtime = getattr(entry, "runtime_data", None) if entry is not None else None
+        stream_task = getattr(runtime, "stream_task", None)
+        if stream_task is not None:
+            stream_task.cancel()
+        progress("leaving Home Assistant smoke process")
 
 
 asyncio.run(main())
 """
 
 
-def redact(text: str, secrets: list[str]) -> str:
-    redacted = text
-    for secret in secrets:
-        if secret:
-            redacted = redacted.replace(secret, "<redacted>")
-    return redacted
+def redact(text: str) -> str:
+    return text.replace(SMOKE_TOKEN, "<smoke-token>")
 
 
-def run_command(args: list[str], *, timeout: int, env: dict[str, str], secrets: list[str]) -> subprocess.CompletedProcess[str]:
+def run_command(args: list[str], *, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     try:
         completed = subprocess.run(
             args,
             cwd=ROOT,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=timeout,
             env=env,
@@ -219,11 +243,18 @@ def run_command(args: list[str], *, timeout: int, env: dict[str, str], secrets: 
     except FileNotFoundError as exc:
         raise HACoreLiveSmokeFailure(f"Required command is not available: {args[0]}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise HACoreLiveSmokeFailure(f"Command timed out after {timeout}s: {' '.join(args)}") from exc
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        detail = redact((stderr + "\n" + stdout).strip())
+        raise HACoreLiveSmokeFailure(f"Command timed out after {timeout}s: {' '.join(args)}\n{detail}") from exc
     if completed.returncode != 0:
-        detail = redact((completed.stderr or completed.stdout).strip(), secrets)
+        detail = redact((completed.stderr or completed.stdout).strip())
         raise HACoreLiveSmokeFailure(f"Command failed ({completed.returncode}): {' '.join(args)}\n{detail}")
     return completed
+
+
+def cleanup_command(args: list[str], *, env: dict[str, str]) -> None:
+    subprocess.run(args, cwd=ROOT, check=False, capture_output=True, text=True, timeout=60, env=env)
 
 
 def prepare_config(directory: Path) -> None:
@@ -234,53 +265,150 @@ def prepare_config(directory: Path) -> None:
     (directory / "ha_core_live_smoke.py").write_text(CONTAINER_SMOKE, encoding="utf-8")
 
 
-def require_token() -> str:
-    token = os.environ.get("PANTRYOS_API_TOKEN")
-    if not token:
-        raise HACoreLiveSmokeFailure("PANTRYOS_API_TOKEN must be set in the environment; do not pass it as a command-line argument")
-    return token
+def isolated_names() -> dict[str, str]:
+    suffix = uuid.uuid4().hex[:12]
+    return {
+        "network": f"pantryos-ha-core-smoke-{suffix}",
+        "container": f"pantryos-ha-core-smoke-core-{suffix}",
+        "volume": f"pantryos-ha-core-smoke-data-{suffix}",
+    }
+
+
+def start_isolated_core(args: argparse.Namespace, *, env: dict[str, str], names: dict[str, str]) -> None:
+    run_command(["docker", "network", "create", names["network"]], timeout=60, env=env)
+    run_command(["docker", "volume", "create", names["volume"]], timeout=60, env=env)
+    core_env = env.copy()
+    core_env["PANTRYOS_API_TOKEN"] = SMOKE_TOKEN
+    run_command(
+        [
+            "docker",
+            "run",
+            "--detach",
+            "--name",
+            names["container"],
+            "--network",
+            names["network"],
+            "--volume",
+            f"{names['volume']}:/app/data",
+            "--env",
+            "PANTRYOS_API_TOKEN",
+            "--env",
+            "PANTRYOS_DATA_DIR=/app/data",
+            "--env",
+            "PANTRYOS_BACKUP_DIR=/app/data/backups",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "CHOWN",
+            "--cap-add",
+            "SETGID",
+            "--cap-add",
+            "SETUID",
+            "--pids-limit",
+            "256",
+            "--tmpfs",
+            "/tmp:mode=1777,size=64m",
+            "--security-opt",
+            "no-new-privileges:true",
+            args.core_image,
+        ],
+        timeout=args.timeout,
+        env=core_env,
+    )
+    wait_for_healthy_container(names["container"], timeout=args.timeout, env=env)
+
+
+def wait_for_healthy_container(container: str, *, timeout: int, env: dict[str, str]) -> None:
+    deadline = time.monotonic() + timeout
+    last_status = "unknown"
+    while time.monotonic() < deadline:
+        completed = run_command(
+            ["docker", "inspect", "--format", "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", container],
+            timeout=30,
+            env=env,
+        )
+        last_status = completed.stdout.strip()
+        if last_status.endswith(" healthy"):
+            return
+        if last_status.startswith("exited") or last_status.startswith("dead"):
+            logs = subprocess.run(
+                ["docker", "logs", container],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            raise HACoreLiveSmokeFailure(f"Isolated PantryOS Core container stopped: {last_status}\n{redact(logs.stderr or logs.stdout)}")
+        time.sleep(1)
+    raise HACoreLiveSmokeFailure(f"Timed out waiting for isolated PantryOS Core health: {last_status}")
+
+
+def cleanup_isolated_core(names: dict[str, str], *, env: dict[str, str]) -> None:
+    cleanup_command(["docker", "rm", "--force", names["container"]], env=env)
+    cleanup_command(["docker", "volume", "rm", names["volume"]], env=env)
+    cleanup_command(["docker", "network", "rm", names["network"]], env=env)
+
+
+def run_ha_container(
+    args: argparse.Namespace, *, config_dir: Path, env: dict[str, str], base_url: str, network: str
+) -> subprocess.CompletedProcess[str]:
+    ha_env = env.copy()
+    ha_env["PANTRYOS_BASE_URL"] = base_url
+    return run_command(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            network,
+            "--volume",
+            f"{config_dir}:/config",
+            "--env",
+            "PANTRYOS_BASE_URL",
+            args.image,
+            "python",
+            "/config/ha_core_live_smoke.py",
+        ],
+        timeout=args.timeout,
+        env=ha_env,
+    )
 
 
 def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
-    token = require_token()
     env = os.environ.copy()
-    env["PANTRYOS_API_TOKEN"] = token
-    env["PANTRYOS_BASE_URL"] = args.base_url
-    with tempfile.TemporaryDirectory(prefix="pantryos-ha-core-live-") as temp:
-        config_dir = Path(temp)
-        prepare_config(config_dir)
-        completed = run_command(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--network",
-                args.network,
-                "--volume",
-                f"{config_dir}:/config:ro",
-                "--env",
-                "PANTRYOS_API_TOKEN",
-                "--env",
-                "PANTRYOS_BASE_URL",
-                args.image,
-                "python",
-                "/config/ha_core_live_smoke.py",
-            ],
-            timeout=args.timeout,
-            env=env,
-            secrets=[token],
-        )
+    names = isolated_names()
+    base_url = f"http://{names['container']}:8765"
     try:
-        return json.loads(completed.stdout.strip().splitlines()[-1])
+        start_isolated_core(args, env=env, names=names)
+        with tempfile.TemporaryDirectory(prefix="pantryos-ha-core-live-") as temp:
+            config_dir = Path(temp)
+            prepare_config(config_dir)
+            completed = run_ha_container(args, config_dir=config_dir, env=env, base_url=base_url, network=names["network"])
+    finally:
+        cleanup_isolated_core(names, env=env)
+    try:
+        result = json.loads(completed.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
-        raise HACoreLiveSmokeFailure(f"Smoke did not return JSON:\n{redact(completed.stdout, [token])}") from exc
+        raise HACoreLiveSmokeFailure(f"Smoke did not return JSON:\n{redact(completed.stdout)}") from exc
+    result["core_mode"] = "isolated"
+    result["base_url"] = base_url
+    result["network"] = names["network"]
+    result["isolated_container"] = names["container"]
+    result["isolated_volume"] = names["volume"]
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run PantryOS against a real Home Assistant Core Docker runtime and live PantryOS API.")
-    parser.add_argument("--image", default=os.environ.get("PANTRYOS_HA_IMAGE") or DEFAULT_IMAGE)
-    parser.add_argument("--network", default=os.environ.get("PANTRYOS_DOCKER_NETWORK") or DEFAULT_NETWORK)
-    parser.add_argument("--base-url", default=os.environ.get("PANTRYOS_HA_CORE_BASE_URL") or DEFAULT_BASE_URL)
+    parser = argparse.ArgumentParser(
+        description="Run PantryOS against real Home Assistant Core and an isolated PantryOS Core Docker runtime."
+    )
+    parser.add_argument("--image", default=os.environ.get("PANTRYOS_HA_IMAGE") or DEFAULT_HA_IMAGE, help="Home Assistant Core image to run")
+    parser.add_argument(
+        "--core-image", default=os.environ.get("PANTRYOS_CORE_IMAGE") or DEFAULT_CORE_IMAGE, help="PantryOS image to run as isolated Core"
+    )
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("PANTRYOS_HA_CORE_SMOKE_TIMEOUT", "300")))
     return parser
 

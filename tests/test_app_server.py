@@ -1304,6 +1304,9 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "Focusable target is smaller than 24px" in browser_smoke
     assert "completed workflow" in browser_smoke
     assert 'serviceWorkers: "block"' in browser_smoke
+    assert "resolvePythonCandidate" in browser_smoke
+    assert "supportsPython312" in browser_smoke
+    assert "Could not locate a Python 3.12+ interpreter" in browser_smoke
     assert "toggleSetupTokenVisibility" in app_js
     assert "auth_not_configured" in app_js
     assert "/api/cooking/sessions" in app_js
