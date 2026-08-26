@@ -677,7 +677,10 @@ def test_home_assistant_live_core_smoke_uses_real_core_api_and_release_docs() ->
     release = (ROOT / "scripts" / "release_readiness.py").read_text(encoding="utf-8")
 
     assert "async_setup_hass" in script
-    assert "ConfigEntry(" in script
+    assert "hass.config_entries.flow.async_init" in script
+    assert "config_flow_result_type" in script
+    assert "entry.unique_id" in script
+    assert "ConfigEntry(" not in script
     assert "hass.config_entries.async_setup" in script
     assert "hass.services.async_call" in script
     assert "hass.bus.async_listen" in script
@@ -691,5 +694,6 @@ def test_home_assistant_live_core_smoke_uses_real_core_api_and_release_docs() ->
     assert '"--env",\n            "PANTRYOS_API_TOKEN"' in script
     assert "FakeClient" not in script
     assert "python scripts/ha_core_live_smoke.py" in readme
+    assert "config-flow manager" in readme
     assert "your running PantryOS database is not mutated" in readme
     assert "python scripts/ha_core_live_smoke.py" in release

@@ -34,19 +34,17 @@ CONTAINER_SMOKE = r"""
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import os
 import sys
 from datetime import UTC, datetime
-from types import MappingProxyType
 
 sys.path.insert(0, "/config")
 logging.getLogger().setLevel(logging.ERROR)
 
 from homeassistant.bootstrap import async_setup_hass
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.runner import RuntimeConfig
 
@@ -87,31 +85,33 @@ async def main():
     unsubscribe_event = None
     entry = None
     try:
-        now = datetime.now(UTC)
-        entry = ConfigEntry(
-            created_at=now,
-            data={CONF_BASE_URL: BASE_URL, CONF_API_TOKEN: TOKEN},
-            disabled_by=None,
-            discovery_keys=MappingProxyType({}),
-            domain=DOMAIN,
-            entry_id="pantryos_live_core_smoke",
-            minor_version=1,
-            modified_at=now,
-            options={},
-            source="user",
-            state=ConfigEntryState.NOT_LOADED,
-            subentries_data=(),
-            title="PantryOS Live Core Smoke",
-            unique_id="pantryos-live-core-smoke",
-            version=1,
+        progress("starting PantryOS config flow")
+        flow_result = await asyncio.wait_for(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": "user"},
+                data={CONF_BASE_URL: BASE_URL, CONF_API_TOKEN: TOKEN},
+            ),
+            timeout=60,
         )
-        progress("adding PantryOS config entry")
-        add_result = hass.config_entries.async_add(entry)
-        if inspect.isawaitable(add_result):
-            await add_result
+        result_type = flow_result.get("type")
+        require(
+            result_type == "create_entry" or getattr(result_type, "value", None) == "create_entry",
+            f"Config flow did not create entry: {flow_result}",
+        )
+        entry = flow_result.get("result")
+        if entry is None:
+            entries = hass.config_entries.async_entries(DOMAIN)
+            entry = entries[0] if entries else None
+        require(entry is not None, f"Config flow did not add a {DOMAIN} entry")
+        require(entry.domain == DOMAIN, f"Unexpected config entry domain: {entry.domain}")
+        require(entry.unique_id is not None, "Config flow did not set a PantryOS unique ID")
+        require(entry.data[CONF_BASE_URL] == BASE_URL, "Config flow did not persist the normalized Core URL")
+        require(entry.data[CONF_API_TOKEN] == TOKEN, "Config flow did not persist the API token")
+
         if entry.state is ConfigEntryState.LOADED:
             setup_ok = True
-            progress("config entry was loaded by async_add")
+            progress("config entry was loaded by config flow")
         else:
             progress("setting up PantryOS config entry")
             setup_ok = await asyncio.wait_for(hass.config_entries.async_setup(entry.entry_id), timeout=60)
@@ -191,6 +191,8 @@ async def main():
                     "ok": True,
                     "ha_version": HA_VERSION,
                     "setup_ok": setup_ok,
+                    "config_flow_result_type": getattr(result_type, "value", result_type),
+                    "entry_unique_id": entry.unique_id,
                     "unloaded": unloaded,
                     "remaining_services": remaining_services,
                     "sensor_count": len(sensor_ids),
