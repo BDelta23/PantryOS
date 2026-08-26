@@ -1025,7 +1025,7 @@ def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
             )
             events = request_json(f"{base}/api/v1/inventory/events?limit=5", token="test-token")
             event_detail = request_json(f"{base}/api/v1/events/{events['items'][-1]['id']}", token="test-token")
-            content_type, stream = request_text(f"{base}/api/v1/events", token="test-token", accept="text/event-stream")
+            content_type, stream = request_text(f"{base}/api/v1/events?timeout=0.1&heartbeat=0.1", token="test-token", accept="text/event-stream")
         finally:
             httpd.shutdown()
             thread.join(timeout=5)
@@ -1046,6 +1046,44 @@ def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
     assert "data:" in stream
     assert ": heartbeat" in stream
 
+
+def test_event_stream_waits_for_new_revisions_before_closing() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            revision = request_json(f"{base}/api/v1/dashboard", token="test-token")["revision"]
+
+            def add_item() -> None:
+                request_json(
+                    f"{base}/api/v1/inventory/lots",
+                    method="POST",
+                    token="test-token",
+                    payload={"name": "Stream Beans", "quantity": "1", "unit": "count", "location": "Kitchen/Pantry"},
+                )
+
+            timer = threading.Timer(0.1, add_item)
+            timer.start()
+            content_type, stream = request_text(
+                f"{base}/api/v1/events?after_revision={revision}&timeout=0.6&heartbeat=0.1",
+                token="test-token",
+                accept="text/event-stream",
+            )
+            timer.join(timeout=1)
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert content_type.startswith("text/event-stream")
+    assert "event: pantryos.hello" in stream
+    assert "event: ADD" in stream
+    assert "Stream Beans" not in stream
+    assert f"id: {revision + 1}" in stream
+    assert ": heartbeat" in stream
 
 def test_static_browser_workflows_are_not_stubbed() -> None:
     static_dir = Path(__file__).resolve().parents[1] / "app" / "static"

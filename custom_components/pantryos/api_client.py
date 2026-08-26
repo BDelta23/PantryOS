@@ -39,6 +39,7 @@ class PantryAPIClient:
 
     async def async_dashboard(self) -> dict[str, Any]:
         return await self._request("GET", "/api/v1/dashboard", authenticated=True)
+
     async def async_events(self, *, limit: int = 25, after_revision: int | None = None) -> dict[str, Any]:
         path = f"/api/v1/inventory/events?limit={limit}"
         if after_revision is not None:
@@ -48,6 +49,25 @@ class PantryAPIClient:
     async def async_event(self, event_id: str) -> dict[str, Any]:
         path = f"/api/v1/events/{quote(event_id, safe='')}"
         return await self._request("GET", path, authenticated=True)
+
+    async def async_event_stream(
+        self,
+        *,
+        after_revision: int | None = None,
+        timeout_seconds: float = 30,
+        heartbeat_seconds: float = 15,
+    ) -> dict[str, Any]:
+        path = f"/api/v1/events?timeout={timeout_seconds:g}&heartbeat={heartbeat_seconds:g}"
+        if after_revision is not None:
+            path = f"{path}&after_revision={after_revision}"
+        loop = asyncio.get_running_loop()
+        request = partial(
+            self._event_stream_sync,
+            path,
+            after_revision=after_revision,
+            timeout_seconds=timeout_seconds,
+        )
+        return await loop.run_in_executor(None, request)
 
     async def async_refresh(self) -> dict[str, Any]:
         try:
@@ -194,6 +214,68 @@ class PantryAPIClient:
         request = partial(self._request_sync, method, path, data=data, authenticated=authenticated)
         return await loop.run_in_executor(None, request)
 
+    def _event_stream_sync(self, path: str, *, after_revision: int | None, timeout_seconds: float) -> dict[str, Any]:
+        request = Request(f"{self.base_url}{path}", method="GET")
+        request.add_header("Accept", "text/event-stream")
+        request.add_header("Authorization", f"Bearer {self.token}")
+        if after_revision is not None:
+            request.add_header("Last-Event-ID", str(after_revision))
+        try:
+            with urlopen(request, timeout=max(self.timeout, timeout_seconds + 2)) as response:
+                return self._parse_event_stream(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            message, code = self._problem_from_http_error(exc)
+            if exc.code in (401, 403):
+                raise PantryAPIAuthError(message, status=exc.code, code=code) from exc
+            raise PantryAPIError(message, status=exc.code, code=code) from exc
+        except URLError as exc:
+            raise PantryAPIError(str(exc.reason)) from exc
+        except TimeoutError as exc:
+            raise PantryAPIError("Event stream timed out") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise PantryAPIError("PantryOS returned an invalid event stream") from exc
+
+    @staticmethod
+    def _parse_event_stream(text: str) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        revision = 0
+        event_type = "message"
+        event_id: str | None = None
+        data_lines: list[str] = []
+
+        def flush() -> None:
+            nonlocal event_type, event_id, data_lines, revision
+            if not data_lines:
+                event_type = "message"
+                event_id = None
+                return
+            payload = json.loads("\n".join(data_lines))
+            if isinstance(payload, dict):
+                numeric_revision = _int_revision(payload.get("revision")) or _int_revision(event_id)
+                if numeric_revision is not None:
+                    revision = max(revision, numeric_revision)
+                    payload.setdefault("revision", numeric_revision)
+                payload.setdefault("type", event_type)
+                if event_type != "pantryos.hello":
+                    items.append(payload)
+            event_type = "message"
+            event_id = None
+            data_lines = []
+
+        for line in text.splitlines():
+            if line == "":
+                flush()
+            elif line.startswith(":"):
+                continue
+            elif line.startswith("id:"):
+                event_id = line[3:].strip()
+            elif line.startswith("event:"):
+                event_type = line[6:].strip() or "message"
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        flush()
+        return {"items": items, "revision": revision, "limit": len(items), "stream": True}
+
     def _request_sync(self, method: str, path: str, *, data: dict[str, Any] | None, authenticated: bool) -> dict[str, Any]:
         body = None if data is None else json.dumps(data, default=str).encode("utf-8")
         request = Request(f"{self.base_url}{path}", data=body, method=method)
@@ -226,3 +308,11 @@ class PantryAPIClient:
         detail = str(problem.get("detail") or problem.get("title") or f"HTTP {exc.code}")
         code = problem.get("code")
         return detail, str(code) if code is not None else None
+
+
+def _int_revision(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None

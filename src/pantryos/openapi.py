@@ -197,6 +197,15 @@ def _parameters_for(path: str) -> list[dict[str, Any]]:
         parameters.append(_path_parameter("barcode", "Barcode value."))
     if "{recipe_name}" in path:
         parameters.append(_path_parameter("recipe_name", "Recipe name."))
+    if path == "/api/v1/events":
+        parameters.extend(
+            [
+                {"name": "after_revision", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 0}},
+                {"name": "timeout", "in": "query", "required": False, "schema": {"type": "number", "minimum": 0, "maximum": 300}},
+                {"name": "heartbeat", "in": "query", "required": False, "schema": {"type": "number", "minimum": 0.1}},
+                {"name": "Last-Event-ID", "in": "header", "required": False, "schema": {"type": "integer", "minimum": 0}},
+            ]
+        )
     if path == "/api/v1/inventory/events":
         parameters.extend(
             [
@@ -213,7 +222,7 @@ def _path_parameter(name: str, description: str) -> dict[str, Any]:
 
 def _responses(schema_name: str, *, sse: bool = False, created: bool = False) -> dict[str, Any]:
     if sse:
-        success = {"description": "SSE hello, replay, and heartbeat stream.", "content": {"text/event-stream": {"schema": {"type": "string"}}}}
+        success = {"description": "Bounded SSE hello, replay, live revision polling, and heartbeat stream.", "content": {"text/event-stream": {"schema": {"type": "string"}}}}
     else:
         success = {"description": "Successful response.", "content": {"application/json": {"schema": {"$ref": f"#/components/schemas/{schema_name}"}}}}
     responses = {"201" if created else "200": success}

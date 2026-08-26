@@ -42,6 +42,10 @@ PROBLEM_BASE_URL = "https://pantryos.local/problems"
 PUBLIC_V1_ENDPOINTS = {"/api/v1/health/live", "/api/v1/health/ready"}
 BROWSER_SESSION_COOKIE = "pantryos_session"
 DEFAULT_BROWSER_SESSION_SECONDS = 12 * 60 * 60
+DEFAULT_EVENT_STREAM_SECONDS = 30.0
+MAX_EVENT_STREAM_SECONDS = 300.0
+DEFAULT_EVENT_HEARTBEAT_SECONDS = 15.0
+MIN_EVENT_HEARTBEAT_SECONDS = 0.1
 SESSION_ENDPOINTS = {"/api/session", "/api/session/login", "/api/session/logout"}
 LOGGER = logging.getLogger("pantryos.http")
 LOGGER.addHandler(logging.NullHandler())
@@ -1076,10 +1080,26 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _send_event_stream(self, parsed: Any) -> None:
+        query = parse_qs(parsed.query)
         last_event_id = self.headers.get("Last-Event-ID")
         after_revision: int | None = None
+        query_after = query.get("after_revision", [None])[0]
+        if query_after and str(query_after).isdecimal():
+            after_revision = int(query_after)
         if last_event_id and last_event_id.isdecimal():
             after_revision = int(last_event_id)
+        stream_seconds = _bounded_float(
+            query.get("timeout", [None])[0],
+            default=DEFAULT_EVENT_STREAM_SECONDS,
+            minimum=0.0,
+            maximum=MAX_EVENT_STREAM_SECONDS,
+        )
+        heartbeat_seconds = _bounded_float(
+            query.get("heartbeat", [None])[0],
+            default=DEFAULT_EVENT_HEARTBEAT_SECONDS,
+            minimum=MIN_EVENT_HEARTBEAT_SECONDS,
+            maximum=max(DEFAULT_EVENT_HEARTBEAT_SECONDS, stream_seconds or DEFAULT_EVENT_HEARTBEAT_SECONDS),
+        )
         events = self.core.events(limit=25, after_revision=after_revision)
         self.send_response(HTTPStatus.OK.value)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -1088,9 +1108,24 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         hello = {"type": "hello", "revision": events["revision"], "retry_ms": 5000}
         self._write_sse("pantryos.hello", str(events["revision"]), hello)
+        last_sent_revision = after_revision or 0
         for event in events["items"]:
             self._write_sse(event["type"], str(event["revision"]), event)
-        self.wfile.write(f": heartbeat {int(time.time())}\n\n".encode("utf-8"))
+            last_sent_revision = max(last_sent_revision, int(event["revision"]))
+        deadline = time.monotonic() + stream_seconds
+        next_heartbeat = time.monotonic()
+        while time.monotonic() < deadline:
+            if time.monotonic() >= next_heartbeat:
+                self.wfile.write(f": heartbeat {int(time.time())}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                next_heartbeat = time.monotonic() + heartbeat_seconds
+            events = self.core.events(limit=25, after_revision=last_sent_revision)
+            for event in events["items"]:
+                self._write_sse(event["type"], str(event["revision"]), event)
+                last_sent_revision = max(last_sent_revision, int(event["revision"]))
+            if events["items"]:
+                self.wfile.flush()
+            time.sleep(min(0.25, heartbeat_seconds, max(0.0, deadline - time.monotonic())))
         self.wfile.flush()
         self._log_response(HTTPStatus.OK)
 
@@ -1099,6 +1134,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(f"id: {event_id}\n".encode("utf-8"))
         self.wfile.write(f"event: {event_type}\n".encode("utf-8"))
         self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+
     def _send_json(
         self,
         data: dict[str, Any],
@@ -1560,6 +1596,16 @@ def datetime_now() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_float(value: str | None, *, default: float, minimum: float, maximum: float) -> float:
+    if value in (None, ""):
+        return default
+    try:
+        numeric = float(value)
+    except ValueError:
+        return default
+    return max(minimum, min(numeric, maximum))
 
 
 def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:

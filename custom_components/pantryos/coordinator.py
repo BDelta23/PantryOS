@@ -60,6 +60,21 @@ class PantryDataCoordinator:
     async def async_refresh_from_events(self, *, limit: int = 25) -> bool:
         """Refresh when the PantryOS event audit shows a newer revision."""
         events = await self.client.async_events(limit=limit, after_revision=self.last_event_revision)
+        return await self._refresh_from_event_payload(events)
+
+    async def async_refresh_from_event_stream(self, *, timeout_seconds: float = 25, heartbeat_seconds: float = 10) -> bool:
+        """Refresh when the bounded PantryOS SSE stream yields a newer revision."""
+        stream = getattr(self.client, "async_event_stream", None)
+        if stream is None:
+            return await self.async_refresh_from_events()
+        events = await stream(
+            after_revision=self.last_event_revision,
+            timeout_seconds=timeout_seconds,
+            heartbeat_seconds=heartbeat_seconds,
+        )
+        return await self._refresh_from_event_payload(events)
+
+    async def _refresh_from_event_payload(self, events: dict[str, Any]) -> bool:
         event_revision = _revision_from_events(events)
         if event_revision is None:
             reported_revision = _revision_from_payload(events)

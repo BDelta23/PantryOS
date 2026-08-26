@@ -38,6 +38,7 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     assert "PantryRuntime" in init_py
     assert "entry.runtime_data" in init_py
     assert "PantryDataCoordinator" in coordinator_py
+    assert "async_refresh_from_event_stream" in init_py
     assert "async_refresh_from_events" in init_py
     assert "async_track_time_interval" in init_py
     assert "self._coordinator.summary()" in sensor_py
@@ -174,6 +175,42 @@ def test_home_assistant_coordinator_refreshes_snapshot_when_events_advance_revis
 
     asyncio.run(scenario())
 
+
+def test_home_assistant_coordinator_refreshes_snapshot_when_event_stream_advances_revision() -> None:
+    module = load_coordinator_module()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.refresh_count = 0
+            self.stream_after_revision = None
+
+        async def async_refresh(self):
+            self.refresh_count += 1
+            return {
+                "revision": self.refresh_count,
+                "summary": {"total_items": self.refresh_count, "state_revision": self.refresh_count},
+            }
+
+        async def async_event_stream(self, *, after_revision=None, timeout_seconds=25, heartbeat_seconds=10):
+            self.stream_after_revision = after_revision
+            assert timeout_seconds == 0.1
+            assert heartbeat_seconds == 0.1
+            return {"items": [{"revision": 2, "type": "ADD"}], "revision": 2, "stream": True}
+
+    async def scenario() -> None:
+        client = FakeClient()
+        coordinator = module.PantryDataCoordinator(client)
+        await coordinator.async_refresh()
+
+        changed = await coordinator.async_refresh_from_event_stream(timeout_seconds=0.1, heartbeat_seconds=0.1)
+        assert changed is True
+        assert client.stream_after_revision == 1
+        assert client.refresh_count == 2
+        assert coordinator.last_revision == 2
+        assert coordinator.last_event_revision == 2
+        assert coordinator.summary()["total_items"] == 2
+
+    asyncio.run(scenario())
 
 @contextmanager
 def fake_homeassistant_modules():

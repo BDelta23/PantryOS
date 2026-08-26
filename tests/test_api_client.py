@@ -67,6 +67,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         refreshed = await client.async_refresh()
         events = await client.async_events(limit=3)
         latest_event = await client.async_event(events["items"][-1]["id"])
+        streamed = await client.async_event_stream(after_revision=0, timeout_seconds=0.1, heartbeat_seconds=0.1)
 
         assert instance["schema_version"] == 4
         initial_total = initial["summary"]["total_items"]
@@ -78,6 +79,9 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         assert client.summary()["total_items"] == initial_total + 1
         assert events["limit"] == 3
         assert latest_event["id"] == events["items"][-1]["id"]
+        assert streamed["stream"] is True
+        assert streamed["revision"] >= latest_event["revision"]
+        assert streamed["items"][-1]["id"] == latest_event["id"]
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))

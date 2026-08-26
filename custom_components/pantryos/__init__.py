@@ -36,14 +36,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _poll_events(now: Any) -> None:
         try:
-            changed = await coordinator.async_refresh_from_events()
+            changed = await coordinator.async_refresh_from_event_stream()
         except PantryAPIError:
             try:
-                await coordinator.async_refresh()
+                changed = await coordinator.async_refresh_from_events()
             except PantryAPIError:
-                changed = True
-            else:
-                changed = True
+                try:
+                    await coordinator.async_refresh()
+                except PantryAPIError:
+                    changed = True
+                else:
+                    changed = True
         if changed:
             _signal_entities_updated(hass)
 
