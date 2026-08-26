@@ -64,6 +64,8 @@ HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 TRANSPARENCY_LOG_URL_TERMS = ("rekor", "sigstore")
 INSECURE_COSIGN_FLAGS = ("--allow-insecure-registry", "--insecure", "--insecure-ignore-sct", "--insecure-ignore-tlog")
 BARCODE_RE = re.compile(r"^\d{8,14}$")
+RECEIPT_ID_RE = re.compile(r"^receipt_[0-9a-f]{32}$")
+PURCHASE_ID_RE = re.compile(r"^purchase_[0-9a-f]{32}$")
 SYNTHETIC_RECEIPT_SOURCE_TERMS = ("synthetic", "fixture", "generated", "mock", "sample", "test")
 OCR_CAPTURE_TERMS = ("ocr", "tesseract")
 IMAGE_CAPTURE_TERMS = ("photo", "image", "camera", "scan", "scanned", "jpeg", "jpg", "png")
@@ -359,11 +361,13 @@ def _validate_check_specific_details(
                 }
             )
         receipt_id = details.get("receipt_id")
-        if not isinstance(receipt_id, str) or not receipt_id.strip().startswith("receipt_"):
-            problems.append({"field": f"{prefix}.details.receipt_id", "problem": "must be a committed receipt_ identifier"})
+        if not isinstance(receipt_id, str) or RECEIPT_ID_RE.fullmatch(receipt_id.strip()) is None:
+            problems.append(
+                {"field": f"{prefix}.details.receipt_id", "problem": "must be a committed receipt_<32 lowercase hex> identifier"}
+            )
         purchase_id = details.get("purchase_id")
-        if not isinstance(purchase_id, str) or not purchase_id.strip().startswith("purchase_"):
-            problems.append({"field": f"{prefix}.details.purchase_id", "problem": "must be a purchase_ identifier"})
+        if not isinstance(purchase_id, str) or PURCHASE_ID_RE.fullmatch(purchase_id.strip()) is None:
+            problems.append({"field": f"{prefix}.details.purchase_id", "problem": "must be a purchase_<32 lowercase hex> identifier"})
         _require_positive_int_string(details.get("committed_lot_count"), f"{prefix}.details.committed_lot_count", problems)
         price_history_result = str(details.get("price_history_result", "")).strip().lower()
         if price_history_result:
