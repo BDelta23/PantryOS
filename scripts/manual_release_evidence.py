@@ -56,6 +56,7 @@ REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
 
 REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replace-me", "changeme"}
 SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+IMAGE_DIGEST_REF_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
@@ -379,6 +380,13 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.tag", "problem": "must be a SemVer release tag like v1.0.0"})
         image = details.get("image")
         image_value = image.strip() if isinstance(image, str) else ""
+        if image_value and IMAGE_DIGEST_REF_RE.fullmatch(image_value) is None:
+            problems.append(
+                {
+                    "field": f"{prefix}.details.image",
+                    "problem": "must be a digest-pinned image reference like ghcr.io/org/pantryos@sha256:<digest>",
+                }
+            )
         if image_value and digest_value and digest_value not in image_value:
             problems.append({"field": f"{prefix}.details.image", "problem": "must include the recorded digest"})
         signature_identity = details.get("signature_identity")
