@@ -8,6 +8,7 @@ from contextlib import closing
 import threading
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pantryos.core as core_module
 from pantryos.core import PantryCore
@@ -476,6 +477,49 @@ Total: 8.49
         assert core.resolve_barcode("12345")["matched"] is True
 
 
+def test_price_history_uses_recent_median_compatible_unit_anomaly() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+
+        def commit_receipt(purchased_at: str, total_cost: str) -> dict[str, Any]:
+            uploaded = core.upload_receipt(
+                {
+                    "filename": f"price-{purchased_at}.txt",
+                    "mime_type": "text/plain",
+                    "text": (
+                        "Store: Price Market\n"
+                        f"Date: {purchased_at}\n"
+                        f"Anomaly Apples,10,count,{total_cost}\n"
+                        f"Total: {total_cost}\n"
+                    ),
+                }
+            )
+            core.extract_receipt(uploaded["receipt"]["id"])
+            return core.commit_receipt(uploaded["receipt"]["id"])
+
+        first = commit_receipt("2026-08-21", "10.00")
+        product_id = first["lines"][0]["product_id"]
+        commit_receipt("2026-08-22", "12.00")
+        commit_receipt("2026-08-23", "11.00")
+        commit_receipt("2026-08-24", "20.00")
+
+        prices = core.product_prices(product_id)
+        latest = prices["prices"][0]
+        analysis = prices["analysis"]
+
+        assert analysis["baseline_policy"] == "recent_median_compatible_unit"
+        assert analysis["evidence_window"] == "up to 5 prior purchases with the same comparable unit"
+        assert analysis["latest"]["status"] == "high"
+        assert analysis["latest"]["baseline_sample_count"] == 3
+        assert analysis["latest"]["baseline_unit_price"] == "1.10"
+        assert analysis["latest"]["anomaly_ratio"] == "1.82"
+        assert latest["unit_price"] == "2.00"
+        assert latest["baseline_unit_price"] == "1.10"
+        assert latest["anomaly_ratio"] == "1.82"
+        assert "recent median baseline" in latest["explanation"]
+        assert "3 compatible prior purchases" in latest["explanation"]
+
+
 def test_receipt_upload_rejects_unsupported_type_and_large_text() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
@@ -492,6 +536,8 @@ def test_receipt_upload_rejects_unsupported_type_and_large_text() -> None:
             assert "exceeds 64000 bytes" in str(exc)
         else:
             raise AssertionError("oversized receipt upload should fail")
+
+
 def test_discard_records_monthly_waste_and_location_values() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

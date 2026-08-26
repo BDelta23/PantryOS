@@ -727,6 +727,8 @@ def test_receipt_api_review_commit_and_price_history() -> None:
     assert purchase_detail["prices"][0]["unit_price"] == "2.00"
     assert prices["product"]["name"] == "API Apples"
     assert prices["prices"][0]["comparable_unit"] == "count"
+    assert prices["analysis"]["baseline_policy"] == "recent_median_compatible_unit"
+    assert prices["analysis"]["latest"]["status"] == "baseline"
 
 
 def test_receipt_upload_enforces_limits_and_private_storage() -> None:

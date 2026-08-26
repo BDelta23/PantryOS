@@ -992,7 +992,7 @@ class PantryCore:
             if product is None:
                 raise NotFoundError(f"Product not found: {product_id}")
             rows = [dict(row) for row in connection.execute("SELECT * FROM price_history WHERE product_id = ? ORDER BY purchased_at DESC, created_at DESC", (product_id,))]
-        return {"product": dict(product), "prices": rows}
+        return {"product": dict(product), "prices": rows, "analysis": self._price_history_analysis(rows)}
 
     def events(self, *, limit: int = 25, after_revision: int | None = None) -> dict[str, Any]:
         self.migrate()
@@ -1981,6 +1981,69 @@ class PantryCore:
         ]
         return {"purchase": dict(purchase), "lines": lines, "lots": lots, "prices": prices}
 
+    def _price_history_analysis(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        analysis: dict[str, Any] = {
+            "baseline_policy": "recent_median_compatible_unit",
+            "evidence_window": "up to 5 prior purchases with the same comparable unit",
+            "sample_count": len(rows),
+            "latest": None,
+        }
+        if not rows:
+            return analysis
+
+        latest = rows[0]
+        prior_compatible = [row for row in rows[1:] if row.get("comparable_unit") == latest.get("comparable_unit")][:5]
+        anomaly_ratio = latest.get("anomaly_ratio")
+        status = "baseline"
+        if anomaly_ratio is not None:
+            ratio = Decimal(str(anomaly_ratio))
+            if ratio >= Decimal("1.25"):
+                status = "high"
+            elif ratio <= Decimal("0.75"):
+                status = "low"
+            else:
+                status = "normal"
+        analysis["latest"] = {
+            "price_id": latest.get("id"),
+            "unit_price": latest.get("unit_price"),
+            "currency": latest.get("currency"),
+            "comparable_unit": latest.get("comparable_unit"),
+            "baseline_unit_price": latest.get("baseline_unit_price"),
+            "anomaly_ratio": anomaly_ratio,
+            "status": status,
+            "baseline_sample_count": len(prior_compatible),
+            "explanation": latest.get("explanation"),
+        }
+        return analysis
+
+    def _price_baseline(self, connection: sqlite3.Connection, product_id: str, comparable_unit: str) -> dict[str, Any] | None:
+        rows = [
+            Decimal(str(row["unit_price"]))
+            for row in connection.execute(
+                """
+                SELECT unit_price
+                FROM price_history
+                WHERE product_id = ? AND comparable_unit = ?
+                ORDER BY purchased_at DESC, created_at DESC
+                LIMIT 5
+                """,
+                (product_id, comparable_unit),
+            )
+        ]
+        if not rows:
+            return None
+        ordered = sorted(rows)
+        midpoint = len(ordered) // 2
+        if len(ordered) % 2:
+            median = ordered[midpoint]
+        else:
+            median = (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2")
+        return {
+            "unit_price": median,
+            "sample_count": len(rows),
+            "window": "up to 5 prior purchases with the same comparable unit",
+        }
+
     def _record_price_history(self, connection: sqlite3.Connection, line: dict[str, Any], *, store: Any, purchased_at: str) -> None:
         if line.get("product_id") is None or line.get("total_cost") in (None, ""):
             return
@@ -1990,25 +2053,27 @@ class PantryCore:
         comparable_unit = self._comparable_unit(unit)
         comparable_quantity = convert(quantity, unit, comparable_unit)
         unit_price = total_cost / comparable_quantity
-        baseline = connection.execute(
-            "SELECT AVG(CAST(unit_price AS REAL)) FROM price_history WHERE product_id = ? AND comparable_unit = ?",
-            (line["product_id"], comparable_unit),
-        ).fetchone()[0]
+        baseline = self._price_baseline(connection, str(line["product_id"]), comparable_unit)
         baseline_text = None
         anomaly_ratio = None
         if baseline is None:
             explanation = f"Baseline initialized at {self._money_text(unit_price)} per {comparable_unit}."
         else:
-            baseline_decimal = Decimal(str(baseline))
+            baseline_decimal = baseline["unit_price"]
             baseline_text = self._money_text(baseline_decimal)
             ratio = unit_price / baseline_decimal if baseline_decimal > 0 else Decimal("1")
             anomaly_ratio = decimal_text(ratio.quantize(Decimal("0.01")))
+            relation = "within"
             if ratio >= Decimal("1.25"):
-                explanation = f"Price is {anomaly_ratio}x the prior baseline for compatible {comparable_unit} purchases."
+                relation = "above"
             elif ratio <= Decimal("0.75"):
-                explanation = f"Price is {anomaly_ratio}x the prior baseline for compatible {comparable_unit} purchases."
-            else:
-                explanation = f"Price is within the prior baseline for compatible {comparable_unit} purchases."
+                relation = "below"
+            plural = "" if baseline["sample_count"] == 1 else "s"
+            explanation = (
+                f"Current price {self._money_text(unit_price)} per {comparable_unit} is {anomaly_ratio}x "
+                f"and {relation} the recent median baseline of {baseline_text} per {comparable_unit} "
+                f"from {baseline['sample_count']} compatible prior purchase{plural}; window: {baseline['window']}."
+            )
         connection.execute(
             """
             INSERT OR IGNORE INTO price_history(
