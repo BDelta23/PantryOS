@@ -58,6 +58,7 @@ REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replac
 SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_REF_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+COSIGN_IDENTITY_FLAG_RE = re.compile(r"(?<!\S)--certificate-identity(?:-regexp)?(?:=|\s)", re.IGNORECASE)
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 BARCODE_RE = re.compile(r"^\d{8,14}$")
@@ -400,6 +401,13 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded digest"})
         elif identity_value and identity_value not in command:
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include signature_identity"})
+        elif identity_value and COSIGN_IDENTITY_FLAG_RE.search(command) is None:
+            problems.append(
+                {
+                    "field": f"{prefix}.details.verification_command",
+                    "problem": "must constrain signature identity with --certificate-identity or --certificate-identity-regexp",
+                }
+            )
         transparency_log_url = details.get("transparency_log_url")
         transparency_value = transparency_log_url.strip() if isinstance(transparency_log_url, str) else ""
         unavailable_prefix = "not available:"
