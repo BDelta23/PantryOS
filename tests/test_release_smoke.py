@@ -282,7 +282,9 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
         artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
-        review = evidence_dir / "independent-review.md"
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         commit = "b" * 40
@@ -322,7 +324,7 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
             elif check_id == "independent-full-review":
                 details.update(
                     {
-                        "review_path": "docs/release/evidence/independent-review.md",
+                        "review_path": "docs/reviews/independent-review.md",
                         "reviewed_commit": commit,
                         "decision": "PASS",
                         "open_critical_high": "0",
@@ -391,6 +393,61 @@ def test_manual_release_evidence_rejects_incomplete_records() -> None:
     assert any(problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]" for problem in result["problems"])
 
 
+def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        outside_dir = root / "docs" / "reviews"
+        outside_dir.mkdir(parents=True)
+        outside_artifact = outside_dir / "manual-check.md"
+        outside_artifact.write_text("release evidence in the wrong folder\n", encoding="utf-8")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        commit = "d" * 40
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_commit": commit,
+                    "checks": [
+                        {
+                            "id": "physical-barcode-camera",
+                            "result": "PASS",
+                            "operator": "release-operator",
+                            "timestamp_utc": "2026-08-26T12:00:00Z",
+                            "acceptance": ["F1", "F2", "G5", "G6"],
+                            "details": {
+                                "device": "Pixel 8",
+                                "os": "Android 16",
+                                "browser": "Chrome",
+                                "app_url": "http://127.0.0.1:8765",
+                                "known_barcode": "012345678905",
+                                "known_result": "Resolved known product and created lot lot_known",
+                                "unknown_barcode": "999999999999",
+                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
+                            },
+                            "evidence": {
+                                "summary": "Physical barcode evidence artifact is in the wrong committed folder.",
+                                "artifact_paths": ["docs/reviews/manual-check.md"],
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert any(
+        problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]"
+        and problem["problem"] == "must be under docs/release/evidence"
+        for problem in result["problems"]
+    )
+
+
 def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> None:
     from scripts import manual_release_evidence
 
@@ -400,7 +457,9 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
         artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
-        review = evidence_dir / "independent-review.md"
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         commit = "d" * 40
         review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
@@ -439,7 +498,7 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
             elif check_id == "independent-full-review":
                 details.update(
                     {
-                        "review_path": "docs/release/evidence/independent-review.md",
+                        "review_path": "docs/reviews/independent-review.md",
                         "reviewed_commit": commit,
                         "decision": "PASS",
                         "open_critical_high": "0",
@@ -488,7 +547,9 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
         artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
-        review = evidence_dir / "independent-review.md"
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
         review.write_text(
             "# Independent review\n\nReviewed commit: " + "e" * 40 + "\n\nPASS: no release-blocking findings.\n", encoding="utf-8"
         )
@@ -531,7 +592,7 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
             elif check_id == "independent-full-review":
                 details.update(
                     {
-                        "review_path": "docs/release/evidence/independent-review.md",
+                        "review_path": "docs/reviews/independent-review.md",
                         "reviewed_commit": commit,
                         "decision": "PASS",
                         "open_critical_high": "0",
@@ -610,7 +671,7 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
             elif check_id == "independent-full-review":
                 details.update(
                     {
-                        "review_path": "docs/release/evidence/missing-review.md",
+                        "review_path": "docs/reviews/missing-review.md",
                         "reviewed_commit": "e" * 40,
                         "decision": "FAIL",
                         "open_critical_high": "1",

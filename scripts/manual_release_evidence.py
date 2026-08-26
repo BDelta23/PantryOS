@@ -13,6 +13,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EVIDENCE_PATH = ROOT / "docs" / "release" / "manual-validation.json"
 DEFAULT_TEMPLATE_PATH = ROOT / "docs" / "release" / "manual-validation.template.json"
+EVIDENCE_ARTIFACT_ROOT = ROOT / "docs" / "release" / "evidence"
+REVIEW_ARTIFACT_ROOT = ROOT / "docs" / "reviews"
 
 REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
     "physical-barcode-camera": {
@@ -209,8 +211,18 @@ def _validate_check(
                 artifact_path = Path(value)
                 if not artifact_path.is_absolute():
                     artifact_path = root / artifact_path
+                artifact_root = _rooted_path(EVIDENCE_ARTIFACT_ROOT, root=root)
+                if not _is_relative_to(artifact_path, artifact_root):
+                    problems.append(
+                        {
+                            "field": f"{prefix}.evidence.artifact_paths[{index}]",
+                            "problem": "must be under docs/release/evidence",
+                        }
+                    )
                 if not artifact_path.exists():
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": f"missing {value}"})
+                elif not artifact_path.is_file():
+                    problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": "must be a file"})
 
     return problems
 
@@ -276,8 +288,13 @@ def _validate_check_specific_details(
             resolved = Path(review_path)
             if not resolved.is_absolute():
                 resolved = root / resolved
+            review_root = _rooted_path(REVIEW_ARTIFACT_ROOT, root=root)
+            if not _is_relative_to(resolved, review_root):
+                problems.append({"field": f"{prefix}.details.review_path", "problem": "must be under docs/reviews"})
             if not resolved.exists():
                 problems.append({"field": f"{prefix}.details.review_path", "problem": f"missing {review_path}"})
+            elif not resolved.is_file():
+                problems.append({"field": f"{prefix}.details.review_path", "problem": "must be a file"})
             else:
                 review_text = resolved.read_text(encoding="utf-8", errors="replace")
                 if expected_commit not in review_text:
@@ -313,6 +330,18 @@ def _require_positive_int_string(value: Any, field: str, problems: list[dict[str
         return
     if parsed < 1:
         problems.append({"field": field, "problem": "must be a positive integer"})
+
+
+def _rooted_path(path: Path, *, root: Path) -> Path:
+    return root / path.relative_to(ROOT)
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def _rejected(value: str) -> bool:
