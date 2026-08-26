@@ -181,3 +181,100 @@ def test_release_artifact_audit_current_allowances_are_reasoned() -> None:
     assert result["missing_allowances"] == []
     for match in result["allowed_matches"]:
         assert match["reason"].strip()
+
+
+def test_manual_release_evidence_reports_missing_file() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        result = manual_release_evidence.validate_evidence(
+            root / "docs" / "release" / "manual-validation.json",
+            root=root,
+            commit="a" * 40,
+        )
+
+    assert result["ok"] is False
+    assert result["problem_count"] == 1
+    assert result["problems"][0]["field"] == "file"
+
+
+def test_manual_release_evidence_accepts_complete_current_commit_record() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        commit = "b" * 40
+        checks = []
+        for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
+            details = {field: f"value-{field}" for field in rule["details"]}
+            if check_id == "independent-full-review":
+                details["decision"] = "PASS"
+                details["open_critical_high"] = "0"
+                details["release_blocking_medium"] = "0"
+            checks.append(
+                {
+                    "id": check_id,
+                    "result": "PASS",
+                    "operator": "release-operator",
+                    "timestamp_utc": "2026-08-26T12:00:00Z",
+                    "acceptance": list(rule["acceptance"]),
+                    "details": details,
+                    "evidence": {
+                        "summary": f"{check_id} passed against the release candidate.",
+                        "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                    },
+                }
+            )
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is True
+    assert result["problem_count"] == 0
+    assert result["required_checks"] == sorted(manual_release_evidence.REQUIRED_CHECKS)
+
+
+def test_manual_release_evidence_rejects_incomplete_records() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_commit": "c" * 40,
+                    "checks": [
+                        {
+                            "id": "physical-barcode-camera",
+                            "result": "FAIL",
+                            "operator": "release-operator",
+                            "timestamp_utc": "2026-08-26T12:00:00Z",
+                            "acceptance": ["F2"],
+                            "details": {"device": "phone"},
+                            "evidence": {"summary": "camera did not scan", "artifact_paths": ["docs/release/evidence/missing.md"]},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit="c" * 40)
+
+    assert result["ok"] is False
+    assert any(problem["field"] == "checks[physical-barcode-camera].result" for problem in result["problems"])
+    assert any("missing required check real-receipt-ocr" in problem["problem"] for problem in result["problems"])
+    assert any(problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]" for problem in result["problems"])

@@ -686,6 +686,10 @@ def test_home_assistant_live_core_smoke_uses_real_core_api_and_release_docs() ->
     assert "hass.bus.async_listen" in script
     assert "runtime.client.async_add_item" in script
     assert "PANTRYOS_BASE_URL" in script
+    assert "expected_state_revision_state" in script
+    assert "expected_total_items_state" in script
+    assert "matching_sensor_states" in script
+    assert "waiting for HA sensor entity states" in script
     assert "SMOKE_TOKEN" in script
     assert "PANTRYOS_API_TOKEN" in script
     assert 'ha_env["PANTRYOS_BASE_URL"] = base_url' in script

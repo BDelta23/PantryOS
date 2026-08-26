@@ -130,6 +130,14 @@ python scripts/release_artifact_audit.py
 
 Every intentional match is path-aware and must carry a non-blocking reason; unexpected matches fail `python scripts/check.py`.
 
+Validate manual release evidence before tagging v1.0:
+
+```powershell
+python scripts/manual_release_evidence.py
+```
+
+The command expects `docs/release/manual-validation.json` for the current Git commit and requires `PASS` records for `physical-barcode-camera`, `real-receipt-ocr`, `published-image-signature`, and `independent-full-review`. Each record must include an operator, UTC timestamp, acceptance IDs, concrete environment or release details, a summary, and local evidence artifact paths. The command exits nonzero until those external checks are recorded.
+
 ## Home Assistant Integration
 
 Copy `custom_components/pantryos` into your Home Assistant config directory:

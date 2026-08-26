@@ -128,6 +128,7 @@ Required before v1.0:
 - Home Assistant installation and configuration guide.
 - Operations guide for backup, restore, upgrades, logs, and recovery.
 - `docs/release/RELEASE_READINESS.md` with exact command outputs and residual risks.
+- `docs/release/manual-validation.json` validated by `python scripts/manual_release_evidence.py` for physical barcode camera, real receipt OCR, published image signature, and independent full review evidence.
 - Independent review report under `docs/reviews/`.
 
 ## Release gate

@@ -176,8 +176,28 @@ async def main():
         total_items_entity = next((entity_id for entity_id in sensor_ids if entity_id.endswith("total_items")), None)
         require(state_revision_entity, f"State revision sensor is missing; sensor_ids={sensor_ids}")
         require(total_items_entity, f"Total items sensor is missing; sensor_ids={sensor_ids}")
-        state_revision_state = hass.states.get(state_revision_entity).state
-        total_items_state = hass.states.get(total_items_entity).state
+
+        final_summary = coordinator.summary()
+        expected_state_revision_state = str(final_summary.get("state_revision") or revision_after_core_push)
+        expected_total_items_state = str(final_summary.get("total_items") or "")
+
+        def current_sensor_states():
+            state_revision = hass.states.get(state_revision_entity)
+            total_items = hass.states.get(total_items_entity)
+            return (
+                state_revision.state if state_revision is not None else None,
+                total_items.state if total_items is not None else None,
+            )
+
+        def matching_sensor_states():
+            states = current_sensor_states()
+            if states == (expected_state_revision_state, expected_total_items_state):
+                return states
+            return None
+
+        progress("waiting for HA sensor entity states")
+        await asyncio.sleep(0)
+        state_revision_state, total_items_state = await wait_for(matching_sensor_states, timeout=45)
 
         progress("unloading PantryOS config entry")
         unloaded = await asyncio.wait_for(hass.config_entries.async_unload(entry.entry_id), timeout=60)
