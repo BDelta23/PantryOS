@@ -140,6 +140,7 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
         expected_commit = resolve_target_commit(commit, root=root)
     except ManualReleaseEvidenceError as exc:
         return _result(path, root=root, ok=False, problems=[{"field": "target_commit", "problem": str(exc)}])
+    require_git_tracking = _is_git_worktree(root)
     release_commit = data.get("release_commit")
     if data.get("schema_version") != 1:
         problems.append({"field": "schema_version", "problem": "must be 1"})
@@ -170,7 +171,16 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
         if check is None:
             problems.append({"field": "checks", "problem": f"missing required check {check_id}"})
             continue
-        problems.extend(_validate_check(check_id, check, rule, root=root, expected_commit=expected_commit))
+        problems.extend(
+            _validate_check(
+                check_id,
+                check,
+                rule,
+                root=root,
+                expected_commit=expected_commit,
+                require_git_tracking=require_git_tracking,
+            )
+        )
 
     return _result(path, root=root, ok=not problems, problems=problems)
 
@@ -182,6 +192,7 @@ def _validate_check(
     *,
     root: Path,
     expected_commit: str,
+    require_git_tracking: bool,
 ) -> list[dict[str, str]]:
     problems: list[dict[str, str]] = []
     prefix = f"checks[{check_id}]"
@@ -204,7 +215,15 @@ def _validate_check(
     else:
         for field in rule["details"]:
             _require_clean_string(details.get(field), f"{prefix}.details.{field}", problems)
-        _validate_check_specific_details(check_id, details, prefix, root=root, expected_commit=expected_commit, problems=problems)
+        _validate_check_specific_details(
+            check_id,
+            details,
+            prefix,
+            root=root,
+            expected_commit=expected_commit,
+            require_git_tracking=require_git_tracking,
+            problems=problems,
+        )
 
     evidence = check.get("evidence")
     if not isinstance(evidence, dict):
@@ -234,6 +253,8 @@ def _validate_check(
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": f"missing {value}"})
                 elif not artifact_path.is_file():
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": "must be a file"})
+                elif require_git_tracking and not _is_git_tracked(artifact_path, root=root):
+                    problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": "must be tracked by git"})
 
     return problems
 
@@ -245,6 +266,7 @@ def _validate_check_specific_details(
     *,
     root: Path,
     expected_commit: str,
+    require_git_tracking: bool,
     problems: list[dict[str, str]],
 ) -> None:
     if check_id == "physical-barcode-camera":
@@ -308,6 +330,8 @@ def _validate_check_specific_details(
                 problems.append({"field": f"{prefix}.details.review_path", "problem": f"missing {review_path}"})
             elif not resolved.is_file():
                 problems.append({"field": f"{prefix}.details.review_path", "problem": "must be a file"})
+            elif require_git_tracking and not _is_git_tracked(resolved, root=root):
+                problems.append({"field": f"{prefix}.details.review_path", "problem": "must be tracked by git"})
             else:
                 review_text = resolved.read_text(encoding="utf-8", errors="replace")
                 if expected_commit not in review_text:
@@ -343,6 +367,34 @@ def _require_positive_int_string(value: Any, field: str, problems: list[dict[str
         return
     if parsed < 1:
         problems.append({"field": field, "problem": "must be a positive integer"})
+
+
+def _is_git_worktree(root: Path) -> bool:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return completed.returncode == 0 and completed.stdout.strip() == "true"
+
+
+def _is_git_tracked(path: Path, *, root: Path) -> bool:
+    try:
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return False
+    completed = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", relative],
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return completed.returncode == 0
 
 
 def _rooted_path(path: Path, *, root: Path) -> Path:
