@@ -9,6 +9,7 @@ import threading
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zipfile import ZipFile
 
 import pantryos.core as core_module
 from pantryos.core import PantryCore
@@ -537,6 +538,104 @@ def test_receipt_upload_rejects_unsupported_type_and_large_text() -> None:
         else:
             raise AssertionError("oversized receipt upload should fail")
 
+
+def test_receipt_retention_purges_old_uncommitted_payloads_and_keeps_committed() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        rejected_text = "Store: Old Market\nDate: 2026-08-24\nOld Apples,1,count,1.00\nTotal: 1.00\n"
+        committed_text = "Store: Keep Market\nDate: 2026-08-24\nKeep Milk,1,gallon,3.00\nTotal: 3.00\n"
+        rejected = core.upload_receipt({"filename": "old.txt", "mime_type": "text/plain", "text": rejected_text})
+        committed = core.upload_receipt({"filename": "keep.txt", "mime_type": "text/plain", "text": committed_text})
+        rejected_id = rejected["receipt"]["id"]
+        committed_id = committed["receipt"]["id"]
+        core.reject_receipt(rejected_id, reason="bad scan")
+        core.extract_receipt(committed_id)
+        core.commit_receipt(committed_id)
+        with closing(core.connect()) as connection:
+            old_timestamp = "2000-01-01T00:00:00Z"
+            connection.execute("UPDATE receipt_uploads SET updated_at = ? WHERE id IN (?, ?)", (old_timestamp, rejected_id, committed_id))
+            rows = {
+                row[0]: Path(row[1])
+                for row in connection.execute("SELECT id, storage_path FROM receipt_uploads WHERE id IN (?, ?)", (rejected_id, committed_id))
+            }
+            connection.commit()
+        rejected_path = rows[rejected_id]
+        committed_path = rows[committed_id]
+
+        dry_run = core.purge_receipt_uploads(older_than_days=1, dry_run=True)
+
+        assert dry_run["eligible_count"] == 1
+        assert dry_run["committed_retained"] == 1
+        assert rejected_path.exists()
+
+        purged = core.purge_receipt_uploads(older_than_days=1)
+        archive = core.backup_archive(Path(directory) / "retained.zip")
+
+        assert purged["purged_count"] == 1
+        assert purged["deleted_files"] == 1
+        assert not rejected_path.exists()
+        assert committed_path.exists()
+        assert archive["receipt_upload_count"] == 1
+        with ZipFile(Path(archive["path"])) as zip_file:
+            manifest = json.loads(zip_file.read("manifest.json").decode("utf-8"))
+        assert [receipt["id"] for receipt in manifest["receipt_uploads"]] == [committed_id]
+        with closing(core.connect()) as connection:
+            statuses = {
+                row[0]: row[1]
+                for row in connection.execute("SELECT id, status FROM receipt_uploads WHERE id IN (?, ?)", (rejected_id, committed_id))
+            }
+        assert statuses[rejected_id] == "purged"
+        assert statuses[committed_id] == "committed"
+        try:
+            core.extract_receipt(rejected_id)
+        except ValidationError as exc:
+            assert "Purged receipt content" in str(exc)
+        else:
+            raise AssertionError("purged receipt should not be extractable")
+
+        reuploaded = core.upload_receipt({"filename": "old-again.txt", "mime_type": "text/plain", "text": rejected_text})
+        assert reuploaded["duplicate"] is False
+        assert reuploaded["receipt"]["id"] == rejected_id
+        assert reuploaded["receipt"]["status"] == "uploaded"
+        with closing(core.connect()) as connection:
+            reuploaded_path = Path(connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (rejected_id,)).fetchone()[0])
+        assert reuploaded_path.exists()
+
+
+def test_receipt_retention_refuses_to_delete_paths_outside_data_directory() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        core = PantryCore(root / "data" / "pantryos.sqlite3")
+        core.migrate()
+        outside = root / "outside-receipt.txt"
+        outside.write_text("do not delete", encoding="utf-8")
+        uploaded = core.upload_receipt(
+            {
+                "filename": "unsafe.txt",
+                "mime_type": "text/plain",
+                "text": "Store: Unsafe\nDate: 2026-08-24\nUnsafe Beans,1,count,1.00\nTotal: 1.00\n",
+            }
+        )
+        receipt_id = uploaded["receipt"]["id"]
+        core.reject_receipt(receipt_id, reason="bad scan")
+        with closing(core.connect()) as connection:
+            connection.execute(
+                "UPDATE receipt_uploads SET storage_path = ?, updated_at = ? WHERE id = ?",
+                (str(outside), "2000-01-01T00:00:00Z", receipt_id),
+            )
+            connection.commit()
+
+        try:
+            core.purge_receipt_uploads(older_than_days=1)
+        except ValidationError as exc:
+            assert "outside the PantryOS data directory" in str(exc)
+        else:
+            raise AssertionError("unsafe receipt path should be rejected")
+
+        assert outside.exists()
+        with closing(core.connect()) as connection:
+            status = connection.execute("SELECT status FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()[0]
+        assert status == "rejected"
 
 def test_discard_records_monthly_waste_and_location_values() -> None:
     with tempfile.TemporaryDirectory() as directory:

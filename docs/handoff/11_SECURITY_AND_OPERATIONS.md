@@ -40,7 +40,7 @@ PantryOS is local-first but should not assume every browser, IoT device, or proc
 - Set size, dimensions/page count, and processing timeout limits.
 - Run OCR/parsing in a constrained subprocess or worker boundary where practical.
 - Do not execute embedded scripts, macros, or active document content.
-- Delete rejected/expired uploads according to documented retention.
+- Delete rejected/expired uploads according to documented retention. Current implementation provides `purge-receipts`, which purges old `uploaded`, `review`, and `rejected` receipt payload files while retaining committed receipt purchase evidence.
 - Never include raw receipt content in routine logs or HA diagnostics.
 
 ## Data privacy
@@ -67,7 +67,7 @@ A backup contains:
 
 - SQLite database captured with a consistent mechanism;
 - schema/application version metadata;
-- optional receipt/upload files when requested;
+- non-purged receipt/upload files when requested;
 - checksum manifest.
 
 Restore behavior:

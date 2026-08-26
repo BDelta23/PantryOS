@@ -12,7 +12,7 @@ import zipfile
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -23,6 +23,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 CURRENT_SCHEMA_VERSION = 4
 MAX_RECEIPT_UPLOAD_BYTES = 64_000
 SUPPORTED_RECEIPT_MIME_TYPES = {"text/plain": ".txt", "text/csv": ".csv"}
+PURGEABLE_RECEIPT_STATUSES = {"uploaded", "review", "rejected"}
 BACKUP_ARCHIVE_DB = "pantryos.sqlite3"
 BACKUP_ARCHIVE_MANIFEST = "manifest.json"
 BACKUP_ARCHIVE_RECEIPTS = "receipts"
@@ -538,6 +539,7 @@ class PantryCore:
                     """
                     SELECT id, content_hash, original_filename, mime_type, storage_path
                     FROM receipt_uploads
+                    WHERE status != 'purged'
                     ORDER BY id
                     """
                 )
@@ -616,7 +618,7 @@ class PantryCore:
             connection.row_factory = sqlite3.Row
             rows = {
                 row["id"]: row
-                for row in connection.execute("SELECT id, content_hash FROM receipt_uploads")
+                for row in connection.execute("SELECT id, content_hash FROM receipt_uploads WHERE status != 'purged'")
             }
             if len(rows) != len(receipts):
                 raise ValidationError("PantryOS backup archive does not include every receipt upload")
@@ -858,8 +860,29 @@ class PantryCore:
         storage_path.write_bytes(payload)
         with self.transaction() as connection:
             existing = connection.execute("SELECT * FROM receipt_uploads WHERE content_hash = ?", (content_hash,)).fetchone()
-            if existing is not None:
+            if existing is not None and existing["status"] != "purged":
                 return {"receipt": self._receipt_snapshot(existing), "duplicate": True, "revision": int(self._metadata(connection, "state_revision"))}
+            if existing is not None:
+                receipt_id = existing["id"]
+                connection.execute(
+                    """
+                    UPDATE receipt_uploads
+                    SET original_filename = ?, mime_type = ?, storage_path = ?, status = 'uploaded',
+                        store = NULL, purchased_at = NULL, total = NULL, currency = 'USD',
+                        extracted_json = '{}', review_json = '{}', committed_purchase_id = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (filename, mime_type, str(storage_path), utc_now(), receipt_id),
+                )
+                revision = self._append_event(
+                    connection,
+                    "receipt.uploaded",
+                    source=source,
+                    metadata={"receipt_id": receipt_id, "mime_type": mime_type, "size_bytes": len(payload), "restored_from_purge": True},
+                )
+                receipt = self._receipt_row(connection, receipt_id)
+                return {"receipt": self._receipt_snapshot(receipt), "duplicate": False, "revision": revision}
             receipt_id = new_id("receipt")
             connection.execute(
                 """
@@ -889,6 +912,8 @@ class PantryCore:
                 }
             if receipt["status"] == "rejected":
                 raise ValidationError("Rejected receipt cannot be extracted")
+            if receipt["status"] == "purged":
+                raise ValidationError("Purged receipt content is not available")
             text = Path(receipt["storage_path"]).read_text(encoding="utf-8")
             extracted = self._extract_receipt_text(text)
             connection.execute(
@@ -932,6 +957,8 @@ class PantryCore:
                 raise ValidationError("Committed receipt review cannot be changed")
             if receipt["status"] == "rejected":
                 raise ValidationError("Rejected receipt review cannot be changed")
+            if receipt["status"] == "purged":
+                raise ValidationError("Purged receipt review cannot be changed")
             connection.execute(
                 """
                 UPDATE receipt_uploads
@@ -962,6 +989,8 @@ class PantryCore:
                 return {**snapshot, "receipt": self._receipt_snapshot(receipt), "duplicate": True, "revision": int(self._metadata(connection, "state_revision"))}
             if receipt["status"] == "rejected":
                 raise ValidationError("Rejected receipt cannot be committed")
+            if receipt["status"] == "purged":
+                raise ValidationError("Purged receipt content is not available")
             review_source = data.get("review") if data else None
             if review_source is None:
                 review_source = json.loads(receipt["review_json"] or "{}")
@@ -1038,11 +1067,111 @@ class PantryCore:
             receipt = self._receipt_row(connection, receipt_id)
             if receipt["status"] == "committed":
                 raise ValidationError("Committed receipt cannot be rejected")
+            if receipt["status"] == "purged":
+                raise ValidationError("Purged receipt cannot be rejected")
             connection.execute("UPDATE receipt_uploads SET status = 'rejected', updated_at = ? WHERE id = ?", (utc_now(), receipt_id))
             revision = self._append_event(connection, "receipt.rejected", reason=reason, source=source, metadata={"receipt_id": receipt_id})
             updated = self._receipt_row(connection, receipt_id)
         return {"receipt": self._receipt_snapshot(updated), "revision": revision}
 
+    def purge_receipt_uploads(
+        self,
+        *,
+        older_than_days: int = 30,
+        statuses: list[str] | tuple[str, ...] | set[str] | None = None,
+        dry_run: bool = False,
+        source: str = "cli",
+    ) -> dict[str, Any]:
+        self.migrate()
+        try:
+            days = int(older_than_days)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("older_than_days must be an integer") from exc
+        if days < 0:
+            raise ValidationError("older_than_days must be non-negative")
+        selected_statuses = set(statuses or PURGEABLE_RECEIPT_STATUSES)
+        unknown = selected_statuses - PURGEABLE_RECEIPT_STATUSES
+        if unknown:
+            raise ValidationError(f"Receipt status is not purgeable: {', '.join(sorted(unknown))}")
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        cutoff_text = cutoff.isoformat().replace("+00:00", "Z")
+        placeholders = ", ".join("?" for _ in selected_statuses)
+        with self.transaction() as connection:
+            rows = list(
+                connection.execute(
+                    f"""
+                    SELECT * FROM receipt_uploads
+                    WHERE status IN ({placeholders}) AND updated_at <= ?
+                    ORDER BY updated_at, id
+                    """,
+                    (*sorted(selected_statuses), cutoff_text),
+                )
+            )
+            committed_retained = connection.execute(
+                "SELECT COUNT(*) FROM receipt_uploads WHERE status = 'committed' AND updated_at <= ?",
+                (cutoff_text,),
+            ).fetchone()[0]
+            data_root = self.db_path.parent.resolve()
+            purge_targets: list[tuple[sqlite3.Row, Path]] = []
+            for row in rows:
+                raw_path = Path(str(row["storage_path"]))
+                storage_path = raw_path.resolve() if raw_path.is_absolute() else (data_root / raw_path).resolve()
+                try:
+                    storage_path.relative_to(data_root)
+                except ValueError as exc:
+                    raise ValidationError(f"Receipt upload file is outside the PantryOS data directory: {row['id']}") from exc
+                purge_targets.append((row, storage_path))
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "older_than_days": days,
+                    "cutoff": cutoff_text,
+                    "statuses": sorted(selected_statuses),
+                    "eligible_count": len(rows),
+                    "purged_count": 0,
+                    "deleted_files": 0,
+                    "missing_files": 0,
+                    "committed_retained": committed_retained,
+                }
+            deleted_files = 0
+            missing_files = 0
+            for row, storage_path in purge_targets:
+                if storage_path.exists():
+                    storage_path.unlink()
+                    deleted_files += 1
+                else:
+                    missing_files += 1
+                connection.execute(
+                    """
+                    UPDATE receipt_uploads
+                    SET status = 'purged', store = NULL, purchased_at = NULL, total = NULL,
+                        extracted_json = '{}', review_json = '{}', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (utc_now(), row["id"]),
+                )
+            revision = int(self._metadata(connection, "state_revision"))
+            if rows:
+                revision = self._append_event(
+                    connection,
+                    "receipt.purged",
+                    source=source,
+                    metadata={"receipt_count": len(rows), "deleted_files": deleted_files, "missing_files": missing_files, "statuses": sorted(selected_statuses)},
+                )
+        return {
+            "ok": True,
+            "dry_run": False,
+            "older_than_days": days,
+            "cutoff": cutoff_text,
+            "statuses": sorted(selected_statuses),
+            "eligible_count": len(rows),
+            "purged_count": len(rows),
+            "deleted_files": deleted_files,
+            "missing_files": missing_files,
+            "committed_retained": committed_retained,
+            "revision": revision,
+        }
     def purchases(self) -> list[dict[str, Any]]:
         self.migrate()
         with closing(self.connect()) as connection:

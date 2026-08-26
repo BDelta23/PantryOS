@@ -176,6 +176,38 @@ def test_pantryos_cli_archive_backup_restores_receipt_upload_files() -> None:
         assert extracted["review"]["store"] == "Market"
 
 
+def test_pantryos_cli_purges_old_receipt_uploads() -> None:
+    with TemporaryDirectory() as directory:
+        db_path = Path(directory) / "source.sqlite3"
+        core = PantryCore(db_path)
+        uploaded = core.upload_receipt(
+            {
+                "filename": "old.txt",
+                "mime_type": "text/plain",
+                "text": "Store: CLI Market\nDate: 2026-08-24\nCLI Beans,1,count,1.00\nTotal: 1.00",
+            }
+        )
+        receipt_id = uploaded["receipt"]["id"]
+        core.reject_receipt(receipt_id, reason="bad scan")
+        with closing(sqlite3.connect(db_path)) as connection:
+            connection.execute("UPDATE receipt_uploads SET updated_at = ? WHERE id = ?", ("2000-01-01T00:00:00Z", receipt_id))
+            storage_path = Path(connection.execute("SELECT storage_path FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()[0])
+            connection.commit()
+        assert storage_path.exists()
+
+        dry_run = run_cli("--db", str(db_path), "purge-receipts", "--older-than-days", "1", "--dry-run")
+        purged = run_cli("--db", str(db_path), "purge-receipts", "--older-than-days", "1")
+
+        assert dry_run["dry_run"] is True
+        assert dry_run["eligible_count"] == 1
+        assert purged["purged_count"] == 1
+        assert purged["deleted_files"] == 1
+        assert not storage_path.exists()
+        with closing(sqlite3.connect(db_path)) as connection:
+            status = connection.execute("SELECT status FROM receipt_uploads WHERE id = ?", (receipt_id,)).fetchone()[0]
+        assert status == "purged"
+
+
 def test_pantryos_cli_enforces_container_data_and_backup_allowlists() -> None:
     with TemporaryDirectory() as directory:
         root = Path(directory)

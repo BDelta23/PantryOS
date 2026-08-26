@@ -69,6 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     legacy.add_argument("--backup-dir", help="Directory for the legacy JSON backup when importing.")
     legacy.add_argument("--dry-run", action="store_true", help="Validate and summarize without changing the database.")
     legacy.set_defaults(func=run_import_legacy)
+
+    purge = subparsers.add_parser("purge-receipts", help="Delete expired private receipt upload payloads according to retention policy.")
+    purge.add_argument("--older-than-days", type=int, default=30, help="Purge uncommitted receipt uploads older than this many days. Defaults to 30.")
+    purge.add_argument("--status", action="append", choices=["uploaded", "review", "rejected"], help="Limit purge to one purgeable status. Repeat to include multiple statuses.")
+    purge.add_argument("--dry-run", action="store_true", help="Report eligible receipt uploads without deleting files or changing metadata.")
+    purge.set_defaults(func=run_purge_receipts)
     return parser
 
 
@@ -190,6 +196,14 @@ def run_import_legacy(core: PantryCore, args: argparse.Namespace) -> dict[str, A
         "meal_plan_count": result.meal_plan_count,
     }
 
+
+def run_purge_receipts(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
+    return core.purge_receipt_uploads(
+        older_than_days=args.older_than_days,
+        statuses=args.status,
+        dry_run=args.dry_run,
+        source="cli",
+    )
 
 def write_backup_manifest(core: PantryCore, backup_path: Path) -> Path:
     instance = core.instance()
