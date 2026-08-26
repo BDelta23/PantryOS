@@ -221,6 +221,58 @@ def test_manual_release_evidence_reports_missing_file() -> None:
     assert result["problems"][0]["field"] == "file"
 
 
+def test_manual_release_evidence_template_is_current_commit_scaffold() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        commit = "f" * 40
+        template_path = root / "docs" / "release" / "manual-validation.template.json"
+
+        template = manual_release_evidence.build_template(commit=commit, root=root)
+        written = manual_release_evidence.write_template(template_path, root=root, commit=commit)
+        result = manual_release_evidence.validate_evidence(written, root=root, commit=commit)
+
+        assert written == template_path
+        assert template_path.exists()
+        assert template["schema_version"] == 1
+        assert template["release_commit"] == commit
+        assert [check["id"] for check in template["checks"]] == list(manual_release_evidence.REQUIRED_CHECKS)
+        for check in template["checks"]:
+            rule = manual_release_evidence.REQUIRED_CHECKS[check["id"]]
+            assert check["result"] == "PENDING"
+            assert check["acceptance"] == list(rule["acceptance"])
+            assert set(check["details"]) == set(rule["details"])
+            assert check["evidence"]["artifact_paths"] == []
+        assert result["ok"] is False
+        assert not any("missing required check" in problem["problem"] for problem in result["problems"])
+        assert {problem["field"] for problem in result["problems"]} >= {
+            "checks[physical-barcode-camera].result",
+            "checks[real-receipt-ocr].result",
+            "checks[published-image-signature].result",
+            "checks[independent-full-review].result",
+        }
+
+
+def test_manual_release_evidence_template_refuses_evidence_path() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True)
+
+        try:
+            manual_release_evidence.write_template(evidence_path, root=root, commit="f" * 40)
+        except manual_release_evidence.ManualReleaseEvidenceError as exc:
+            error = str(exc)
+        else:
+            raise AssertionError("expected ManualReleaseEvidenceError")
+
+        assert "refusing to write incomplete template" in error
+        assert not evidence_path.exists()
+
+
 def test_manual_release_evidence_accepts_complete_current_commit_record() -> None:
     from scripts import manual_release_evidence
 

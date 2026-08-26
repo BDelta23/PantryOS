@@ -12,6 +12,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EVIDENCE_PATH = ROOT / "docs" / "release" / "manual-validation.json"
+DEFAULT_TEMPLATE_PATH = ROOT / "docs" / "release" / "manual-validation.template.json"
 
 REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
     "physical-barcode-camera": {
@@ -50,6 +51,46 @@ def current_commit(*, root: Path = ROOT) -> str:
         text=True,
     )
     return completed.stdout.strip()
+
+
+def build_template(*, commit: str, root: Path = ROOT) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "release_commit": commit,
+        "checks": [
+            {
+                "id": check_id,
+                "result": "PENDING",
+                "operator": "",
+                "timestamp_utc": "",
+                "acceptance": list(rule["acceptance"]),
+                "details": {field: "" for field in rule["details"]},
+                "evidence": {
+                    "summary": "",
+                    "artifact_paths": [],
+                },
+            }
+            for check_id, rule in REQUIRED_CHECKS.items()
+        ],
+    }
+
+
+def write_template(
+    path: Path = DEFAULT_TEMPLATE_PATH,
+    *,
+    root: Path = ROOT,
+    commit: str | None = None,
+) -> Path:
+    target = path if path.is_absolute() else root / path
+    evidence_path = root / DEFAULT_EVIDENCE_PATH.relative_to(ROOT)
+    if target.resolve() == evidence_path.resolve():
+        raise ManualReleaseEvidenceError(
+            f"refusing to write incomplete template over release evidence file {display_path(evidence_path, root=root)}"
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_template(commit=commit or current_commit(root=root), root=root)
+    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return target
 
 
 def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, commit: str | None = None) -> dict[str, Any]:
@@ -235,11 +276,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate PantryOS manual release evidence.")
     parser.add_argument("--path", type=Path, default=DEFAULT_EVIDENCE_PATH, help="Manual evidence JSON path")
     parser.add_argument("--json", action="store_true", help="Print machine-readable validation details")
+    template_group = parser.add_mutually_exclusive_group()
+    template_group.add_argument(
+        "--print-template", action="store_true", help="Print an incomplete evidence template for the current commit"
+    )
+    template_group.add_argument(
+        "--write-template",
+        nargs="?",
+        const=DEFAULT_TEMPLATE_PATH,
+        type=Path,
+        help="Write an incomplete evidence template, defaulting to docs/release/manual-validation.template.json",
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.print_template:
+        print(json.dumps(build_template(commit=current_commit()), indent=2))
+        return 0
+    if args.write_template is not None:
+        try:
+            path = write_template(args.write_template)
+        except ManualReleaseEvidenceError as exc:
+            print(str(exc))
+            return 2
+        print(f"manual release evidence template written: {display_path(path)}")
+        return 0
+
     result = validate_evidence(args.path)
     if args.json or not result["ok"]:
         print(json.dumps(result, indent=2, sort_keys=True))

@@ -130,13 +130,14 @@ python scripts/release_artifact_audit.py
 
 Every intentional match is path-aware and must carry a non-blocking reason; unexpected matches fail `python scripts/check.py`.
 
-Validate manual release evidence before tagging v1.0:
+Generate the manual evidence scaffold, then validate final manual release evidence before tagging v1.0:
 
 ```powershell
+python scripts/manual_release_evidence.py --write-template
 python scripts/manual_release_evidence.py
 ```
 
-The command expects `docs/release/manual-validation.json` for the current Git commit and requires `PASS` records for `physical-barcode-camera`, `real-receipt-ocr`, `published-image-signature`, and `independent-full-review`. Each record must include an operator, UTC timestamp, acceptance IDs, concrete environment or release details, a summary, and local evidence artifact paths. Signature evidence must include a `sha256:<digest>` image digest and the exact `cosign verify` command that passed. Independent review evidence must point at an existing review artifact for the same commit with `decision=PASS`, `open_critical_high=0`, and `release_blocking_medium=0`. The command exits nonzero until those external checks are recorded.
+`--write-template` writes `docs/release/manual-validation.template.json` for the current Git commit with every required check and field present. It is intentionally incomplete and guarded against being written over the real evidence file. After physical-device checks, image signing, and final review are complete, save concrete `PASS` records as `docs/release/manual-validation.json` and run the validator. The validator requires `PASS` records for `physical-barcode-camera`, `real-receipt-ocr`, `published-image-signature`, and `independent-full-review`. Each record must include an operator, UTC timestamp, acceptance IDs, concrete environment or release details, a summary, and local evidence artifact paths. Signature evidence must include a `sha256:<digest>` image digest and the exact `cosign verify` command that passed. Independent review evidence must point at an existing review artifact for the same commit with `decision=PASS`, `open_critical_high=0`, and `release_blocking_medium=0`. The command exits nonzero until those external checks are recorded.
 
 ## Home Assistant Integration
 
