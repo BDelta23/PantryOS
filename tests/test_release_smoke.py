@@ -91,6 +91,17 @@ def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -
     return checks
 
 
+def _passing_review_text(commit: str) -> str:
+    return (
+        "# Independent review\n\n"
+        f"reviewed_commit={commit}\n"
+        "decision=PASS\n"
+        "open_critical_high=0\n"
+        "release_blocking_medium=0\n"
+        "\nNo release-blocking findings remain.\n"
+    )
+
+
 def test_scripted_demo_proves_supported_surface_vertical_slice() -> None:
     env = {**os.environ, "PANTRYOS_API_TOKEN": "scripted-demo-test-token"}
     completed = subprocess.run(
@@ -428,7 +439,7 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         commit = "b" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         subprocess.run(
             ["git", "add", "docs/release/evidence/manual-check.md", "docs/reviews/independent-review.md"],
             cwd=root,
@@ -532,10 +543,7 @@ def test_manual_release_evidence_rejects_tracked_review_without_target_commit() 
         review = review_dir / "independent-review.md"
         commit = "b" * 40
         other_commit = "c" * 40
-        review.write_text(
-            f"# Independent review\n\nReviewed commit: {other_commit}\n\nPASS: no release-blocking findings.\n",
-            encoding="utf-8",
-        )
+        review.write_text(_passing_review_text(other_commit), encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(
@@ -573,6 +581,72 @@ def test_manual_release_evidence_rejects_tracked_review_without_target_commit() 
     } in result["problems"]
 
 
+def test_manual_release_evidence_rejects_review_without_outcome_markers() -> None:
+    from scripts import manual_release_evidence
+
+    if not _git_available():
+        return
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "b" * 40
+        review.write_text(
+            f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n",
+            encoding="utf-8",
+        )
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_commit": commit,
+                    "checks": _complete_manual_release_checks(manual_release_evidence, commit),
+                }
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "git",
+                "add",
+                "docs/release/evidence/manual-check.md",
+                "docs/reviews/independent-review.md",
+                "docs/release/manual-validation.json",
+            ],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        _commit_all(root, "manual release evidence")
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[independent-full-review].details.review_path",
+        "problem": "review artifact must record decision=PASS",
+    } in result["problems"]
+    assert {
+        "field": "checks[independent-full-review].details.review_path",
+        "problem": "review artifact must record open_critical_high=0",
+    } in result["problems"]
+    assert {
+        "field": "checks[independent-full-review].details.review_path",
+        "problem": "review artifact must record release_blocking_medium=0",
+    } in result["problems"]
+
+
 def test_manual_release_evidence_rejects_future_pass_timestamps() -> None:
     from scripts import manual_release_evidence
 
@@ -586,7 +660,7 @@ def test_manual_release_evidence_rejects_future_pass_timestamps() -> None:
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
         commit = "b" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         checks = _complete_manual_release_checks(manual_release_evidence, commit)
         checks[0]["timestamp_utc"] = "2999-01-01T00:00:00Z"
         evidence_path = root / "docs" / "release" / "manual-validation.json"
@@ -709,7 +783,7 @@ def test_manual_release_evidence_rejects_non_release_evidence_path() -> None:
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
         commit = "e" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         evidence_path = evidence_dir / "manual-validation.json"
         evidence_path.write_text(
             json.dumps(
@@ -741,7 +815,7 @@ def test_manual_release_evidence_rejects_untracked_evidence_file() -> None:
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
         commit = "e" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(
@@ -782,7 +856,7 @@ def test_manual_release_evidence_rejects_dirty_tracked_evidence_file() -> None:
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
         commit = "e" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(
@@ -841,7 +915,7 @@ def test_manual_release_evidence_rejects_dirty_tracked_artifacts() -> None:
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
         commit = "e" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(
@@ -866,10 +940,7 @@ def test_manual_release_evidence_rejects_dirty_tracked_artifacts() -> None:
         )
         _commit_all(root, "manual release evidence")
         artifact.write_text("release evidence changed after commit\n", encoding="utf-8")
-        review.write_text(
-            f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: changed after commit.\n",
-            encoding="utf-8",
-        )
+        review.write_text(_passing_review_text(commit) + "\\nLocal edit after commit.\\n", encoding="utf-8")
 
         result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
 
@@ -896,7 +967,7 @@ def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
         commit = "d" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         evidence_path.write_text(
@@ -973,7 +1044,7 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
         review = review_dir / "independent-review.md"
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         commit = "d" * 40
-        review.write_text(f"# Independent review\n\nReviewed commit: {commit}\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
         checks = []
         for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
             details = {field: f"value-{field}" for field in rule["details"]}
@@ -1061,9 +1132,7 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
-        review.write_text(
-            "# Independent review\n\nReviewed commit: " + "e" * 40 + "\n\nPASS: no release-blocking findings.\n", encoding="utf-8"
-        )
+        review.write_text(_passing_review_text("e" * 40), encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         commit = "d" * 40
         recorded_digest = "sha256:" + "1" * 64

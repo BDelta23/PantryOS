@@ -349,9 +349,26 @@ def _validate_check_specific_details(
             elif require_git_tracking:
                 _validate_git_release_file(resolved, root=root, field=f"{prefix}.details.review_path", problems=problems)
             if resolved.exists() and resolved.is_file():
-                review_text = resolved.read_text(encoding="utf-8", errors="replace")
-                if expected_commit not in review_text:
-                    problems.append({"field": f"{prefix}.details.review_path", "problem": "review artifact must mention reviewed_commit"})
+                _validate_review_artifact_text(
+                    resolved.read_text(encoding="utf-8", errors="replace"),
+                    expected_commit=expected_commit,
+                    field=f"{prefix}.details.review_path",
+                    problems=problems,
+                )
+
+
+def _validate_review_artifact_text(review_text: str, *, expected_commit: str, field: str, problems: list[dict[str, str]]) -> None:
+    normalized = re.sub(r"\s+", "", review_text.lower())
+    if expected_commit not in review_text:
+        problems.append({"field": field, "problem": "review artifact must mention reviewed_commit"})
+    required_markers = {
+        "decision": "PASS",
+        "open_critical_high": "0",
+        "release_blocking_medium": "0",
+    }
+    for key, value in required_markers.items():
+        if f"{key}={value.lower()}" not in normalized and f"{key}:{value.lower()}" not in normalized:
+            problems.append({"field": field, "problem": f"review artifact must record {key}={value}"})
 
 
 def _validate_timestamp(value: Any, field: str, problems: list[dict[str, str]]) -> None:
