@@ -297,13 +297,20 @@ def _validate_check(
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": f"missing {value}"})
                 elif not artifact_path.is_file():
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": "must be a file"})
-                elif require_git_tracking:
-                    _validate_git_release_file(
+                else:
+                    _validate_evidence_artifact_mentions_check(
                         artifact_path,
-                        root=root,
+                        check_id=check_id,
                         field=f"{prefix}.evidence.artifact_paths[{index}]",
                         problems=problems,
                     )
+                    if require_git_tracking:
+                        _validate_git_release_file(
+                            artifact_path,
+                            root=root,
+                            field=f"{prefix}.evidence.artifact_paths[{index}]",
+                            problems=problems,
+                        )
 
     return problems
 
@@ -650,6 +657,16 @@ def _is_git_clean(path: Path, *, root: Path) -> bool:
     except FileNotFoundError:
         return False
     return completed.returncode == 0 and completed.stdout.strip() == ""
+
+
+def _validate_evidence_artifact_mentions_check(path: Path, *, check_id: str, field: str, problems: list[dict[str, str]]) -> None:
+    try:
+        contents = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        problems.append({"field": field, "problem": f"must be readable UTF-8 text: {exc}"})
+        return
+    if check_id not in contents:
+        problems.append({"field": field, "problem": f"must mention check id {check_id}"})
 
 
 def _validate_git_release_file(path: Path, *, root: Path, field: str, problems: list[dict[str, str]]) -> None:

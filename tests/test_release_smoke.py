@@ -10,6 +10,12 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+MANUAL_ARTIFACT_TEXT = (
+    "release evidence for physical-barcode-camera\n"
+    "release evidence for real-receipt-ocr\n"
+    "release evidence for published-image-signature\n"
+    "release evidence for independent-full-review\n"
+)
 
 
 def _git_available() -> bool:
@@ -456,7 +462,7 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -566,7 +572,7 @@ def test_manual_release_evidence_rejects_tracked_review_without_target_commit() 
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -622,7 +628,7 @@ def test_manual_release_evidence_rejects_review_without_outcome_markers() -> Non
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -684,7 +690,7 @@ def test_manual_release_evidence_rejects_future_pass_timestamps() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -716,7 +722,7 @@ def test_manual_release_evidence_rejects_unknown_checks_and_acceptance_overstate
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -771,7 +777,7 @@ def test_manual_release_evidence_rejects_unexpected_schema_fields() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -860,7 +866,7 @@ def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir(
         outside_dir = root / "docs" / "reviews"
         outside_dir.mkdir(parents=True)
         outside_artifact = outside_dir / "manual-check.md"
-        outside_artifact.write_text("release evidence in the wrong folder\n", encoding="utf-8")
+        outside_artifact.write_text("physical-barcode-camera evidence in the wrong folder\n", encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         commit = "d" * 40
@@ -907,6 +913,61 @@ def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir(
     )
 
 
+def test_manual_release_evidence_rejects_artifact_without_check_id() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("generic release evidence captured by operator\n", encoding="utf-8")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        commit = "d" * 40
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_commit": commit,
+                    "checks": [
+                        {
+                            "id": "physical-barcode-camera",
+                            "result": "PASS",
+                            "operator": "release-operator",
+                            "timestamp_utc": "2026-08-26T12:00:00Z",
+                            "acceptance": ["F1", "F2", "G5", "G6"],
+                            "details": {
+                                "device": "Pixel 8",
+                                "os": "Android 16",
+                                "browser": "Chrome",
+                                "app_url": "http://127.0.0.1:8765",
+                                "known_barcode": "012345678905",
+                                "known_result": "Resolved known product and created lot lot_known",
+                                "unknown_barcode": "4006381333931",
+                                "manual_fallback_result": "Unknown barcode opened manual mapping and manual product entry created lot lot_unknown",
+                            },
+                            "evidence": {
+                                "summary": "Physical barcode evidence artifact is generic.",
+                                "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert any(
+        problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]"
+        and problem["problem"] == "must mention check id physical-barcode-camera"
+        for problem in result["problems"]
+    )
+
+
 def test_manual_release_evidence_rejects_non_release_evidence_path() -> None:
     from scripts import manual_release_evidence
 
@@ -915,7 +976,7 @@ def test_manual_release_evidence_rejects_non_release_evidence_path() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -947,7 +1008,7 @@ def test_manual_release_evidence_rejects_untracked_evidence_file() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -988,7 +1049,7 @@ def test_manual_release_evidence_rejects_dirty_tracked_evidence_file() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1047,7 +1108,7 @@ def test_manual_release_evidence_rejects_dirty_tracked_artifacts() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1076,7 +1137,7 @@ def test_manual_release_evidence_rejects_dirty_tracked_artifacts() -> None:
             text=True,
         )
         _commit_all(root, "manual release evidence")
-        artifact.write_text("release evidence changed after commit\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT + "changed after commit\n", encoding="utf-8")
         review.write_text(_passing_review_text(commit) + "\\nLocal edit after commit.\\n", encoding="utf-8")
 
         result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
@@ -1099,7 +1160,7 @@ def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured but not tracked\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1175,7 +1236,7 @@ def test_manual_release_evidence_rejects_malformed_physical_barcodes() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1209,7 +1270,7 @@ def test_manual_release_evidence_rejects_invalid_physical_barcode_check_digits()
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1243,7 +1304,7 @@ def test_manual_release_evidence_rejects_manual_barcode_fallback_without_product
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1277,7 +1338,7 @@ def test_manual_release_evidence_rejects_incomplete_price_history_result() -> No
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1311,7 +1372,7 @@ def test_manual_release_evidence_rejects_placeholder_receipt_and_purchase_ids() 
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1345,7 +1406,7 @@ def test_manual_release_evidence_rejects_synthetic_receipt_source_and_manual_cap
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1385,7 +1446,7 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1480,7 +1541,7 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1572,7 +1633,7 @@ def test_manual_release_evidence_rejects_signature_image_reference_mismatch() ->
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1610,7 +1671,7 @@ def test_manual_release_evidence_rejects_signature_image_without_recorded_tag() 
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1647,7 +1708,7 @@ def test_manual_release_evidence_rejects_signature_identity_mismatch() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1684,7 +1745,7 @@ def test_manual_release_evidence_rejects_signature_identity_only_outside_cosign_
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1723,7 +1784,7 @@ def test_manual_release_evidence_rejects_signature_identity_without_cosign_flag(
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1760,7 +1821,7 @@ def test_manual_release_evidence_rejects_non_cosign_verification_command() -> No
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1795,7 +1856,7 @@ def test_manual_release_evidence_rejects_insecure_cosign_verification_flags() ->
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1834,7 +1895,7 @@ def test_manual_release_evidence_rejects_free_text_signature_image_reference() -
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1871,7 +1932,7 @@ def test_manual_release_evidence_rejects_non_semver_signature_tag() -> None:
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1905,7 +1966,7 @@ def test_manual_release_evidence_rejects_malformed_signature_transparency_log() 
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1939,7 +2000,7 @@ def test_manual_release_evidence_rejects_generic_signature_transparency_url() ->
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -1973,7 +2034,7 @@ def test_manual_release_evidence_rejects_empty_signature_transparency_unavailabi
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         review_dir = root / "docs" / "reviews"
         review_dir.mkdir(parents=True)
         review = review_dir / "independent-review.md"
@@ -2007,7 +2068,7 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
         evidence_dir = root / "docs" / "release" / "evidence"
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
-        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        artifact.write_text(MANUAL_ARTIFACT_TEXT, encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         commit = "d" * 40
