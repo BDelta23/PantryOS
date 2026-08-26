@@ -229,6 +229,9 @@ python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/
 ```
 
 `backup` writes a SQLite backup plus a `.sha256.json` manifest. `restore` verifies that manifest when present and validates the backup before replacing the target database. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
+
+The server writes structured JSON request logs to stdout. Each line includes `event`, `request_id`, `method`, `path`, `status`, `duration_ms`, and `client`. Request bodies, authorization headers, cookies, CSRF tokens, receipt contents, and browser session values are not logged.
+
 ## Development
 
 The authoritative inventory engine lives in `src/pantryos` and is exposed through the local Core API. The older pure inventory engine in `custom_components/pantryos/inventory.py` is retained temporarily as baseline coverage for the original proof of concept.

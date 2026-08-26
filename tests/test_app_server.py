@@ -1,4 +1,6 @@
+import io
 import json
+import logging
 import os
 import sys
 import threading
@@ -361,6 +363,62 @@ def test_browser_routes_require_session_csrf_and_same_origin() -> None:
     assert preflight_headers["Access-Control-Allow-Origin"] == base
     assert preflight_headers["Access-Control-Allow-Credentials"] == "true"
     assert created["item"]["name"] == "Session Apples"
+
+def test_structured_request_logs_include_request_id_without_sensitive_values() -> None:
+    log_stream = io.StringIO()
+    handler = logging.StreamHandler(log_stream)
+    logger = server_module.LOGGER
+    previous_level = logger.level
+    previous_propagate = logger.propagate
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        with TemporaryDirectory() as directory, api_token("secret-token"):
+            data_path = Path(directory) / "pantryos.sqlite3"
+            httpd = server_module.make_server("127.0.0.1", 0, data_path)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{httpd.server_port}"
+                cookie, csrf_token, set_cookie = browser_login(base, token="secret-token")
+                request_json(
+                    f"{base}/api/v1/receipts",
+                    method="POST",
+                    token="secret-token",
+                    request_id="log-test-request",
+                    payload={
+                        "filename": "log-receipt.txt",
+                        "mime_type": "text/plain",
+                        "text": "Store: Private Market\nPrivate Apples,1,count,2.00\n",
+                    },
+                )
+            finally:
+                httpd.shutdown()
+                thread.join(timeout=5)
+                httpd.server_close()
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        logger.propagate = previous_propagate
+
+    lines = [line for line in log_stream.getvalue().splitlines() if line]
+    records = [json.loads(line) for line in lines]
+    receipt_record = next(record for record in records if record["request_id"] == "log-test-request")
+    serialized_logs = log_stream.getvalue()
+    session_cookie_value = set_cookie.split(";", 1)[0].split("=", 1)[1]
+
+    assert receipt_record["event"] == "http.request"
+    assert receipt_record["method"] == "POST"
+    assert receipt_record["path"] == "/api/v1/receipts"
+    assert receipt_record["status"] == 201
+    assert isinstance(receipt_record["duration_ms"], float)
+    assert "secret-token" not in serialized_logs
+    assert "Bearer" not in serialized_logs
+    assert csrf_token not in serialized_logs
+    assert session_cookie_value not in serialized_logs
+    assert "Private Market" not in serialized_logs
+    assert "Private Apples" not in serialized_logs
 
 def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     with TemporaryDirectory() as directory, api_token("test-token"):

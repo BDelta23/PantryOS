@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import mimetypes
 import time
 import os
@@ -41,6 +42,8 @@ PUBLIC_V1_ENDPOINTS = {"/api/v1/health/live", "/api/v1/health/ready"}
 BROWSER_SESSION_COOKIE = "pantryos_session"
 DEFAULT_BROWSER_SESSION_SECONDS = 12 * 60 * 60
 SESSION_ENDPOINTS = {"/api/session", "/api/session/login", "/api/session/logout"}
+LOGGER = logging.getLogger("pantryos.http")
+LOGGER.addHandler(logging.NullHandler())
 
 
 class RequestBodyTooLarge(ValueError):
@@ -502,6 +505,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
     api_token: str | None = None
     rate_limiter: RateLimiter
     session_store: BrowserSessionStore
+
+    def handle_one_request(self) -> None:
+        self._pantryos_started_at = time.monotonic()
+        super().handle_one_request()
 
     def do_OPTIONS(self) -> None:
         parsed = urlparse(self.path)
@@ -1023,6 +1030,22 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._pantryos_request_id = request_id
         return request_id
 
+    def _log_response(self, status: HTTPStatus) -> None:
+        if getattr(self, "_pantryos_response_logged", False):
+            return
+        self._pantryos_response_logged = True
+        started_at = getattr(self, "_pantryos_started_at", time.monotonic())
+        record = {
+            "event": "http.request",
+            "request_id": self._request_id(),
+            "method": getattr(self, "command", ""),
+            "path": urlparse(self.path).path,
+            "status": status.value,
+            "duration_ms": round((time.monotonic() - started_at) * 1000, 3),
+            "client": self.client_address[0] if self.client_address else "local",
+        }
+        LOGGER.info(json.dumps(record, separators=(",", ":"), sort_keys=True))
+
     def _send_problem(
         self,
         status: HTTPStatus,
@@ -1055,6 +1078,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._write_sse(event["type"], str(event["revision"]), event)
         self.wfile.write(f": heartbeat {int(time.time())}\n\n".encode("utf-8"))
         self.wfile.flush()
+        self._log_response(HTTPStatus.OK)
 
     def _write_sse(self, event_type: str, event_id: str, data: dict[str, Any]) -> None:
         payload = json.dumps(data, separators=(",", ":"))
@@ -1077,6 +1101,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.end_headers()
         self.wfile.write(payload)
+        self._log_response(status)
 
     def _send_empty_response(self, status: HTTPStatus, *, headers: dict[str, str] | None = None) -> None:
         self.send_response(status.value)
@@ -1085,6 +1110,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
+        self._log_response(status)
 
     def _serve_static(self, path: str) -> None:
         target = STATIC_DIR / "index.html" if path in ("/", "") else STATIC_DIR / path.lstrip("/")
@@ -1103,6 +1129,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
+        self._log_response(HTTPStatus.OK)
 
 
 def is_versioned_api(path: str) -> bool:
@@ -1504,6 +1531,7 @@ def main() -> None:
     parser.add_argument("--data", type=Path, default=DEFAULT_DB_PATH)
     args = parser.parse_args()
 
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     server = make_server(args.host, args.port, args.data)
     print(f"PantryOS running at http://{args.host}:{args.port}", flush=True)
     server.serve_forever()
