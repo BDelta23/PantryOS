@@ -254,6 +254,61 @@ def test_manual_release_evidence_template_is_current_commit_scaffold() -> None:
         }
 
 
+def test_manual_release_evidence_template_accepts_explicit_target_commit() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        target_commit = "a" * 40
+        template_path = root / "docs" / "release" / "manual-validation.template.json"
+
+        args = manual_release_evidence.build_parser().parse_args(["--commit", target_commit, "--print-template"])
+        written = manual_release_evidence.write_template(template_path, root=root, commit=target_commit)
+        template = json.loads(written.read_text(encoding="utf-8"))
+
+    assert args.commit == target_commit
+    assert template["release_commit"] == target_commit
+
+
+def test_manual_release_evidence_rejects_invalid_target_commit() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(json.dumps({"schema_version": 1, "release_commit": "a" * 40, "checks": []}), encoding="utf-8")
+        template_path = root / "docs" / "release" / "manual-validation.template.json"
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit="not-a-sha")
+        try:
+            manual_release_evidence.write_template(template_path, root=root, commit="not-a-sha")
+        except manual_release_evidence.ManualReleaseEvidenceError as exc:
+            error = str(exc)
+        else:
+            raise AssertionError("expected ManualReleaseEvidenceError")
+
+    assert result["ok"] is False
+    assert result["problems"] == [{"field": "target_commit", "problem": "target release commit must be a 40-character lowercase Git SHA"}]
+    assert "target release commit" in error
+
+
+def test_manual_release_evidence_cli_rejects_invalid_template_commit_cleanly() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "manual_release_evidence.py"), "--print-template", "--commit", "not-a-sha"],
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout.strip() == "target release commit must be a 40-character lowercase Git SHA"
+    assert "Traceback" not in completed.stderr
+
+
 def test_manual_release_evidence_template_refuses_evidence_path() -> None:
     from scripts import manual_release_evidence
 

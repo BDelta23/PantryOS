@@ -56,6 +56,7 @@ REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
 
 REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replace-me", "changeme"}
 SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 
 
@@ -73,6 +74,13 @@ def current_commit(*, root: Path = ROOT) -> str:
         text=True,
     )
     return completed.stdout.strip()
+
+
+def resolve_target_commit(commit: str | None = None, *, root: Path = ROOT) -> str:
+    value = commit.strip() if isinstance(commit, str) else current_commit(root=root)
+    if GIT_COMMIT_RE.fullmatch(value) is None:
+        raise ManualReleaseEvidenceError("target release commit must be a 40-character lowercase Git SHA")
+    return value
 
 
 def build_template(*, commit: str, root: Path = ROOT) -> dict[str, Any]:
@@ -110,7 +118,7 @@ def write_template(
             f"refusing to write incomplete template over release evidence file {display_path(evidence_path, root=root)}"
         )
     target.parent.mkdir(parents=True, exist_ok=True)
-    payload = build_template(commit=commit or current_commit(root=root), root=root)
+    payload = build_template(commit=resolve_target_commit(commit, root=root), root=root)
     target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return target
 
@@ -128,12 +136,15 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
     if not isinstance(data, dict):
         return _result(path, root=root, ok=False, problems=[{"field": "file", "problem": "root value must be a JSON object"}])
 
-    expected_commit = commit or current_commit(root=root)
+    try:
+        expected_commit = resolve_target_commit(commit, root=root)
+    except ManualReleaseEvidenceError as exc:
+        return _result(path, root=root, ok=False, problems=[{"field": "target_commit", "problem": str(exc)}])
     release_commit = data.get("release_commit")
     if data.get("schema_version") != 1:
         problems.append({"field": "schema_version", "problem": "must be 1"})
     if release_commit != expected_commit:
-        problems.append({"field": "release_commit", "problem": f"must match current commit {expected_commit}"})
+        problems.append({"field": "release_commit", "problem": f"must match target release commit {expected_commit}"})
 
     checks = data.get("checks")
     if not isinstance(checks, list):
@@ -282,7 +293,9 @@ def _validate_check_specific_details(
         if str(details.get("release_blocking_medium", "")).strip() != "0":
             problems.append({"field": f"{prefix}.details.release_blocking_medium", "problem": "must be 0"})
         if details.get("reviewed_commit") != expected_commit:
-            problems.append({"field": f"{prefix}.details.reviewed_commit", "problem": f"must match current commit {expected_commit}"})
+            problems.append(
+                {"field": f"{prefix}.details.reviewed_commit", "problem": f"must match target release commit {expected_commit}"}
+            )
         review_path = details.get("review_path")
         if isinstance(review_path, str) and not _rejected(review_path):
             resolved = Path(review_path)
@@ -369,10 +382,11 @@ def display_path(path: Path, *, root: Path = ROOT) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate PantryOS manual release evidence.")
     parser.add_argument("--path", type=Path, default=DEFAULT_EVIDENCE_PATH, help="Manual evidence JSON path")
+    parser.add_argument("--commit", help="Target release commit for validation/templates; defaults to current HEAD")
     parser.add_argument("--json", action="store_true", help="Print machine-readable validation details")
     template_group = parser.add_mutually_exclusive_group()
     template_group.add_argument(
-        "--print-template", action="store_true", help="Print an incomplete evidence template for the current commit"
+        "--print-template", action="store_true", help="Print an incomplete evidence template for the target release commit"
     )
     template_group.add_argument(
         "--write-template",
@@ -387,18 +401,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     if args.print_template:
-        print(json.dumps(build_template(commit=current_commit()), indent=2))
+        try:
+            target_commit = resolve_target_commit(args.commit)
+        except ManualReleaseEvidenceError as exc:
+            print(str(exc))
+            return 2
+        print(json.dumps(build_template(commit=target_commit), indent=2))
         return 0
     if args.write_template is not None:
         try:
-            path = write_template(args.write_template)
+            path = write_template(args.write_template, commit=args.commit)
         except ManualReleaseEvidenceError as exc:
             print(str(exc))
             return 2
         print(f"manual release evidence template written: {display_path(path)}")
         return 0
 
-    result = validate_evidence(args.path)
+    result = validate_evidence(args.path, commit=args.commit)
     if args.json or not result["ok"]:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
