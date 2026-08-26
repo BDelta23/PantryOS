@@ -679,6 +679,61 @@ def test_manual_release_evidence_rejects_future_pass_timestamps() -> None:
     } in result["problems"]
 
 
+def test_manual_release_evidence_rejects_unknown_checks_and_acceptance_overstatement() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "b" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        checks[0]["acceptance"].append("J8")
+        checks[1]["acceptance"].append(checks[1]["acceptance"][0])
+        checks.append(
+            {
+                "id": "operator-note",
+                "result": "PASS",
+                "operator": "release-operator",
+                "timestamp_utc": "2026-08-26T12:00:00Z",
+                "acceptance": ["J8"],
+                "details": {},
+                "evidence": {
+                    "summary": "Unsupported extra check should not satisfy or extend release evidence.",
+                    "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                },
+            }
+        )
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[4].id",
+        "problem": "unknown check id operator-note",
+    } in result["problems"]
+    assert {
+        "field": "checks[physical-barcode-camera].acceptance",
+        "problem": "unexpected J8",
+    } in result["problems"]
+    assert {
+        "field": "checks[real-receipt-ocr].acceptance",
+        "problem": "duplicate F5",
+    } in result["problems"]
+
+
 def test_manual_release_evidence_rejects_incomplete_records() -> None:
     from scripts import manual_release_evidence
 

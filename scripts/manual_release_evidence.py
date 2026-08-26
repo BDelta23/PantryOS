@@ -175,6 +175,9 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
         if check_id in by_id:
             problems.append({"field": f"checks[{index}].id", "problem": f"duplicate check id {check_id}"})
             continue
+        if check_id not in REQUIRED_CHECKS:
+            problems.append({"field": f"checks[{index}].id", "problem": f"unknown check id {check_id}"})
+            continue
         by_id[check_id] = check
 
     for check_id, rule in REQUIRED_CHECKS.items():
@@ -216,9 +219,17 @@ def _validate_check(
     if not isinstance(acceptance, list) or not all(isinstance(item, str) for item in acceptance):
         problems.append({"field": f"{prefix}.acceptance", "problem": "must list acceptance IDs"})
     else:
-        missing = [item for item in rule["acceptance"] if item not in acceptance]
+        required_acceptance = set(rule["acceptance"])
+        listed_acceptance = set(acceptance)
+        missing = [item for item in rule["acceptance"] if item not in listed_acceptance]
+        extras = sorted(listed_acceptance - required_acceptance)
+        duplicates = sorted({item for item in acceptance if acceptance.count(item) > 1})
         if missing:
             problems.append({"field": f"{prefix}.acceptance", "problem": "missing " + ", ".join(missing)})
+        if extras:
+            problems.append({"field": f"{prefix}.acceptance", "problem": "unexpected " + ", ".join(extras)})
+        if duplicates:
+            problems.append({"field": f"{prefix}.acceptance", "problem": "duplicate " + ", ".join(duplicates)})
 
     details = check.get("details")
     if not isinstance(details, dict):
