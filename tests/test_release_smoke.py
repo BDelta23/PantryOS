@@ -41,7 +41,7 @@ def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -
                     "app_url": "http://127.0.0.1:8765",
                     "known_barcode": "012345678905",
                     "known_result": "Resolved known product and created lot lot_known",
-                    "unknown_barcode": "999999999999",
+                    "unknown_barcode": "4006381333931",
                     "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
                 }
             )
@@ -479,7 +479,7 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
                         "app_url": "http://127.0.0.1:8765",
                         "known_barcode": "012345678905",
                         "known_result": "Resolved known product and created lot lot_known",
-                        "unknown_barcode": "999999999999",
+                        "unknown_barcode": "4006381333931",
                         "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
                     }
                 )
@@ -879,7 +879,7 @@ def test_manual_release_evidence_rejects_artifacts_outside_release_evidence_dir(
                                 "app_url": "http://127.0.0.1:8765",
                                 "known_barcode": "012345678905",
                                 "known_result": "Resolved known product and created lot lot_known",
-                                "unknown_barcode": "999999999999",
+                                "unknown_barcode": "4006381333931",
                                 "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
                             },
                             "evidence": {
@@ -1122,7 +1122,7 @@ def test_manual_release_evidence_rejects_untracked_git_artifacts() -> None:
                                 "app_url": "http://127.0.0.1:8765",
                                 "known_barcode": "012345678905",
                                 "known_result": "Resolved known product and created lot lot_known",
-                                "unknown_barcode": "999999999999",
+                                "unknown_barcode": "4006381333931",
                                 "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
                             },
                             "evidence": {
@@ -1193,8 +1193,42 @@ def test_manual_release_evidence_rejects_malformed_physical_barcodes() -> None:
 
     assert result["ok"] is False
     fields = {problem["field"]: problem["problem"] for problem in result["problems"]}
-    assert fields["checks[physical-barcode-camera].details.known_barcode"] == "must be 8 to 14 digits"
-    assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be 8 to 14 digits"
+    assert fields["checks[physical-barcode-camera].details.known_barcode"] == "must be a valid 8 to 14 digit GTIN"
+    assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be a valid 8 to 14 digit GTIN"
+
+
+def test_manual_release_evidence_rejects_invalid_physical_barcode_check_digits() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "physical-barcode-camera":
+                check["details"]["known_barcode"] = "012345678906"
+                check["details"]["unknown_barcode"] = "4006381333932"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    fields = {problem["field"]: problem["problem"] for problem in result["problems"]}
+    assert fields["checks[physical-barcode-camera].details.known_barcode"] == "must be a valid 8 to 14 digit GTIN"
+    assert fields["checks[physical-barcode-camera].details.unknown_barcode"] == "must be a valid 8 to 14 digit GTIN"
 
 
 def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> None:
@@ -1316,7 +1350,7 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
                         "app_url": "http://127.0.0.1:8765",
                         "known_barcode": "012345678905",
                         "known_result": "Resolved known product and created lot lot_known",
-                        "unknown_barcode": "999999999999",
+                        "unknown_barcode": "4006381333931",
                         "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
                     }
                 )
@@ -1544,7 +1578,7 @@ def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> 
                         "app_url": "http://127.0.0.1:8765",
                         "known_barcode": "012345678905",
                         "known_result": "Resolved known product and created lot lot_known",
-                        "unknown_barcode": "999999999999",
+                        "unknown_barcode": "4006381333931",
                         "manual_fallback_result": "Unknown barcode opened manual mapping and manual item entry succeeded",
                     }
                 )

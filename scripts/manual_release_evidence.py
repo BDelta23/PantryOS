@@ -307,10 +307,10 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.app_url", "problem": "must be an http(s) URL"})
         known_barcode = str(details.get("known_barcode", "")).strip()
         unknown_barcode = str(details.get("unknown_barcode", "")).strip()
-        if known_barcode and BARCODE_RE.fullmatch(known_barcode) is None:
-            problems.append({"field": f"{prefix}.details.known_barcode", "problem": "must be 8 to 14 digits"})
-        if unknown_barcode and BARCODE_RE.fullmatch(unknown_barcode) is None:
-            problems.append({"field": f"{prefix}.details.unknown_barcode", "problem": "must be 8 to 14 digits"})
+        if known_barcode and not _valid_gtin(known_barcode):
+            problems.append({"field": f"{prefix}.details.known_barcode", "problem": "must be a valid 8 to 14 digit GTIN"})
+        if unknown_barcode and not _valid_gtin(unknown_barcode):
+            problems.append({"field": f"{prefix}.details.unknown_barcode", "problem": "must be a valid 8 to 14 digit GTIN"})
         if known_barcode and unknown_barcode and known_barcode == unknown_barcode:
             problems.append({"field": f"{prefix}.details.unknown_barcode", "problem": "must differ from known_barcode"})
         known_result = str(details.get("known_result", "")).strip().lower()
@@ -449,6 +449,16 @@ def _require_positive_int_string(value: Any, field: str, problems: list[dict[str
         return
     if parsed < 1:
         problems.append({"field": field, "problem": "must be a positive integer"})
+
+
+def _valid_gtin(value: str) -> bool:
+    if BARCODE_RE.fullmatch(value) is None:
+        return False
+    digits = [int(char) for char in value]
+    total = 0
+    for index, digit in enumerate(reversed(digits[:-1])):
+        total += digit * (3 if index % 2 == 0 else 1)
+    return (10 - (total % 10)) % 10 == digits[-1]
 
 
 def _is_git_worktree(root: Path) -> bool:
