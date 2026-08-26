@@ -2198,7 +2198,8 @@ class PantryCore:
             opened_at = utc_now()
         if opened_at not in (None, ""):
             opened_at = self._normalize_opened_at(str(opened_at))
-        expires_at = data.get("expires") or data.get("expires_at")
+        acquired_at = self._normalize_lot_date(data.get("purchased") or data.get("acquired_at"), "acquired_at")
+        expires_at = self._normalize_lot_date(data.get("expires") or data.get("expires_at"), "expires_at")
         product = connection.execute("SELECT opened_shelf_life_days FROM products WHERE id = ?", (product_id,)).fetchone()
         opened_life_days = product["opened_shelf_life_days"] if product is not None else None
         if opened_at:
@@ -2216,7 +2217,7 @@ class PantryCore:
                 decimal_text(quantity),
                 unit,
                 location_id,
-                data.get("purchased") or data.get("acquired_at"),
+                acquired_at,
                 expires_at,
                 opened_at,
                 lot_type,
@@ -2228,6 +2229,21 @@ class PantryCore:
             ),
         )
         return lot_id
+
+    def _normalize_lot_date(self, value: Any, field: str) -> str | None:
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        try:
+            if text.endswith("Z"):
+                datetime.fromisoformat(text.replace("Z", "+00:00"))
+            elif "T" in text:
+                datetime.fromisoformat(text)
+            else:
+                date.fromisoformat(text[:10])
+        except ValueError as exc:
+            raise ValidationError(f"{field} must be an ISO date or datetime") from exc
+        return text
 
     def _normalize_opened_at(self, opened_at: str | None) -> str:
         if opened_at is None or str(opened_at).strip() == "":

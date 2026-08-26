@@ -16,15 +16,15 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## B. Products, locations, lots, and events
 
-- [ ] B1. Two lots of the same product can have different locations, expirations, and costs.
-- [ ] B2. Product minimum stock remains after all active lots reach zero.
-- [ ] B3. Location rename/move does not rewrite every inventory lot or break references.
-- [ ] B4. Consumption across lots follows FEFO and returns the exact allocation.
-- [ ] B5. Over-consumption is rejected with available quantity unless an explicit administrative adjustment is used.
-- [ ] B6. Opening a lot is idempotent and correctly applies configured opened-life policy.
-- [ ] B7. Discard and waste create historical events and remove quantity from usable stock.
-- [ ] B8. Inventory event history reconstructs the reason and source of every tested mutation.
-- [ ] B9. Negative quantities, invalid dates, incompatible units, duplicate constrained names, and cyclic locations are rejected.
+- [x] B1. Two lots of the same product can have different locations, expirations, and costs.
+- [x] B2. Product minimum stock remains after all active lots reach zero.
+- [x] B3. Location rename/move does not rewrite every inventory lot or break references.
+- [x] B4. Consumption across lots follows FEFO and returns the exact allocation.
+- [x] B5. Over-consumption is rejected with available quantity unless an explicit administrative adjustment is used.
+- [x] B6. Opening a lot is idempotent and correctly applies configured opened-life policy.
+- [x] B7. Discard and waste create historical events and remove quantity from usable stock.
+- [x] B8. Inventory event history reconstructs the reason and source of every tested mutation.
+- [x] B9. Negative quantities, invalid dates, incompatible units, duplicate constrained names, and cyclic locations are rejected.
 
 ## C. Units and recipe intelligence
 

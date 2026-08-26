@@ -196,6 +196,81 @@ def test_location_rename_and_move_preserve_lot_references_and_reject_invalid_hie
             raise AssertionError("invalid location type should fail")
 
 
+def test_section_b_lot_stock_event_and_validation_contracts() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        pantry_lot = core.add_inventory_lot(
+            {
+                "name": "Contract Beans",
+                "quantity": "2",
+                "unit": "can",
+                "location": "Kitchen/Pantry",
+                "expires": "2026-09-01",
+                "estimated_cost": "4.00",
+                "minimum_stock": "3",
+            },
+            source="web-ui",
+        )["lot"]
+        freezer_lot = core.add_inventory_lot(
+            {
+                "name": "Contract Beans",
+                "quantity": "1",
+                "unit": "can",
+                "location": "Garage/Freezer",
+                "expires": "2026-12-01",
+                "estimated_cost": "3.00",
+            },
+            source="receipt-review",
+        )["lot"]
+
+        lots_before = {lot["id"]: lot for lot in core.dashboard()["lots"]}
+        assert pantry_lot["product_id"] == freezer_lot["product_id"]
+        assert lots_before[pantry_lot["id"]]["location_path"] == "Kitchen/Pantry"
+        assert lots_before[freezer_lot["id"]]["location_path"] == "Garage/Freezer"
+        assert lots_before[pantry_lot["id"]]["expires_at"] == "2026-09-01"
+        assert lots_before[freezer_lot["id"]]["expires_at"] == "2026-12-01"
+        assert lots_before[pantry_lot["id"]]["total_cost"] == "4"
+        assert lots_before[freezer_lot["id"]]["total_cost"] == "3"
+
+        consumed = core.consume_product(product_name="Contract Beans", quantity="3", unit="can", source="ha-action", reason="dinner")
+        dashboard = core.dashboard()
+        product = next(product for product in dashboard["products"] if product["id"] == pantry_lot["product_id"])
+        lots_after = {lot["id"]: lot for lot in dashboard["lots"]}
+        events = core.events(limit=10)["items"]
+        add_events = [event for event in events if event["event_type"] == "ADD" and event["data"].get("product_id") == product["id"]]
+        consume_events = [
+            event for event in events if event["event_type"] == "CONSUME" and event["data"].get("product_id") == product["id"]
+        ]
+
+        assert consumed["allocations"] == [
+            {"lot_id": pantry_lot["id"], "quantity": "2", "unit": "can"},
+            {"lot_id": freezer_lot["id"], "quantity": "1", "unit": "can"},
+        ]
+        assert lots_after[pantry_lot["id"]]["status"] == "closed"
+        assert lots_after[freezer_lot["id"]]["status"] == "closed"
+        assert product["minimum_stock_quantity"] == "3"
+        assert product["minimum_stock_unit"] == "can"
+        assert dashboard["summary"]["active_lot_count"] == 0
+        assert [event["source"] for event in add_events] == ["web-ui", "receipt-review"]
+        assert [event["source"] for event in consume_events] == ["ha-action", "ha-action"]
+        assert {event["reason"] for event in consume_events} == {"dinner"}
+        assert [event["data"]["quantity"] for event in consume_events] == ["2", "1"]
+
+        try:
+            core.add_inventory_lot({"name": "Bad Quantity", "quantity": "-1", "unit": "count"})
+        except ValidationError as exc:
+            assert "quantity cannot be negative" in str(exc)
+        else:
+            raise AssertionError("negative lot quantity should fail")
+
+        try:
+            core.add_inventory_lot({"name": "Bad Date", "quantity": "1", "unit": "count", "expires": "not-a-date"})
+        except ValidationError as exc:
+            assert "expires_at must be an ISO date or datetime" in str(exc)
+        else:
+            raise AssertionError("invalid lot expiration date should fail")
+
+
 def test_twenty_concurrent_mutations_do_not_lose_successful_writes() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)
