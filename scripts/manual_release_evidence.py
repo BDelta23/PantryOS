@@ -62,6 +62,7 @@ RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 TRANSPARENCY_LOG_URL_TERMS = ("rekor", "sigstore")
+INSECURE_COSIGN_FLAGS = ("--allow-insecure-registry", "--insecure", "--insecure-ignore-sct", "--insecure-ignore-tlog")
 BARCODE_RE = re.compile(r"^\d{8,14}$")
 SYNTHETIC_RECEIPT_SOURCE_TERMS = ("synthetic", "fixture", "generated", "mock", "sample", "test")
 OCR_CAPTURE_TERMS = ("ocr", "tesseract")
@@ -402,8 +403,16 @@ def _validate_check_specific_details(
         identity_value = signature_identity.strip() if isinstance(signature_identity, str) else ""
         command = details.get("verification_command")
         identity_constraints = _cosign_identity_values(command) if isinstance(command, str) else []
+        insecure_flags = _cosign_insecure_flags(command) if isinstance(command, str) else []
         if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
+        elif insecure_flags:
+            problems.append(
+                {
+                    "field": f"{prefix}.details.verification_command",
+                    "problem": "must not use insecure cosign verification flags: " + ", ".join(insecure_flags),
+                }
+            )
         elif image_value and image_value not in command:
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded image reference"})
         elif digest_value and digest_value not in command:
@@ -501,6 +510,20 @@ def _cosign_identity_values(command: str) -> list[str]:
                 break
         index += 1
     return values
+
+
+def _cosign_insecure_flags(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    found: list[str] = []
+    for token in tokens:
+        lower = token.lower()
+        for flag in INSECURE_COSIGN_FLAGS:
+            if lower == flag or lower.startswith(flag + "="):
+                found.append(flag)
+    return sorted(set(found))
 
 
 def _validate_review_artifact_text(review_text: str, *, expected_commit: str, field: str, problems: list[dict[str, str]]) -> None:
