@@ -18,12 +18,17 @@ async function api(path, options = {}) {
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && state.csrfToken) {
     headers["X-CSRF-Token"] = state.csrfToken;
   }
-  const response = await fetch(path, {
-    ...options,
-    method,
-    credentials: "same-origin",
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      method,
+      credentials: "same-origin",
+      headers,
+    });
+  } catch (_error) {
+    throw new Error("PantryOS Core is offline; the request was not committed.");
+  }
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.detail || data.error || data.title || "Request failed");
@@ -637,7 +642,19 @@ async function handleLogout() {
   showToast("Signed out");
 }
 
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch((error) => {
+      console.info("PantryOS offline shell unavailable", error);
+    });
+  });
+}
+
 async function main() {
+  registerServiceWorker();
   setAuthenticated(false);
   $("#loginForm").addEventListener("submit", (event) => handleLogin(event).catch(handleActionError));
   $("#logoutButton").addEventListener("click", () => handleLogout().catch(handleActionError));

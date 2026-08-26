@@ -1123,7 +1123,7 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         except (FileNotFoundError, ValueError):
             self._send_problem(HTTPStatus.NOT_FOUND, "Not found", code="not_found", title="Not found")
             return
-        content_type = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+        content_type = static_content_type(resolved)
         self.send_response(HTTPStatus.OK.value)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
@@ -1131,6 +1131,11 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
         self._log_response(HTTPStatus.OK)
 
+
+def static_content_type(path: Path) -> str:
+    if path.suffix == ".webmanifest":
+        return "application/manifest+json"
+    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 def is_versioned_api(path: str) -> bool:
     return path == "/api/v1" or path.startswith("/api/v1/")

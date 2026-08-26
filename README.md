@@ -40,6 +40,7 @@ http://127.0.0.1:8765
 
 The dashboard imports legacy JSON on first startup when available and can seed demo data when the SQLite database is empty. Sign in with `PANTRYOS_API_TOKEN` to start the local browser session. You can also use **Seed Demo** or **Reset Demo** from the UI after signing in.
 
+The browser shell includes PWA install metadata at `/manifest.webmanifest`, an SVG app icon at `/icon.svg`, and a service worker at `/service-worker.js`. The service worker caches only the app shell and static assets. API requests remain network-only; if PantryOS Core is offline, the service worker returns a `503 offline` problem response stating that the request was not committed. Offline writes are never queued or replayed.
 
 ## Docker
 

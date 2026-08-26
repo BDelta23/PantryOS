@@ -908,9 +908,14 @@ def test_event_api_requires_auth_and_streams_hello_and_recent_events() -> None:
     assert "event: ADD" in stream
     assert "data:" in stream
     assert ": heartbeat" in stream
+
+
 def test_static_browser_workflows_are_not_stubbed() -> None:
-    app_js = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
-    index_html = (Path(__file__).resolve().parents[1] / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    static_dir = Path(__file__).resolve().parents[1] / "app" / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+    manifest = json.loads((static_dir / "manifest.webmanifest").read_text(encoding="utf-8"))
+    service_worker = (static_dir / "service-worker.js").read_text(encoding="utf-8")
 
     assert "Cooking mode queued" not in app_js
     assert "/api/cooking/sessions" in app_js
@@ -919,6 +924,44 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "handleBarcodeSubmit" in app_js
     assert "handleStartCooking" in app_js
     assert "handlePurchaseSubmit" in app_js
+    assert "navigator.serviceWorker.register(\"/service-worker.js\")" in app_js
+    assert "PantryOS Core is offline; the request was not committed." in app_js
+    assert "rel=\"manifest\" href=\"/manifest.webmanifest\"" in index_html
+    assert "name=\"theme-color\"" in index_html
     assert "id=\"cookingForm\"" in index_html
     assert "id=\"purchaseForm\"" in index_html
     assert "id=\"barcodeForm\"" in index_html
+    assert manifest["display"] == "standalone"
+    assert manifest["start_url"] == "/"
+    assert manifest["scope"] == "/"
+    assert manifest["icons"][0]["src"] == "/icon.svg"
+    assert 'url.pathname.startsWith("/api/")' in service_worker
+    assert "the request was not committed" in service_worker
+    assert "sync" not in service_worker.casefold()
+    assert "queue" not in service_worker.casefold()
+
+
+def test_pwa_metadata_and_service_worker_are_served() -> None:
+    with TemporaryDirectory() as directory:
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            manifest_type, manifest_text = request_text(f"{base}/manifest.webmanifest")
+            worker_type, worker_text = request_text(f"{base}/service-worker.js")
+            icon_type, icon_text = request_text(f"{base}/icon.svg")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    manifest = json.loads(manifest_text)
+    assert manifest_type.startswith("application/manifest+json")
+    assert worker_type.startswith(("text/javascript", "application/javascript"))
+    assert icon_type.startswith("image/svg+xml")
+    assert manifest["name"] == "PantryOS"
+    assert "offlineProblem" in worker_text
+    assert "the request was not committed" in worker_text
+    assert "<svg" in icon_text

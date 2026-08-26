@@ -1,0 +1,19 @@
+{
+  "name": "PantryOS",
+  "short_name": "PantryOS",
+  "description": "Local-first home food inventory and kitchen planning dashboard.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f7f6",
+  "theme_color": "#2f6f5e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

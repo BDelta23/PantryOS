@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PantryOS">
+  <rect width="512" height="512" rx="96" fill="#2f6f5e" />
+  <path d="M142 155h228v226H142z" fill="#ffffff" />
+  <path d="M166 186h180v42H166zm0 68h180v42H166zm0 68h112v42H166z" fill="#2f6f5e" />
+  <path d="M128 131h256v48H128z" fill="#17201c" />
+  <path d="M205 131c0-28 22-50 50-50s50 22 50 50" fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" />
+</svg>
