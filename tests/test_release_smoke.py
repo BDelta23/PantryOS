@@ -64,3 +64,51 @@ def test_home_assistant_installed_smoke_runner_is_documented_and_scoped() -> Non
     assert "python scripts/ha_installed_smoke.py" in readme
     assert "PANTRYOS_HA_IMAGE" in readme
     assert "installed Home Assistant" in readme
+
+def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
+    from scripts import release_readiness
+
+    acceptance = """# Gates
+- [ ] A1. One source.
+- [ ] J8. Readiness PASS.
+"""
+    status = """# Status
+## Phase gates
+- [x] Phase 0 — baseline
+- [ ] Release gate PASS
+
+## Evidence log
+| Date/time | Phase | Change or decision | Commands and result | Remaining proof gap |
+|---|---|---|---|---|
+| 2026-08-26 | Phase 8/J | Added audit | `python scripts/check.py` -> passed | Release review pending |
+
+## Open blockers
+
+- Independent review pending.
+"""
+    criteria = release_readiness.parse_acceptance(acceptance)
+    gates = release_readiness.parse_phase_gates(status)
+    evidence = release_readiness.parse_evidence(status)
+    blockers = release_readiness.parse_open_blockers(status)
+
+    assert [criterion.id for criterion in criteria] == ["A1", "J8"]
+    assert [gate.name for gate in gates if not gate.complete] == ["Release gate PASS"]
+    assert evidence[-1].phase == "Phase 8/J"
+    assert evidence[-1].commands == "`python scripts/check.py` -> passed"
+    assert blockers == ["Independent review pending."]
+
+    markdown = release_readiness.render_markdown(
+        {
+            "generated_at": "2026-08-26T00:00:00Z",
+            "decision": "NOT READY",
+            "acceptance_criteria_count": len(criteria),
+            "phase_gate_count": len(gates),
+            "open_phase_gates": ["Release gate PASS"],
+            "open_blockers": blockers,
+            "latest_evidence": evidence,
+            "required_release_commands": release_readiness.release_commands(),
+        }
+    )
+    assert "Status: **NOT READY**" in markdown
+    assert "python scripts/container_smoke.py" in markdown
+    assert "Independent review pending." in markdown

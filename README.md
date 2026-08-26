@@ -294,3 +294,12 @@ Run the scripted add-to-use-soon cross-surface release smoke:
 $env:PANTRYOS_API_TOKEN = "e2e-smoke-token"
 python scripts/smoke_e2e.py
 ```
+
+Generate or check the release-readiness ledger:
+
+```powershell
+python scripts/release_readiness.py --write
+python scripts/release_readiness.py --check
+```
+
+The readiness document is written to `docs/release/RELEASE_READINESS.md` and remains `NOT READY` until all phase gates and implementation-status blockers are cleared.

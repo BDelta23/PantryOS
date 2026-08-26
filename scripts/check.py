@@ -60,6 +60,10 @@ def main() -> None:
     import scripts.run_tests as run_tests
 
     run_tests.main()
+    import scripts.release_readiness as release_readiness
+
+    release_readiness.check_readiness()
+    print("release readiness: current")
     run_js_check()
 
 
