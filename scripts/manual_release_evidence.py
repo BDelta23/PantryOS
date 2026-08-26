@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,7 +59,6 @@ REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replac
 SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_REF_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
-COSIGN_IDENTITY_FLAG_RE = re.compile(r"(?<!\S)--certificate-identity(?:-regexp)?(?:=|\s)", re.IGNORECASE)
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 BARCODE_RE = re.compile(r"^\d{8,14}$")
@@ -393,6 +393,7 @@ def _validate_check_specific_details(
         signature_identity = details.get("signature_identity")
         identity_value = signature_identity.strip() if isinstance(signature_identity, str) else ""
         command = details.get("verification_command")
+        identity_constraints = _cosign_identity_values(command) if isinstance(command, str) else []
         if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
         elif image_value and image_value not in command:
@@ -401,11 +402,18 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded digest"})
         elif identity_value and identity_value not in command:
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include signature_identity"})
-        elif identity_value and COSIGN_IDENTITY_FLAG_RE.search(command) is None:
+        elif identity_value and not identity_constraints:
             problems.append(
                 {
                     "field": f"{prefix}.details.verification_command",
                     "problem": "must constrain signature identity with --certificate-identity or --certificate-identity-regexp",
+                }
+            )
+        elif identity_value and not any(identity_value in value for value in identity_constraints):
+            problems.append(
+                {
+                    "field": f"{prefix}.details.verification_command",
+                    "problem": "must constrain the recorded signature_identity with --certificate-identity or --certificate-identity-regexp",
                 }
             )
         transparency_log_url = details.get("transparency_log_url")
@@ -459,6 +467,28 @@ def _validate_exact_keys(value: dict[str, Any], expected: set[str], field: str, 
     extras = sorted(set(value) - expected)
     if extras:
         problems.append({"field": field, "problem": "unexpected fields: " + ", ".join(extras)})
+
+
+def _cosign_identity_values(command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    values: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        lower = token.lower()
+        for flag in ("--certificate-identity", "--certificate-identity-regexp"):
+            if lower == flag and index + 1 < len(tokens):
+                values.append(tokens[index + 1])
+                index += 1
+                break
+            if lower.startswith(flag + "="):
+                values.append(token.split("=", 1)[1])
+                break
+        index += 1
+    return values
 
 
 def _validate_review_artifact_text(review_text: str, *, expected_commit: str, field: str, problems: list[dict[str, str]]) -> None:
