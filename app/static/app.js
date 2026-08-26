@@ -139,7 +139,8 @@ function render() {
   renderShopping(data.shopping_list, summary.suggested_purchases);
   renderMeals(data.meals_with_two_or_fewer_missing);
   renderInventory(data.items);
-  renderKnownLocations(data.summary.locations || []);
+  renderKnownLocations(data.core.locations || data.summary.locations || []);
+  renderLocationSettings(data.core.locations || []);
   renderProductSettings(data.core.products || []);
   renderRecipes(data.recipes, data.summary.possible_meals);
   renderReceiptReview();
@@ -401,6 +402,46 @@ function renderKnownLocations(locations) {
     .map((location) => `<option value="${escapeHtml(location.path || location.name || location)}"></option>`)
     .join("");
 }
+const LOCATION_TYPES = ["house", "room", "refrigerator", "freezer", "pantry", "shelf", "bin", "cabinet", "other"];
+
+function renderLocationSettings(locations) {
+  const list = $("#locationSettingsList");
+  if (!list) return;
+  const activeLocations = locations.filter((location) => location.active !== 0).slice(0, 16);
+  if (!activeLocations.length) {
+    list.innerHTML = `<li class="empty">Add food to create locations.</li>`;
+    return;
+  }
+  list.innerHTML = activeLocations
+    .map((location) => {
+      const locationId = escapeHtml(location.id);
+      return `
+        <li class="list-row location-settings-row">
+          <div class="row-title">
+            <span>${escapeHtml(location.path || location.name)}</span>
+            <span class="badge">${escapeHtml(location.active_lot_count || 0)} lots</span>
+          </div>
+          <div class="location-settings-grid">
+            <label>Name<input value="${escapeHtml(location.name || "")}" data-location-name="${locationId}" /></label>
+            <label>Parent<input list="knownLocations" value="${escapeHtml(location.parent_path || "")}" data-location-parent="${locationId}" /></label>
+            <label>Type<select data-location-type="${locationId}">${locationTypeOptions(location.type)}</select></label>
+            <label>Temperature entity<input value="${escapeHtml(location.temperature_entity_id || "")}" placeholder="sensor.fridge_temp" data-location-temperature="${locationId}" /></label>
+          </div>
+          <div class="product-settings-actions">
+            <button class="secondary" type="button" data-location-save="${locationId}">Save</button>
+          </div>
+        </li>`;
+    })
+    .join("");
+}
+
+function locationTypeOptions(selected) {
+  return LOCATION_TYPES.map((type) => `<option value="${type}"${type === selected ? " selected" : ""}>${type}</option>`).join("");
+}
+
+function locationSettingValue(locationId, key) {
+  return document.querySelector(`[data-location-${key}="${locationId}"]`)?.value?.trim() || "";
+}
 
 function renderProductSettings(products) {
   const list = $("#productSettingsList");
@@ -437,8 +478,8 @@ function renderProductSettings(products) {
 }
 
 function productPreferredLocation(product) {
-  const locations = state.data?.summary?.locations || [];
-  const match = locations.find((location) => location.id === product.preferred_location_id);
+  const locations = state.data?.core?.locations || state.data?.summary?.locations || [];
+  const match = locations.find((location) => (location.id || location.location_id) === product.preferred_location_id);
   return match?.path || match?.name || "";
 }
 
@@ -905,6 +946,21 @@ async function handlePageClick(event) {
     return;
   }
 
+  const saveLocation = target.dataset.locationSave;
+  if (saveLocation) {
+    await api(`/api/locations/${encodeURIComponent(saveLocation)}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: locationSettingValue(saveLocation, "name"),
+        parent_path: locationSettingValue(saveLocation, "parent") || null,
+        type: locationSettingValue(saveLocation, "type") || "other",
+        temperature_entity_id: locationSettingValue(saveLocation, "temperature") || null,
+      }),
+    });
+    showToast("Location saved");
+    await refresh();
+    return;
+  }
   const saveProduct = target.dataset.productSave;
   if (saveProduct) {
     const minimumStock = productSettingValue(saveProduct, "minimum");

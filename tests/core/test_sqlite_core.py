@@ -90,6 +90,66 @@ def test_legacy_import_is_backed_up_and_idempotent() -> None:
         assert snapshot_after_second["summary"] == snapshot_after_first["summary"]
 
 
+
+def test_location_rename_and_move_preserve_lot_references_and_reject_invalid_hierarchy() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        created = core.add_inventory_lot(
+            {
+                "name": "Location Milk",
+                "quantity": "1",
+                "unit": "gallon",
+                "location": "Kitchen/Refrigerator/Door",
+            }
+        )
+        core.add_inventory_lot(
+            {"name": "Location Rice", "quantity": "1", "unit": "bag", "location": "Kitchen/Pantry"}
+        )
+        lot_id = created["lot"]["id"]
+        original_location_id = created["lot"]["location_id"]
+        with closing(core.connect()) as connection:
+            original_lot_row = dict(connection.execute("SELECT location_id, version FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone())
+
+        locations = {row["path"]: row for row in core.list_locations()["items"]}
+        renamed = core.update_location(original_location_id, {"name": "Top Shelf", "type": "shelf"})
+        refreshed = {row["path"]: row for row in core.list_locations()["items"]}
+        kitchen_id = refreshed["Kitchen"]["id"]
+        refrigerator_id = refreshed["Kitchen/Refrigerator"]["id"]
+        moved = core.update_location(original_location_id, {"parent_id": kitchen_id, "temperature_entity_id": "sensor.top_shelf"})
+
+        with closing(core.connect()) as connection:
+            updated_lot_row = dict(connection.execute("SELECT location_id, version FROM inventory_lots WHERE id = ?", (lot_id,)).fetchone())
+        lot = core.dashboard()["lots"][0]
+
+        assert locations["Kitchen/Refrigerator/Door"]["id"] == original_location_id
+        assert renamed["location"]["path"] == "Kitchen/Refrigerator/Top Shelf"
+        assert moved["location"]["path"] == "Kitchen/Top Shelf"
+        assert moved["location"]["temperature_entity_id"] == "sensor.top_shelf"
+        assert updated_lot_row == original_lot_row
+        assert lot["location_id"] == original_location_id
+        assert lot["location_path"] == "Kitchen/Top Shelf"
+
+        try:
+            core.update_location(refrigerator_id, {"name": "Pantry"})
+        except ValidationError as exc:
+            assert "Sibling location names" in str(exc)
+        else:
+            raise AssertionError("duplicate sibling location name should fail")
+
+        try:
+            core.update_location(kitchen_id, {"parent_id": original_location_id})
+        except ValidationError as exc:
+            assert "cycle" in str(exc)
+        else:
+            raise AssertionError("cyclic location move should fail")
+
+        try:
+            core.update_location(original_location_id, {"type": "volcano"})
+        except ValidationError as exc:
+            assert "Location type" in str(exc)
+        else:
+            raise AssertionError("invalid location type should fail")
+
 def test_twenty_concurrent_mutations_do_not_lose_successful_writes() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

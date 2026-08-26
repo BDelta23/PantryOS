@@ -246,6 +246,24 @@ async function runViewport(browser, baseUrl, viewport) {
   await page.locator('#barcodeForm button[type="submit"]').click();
   await expectVisibleText(page, barcodeItem);
 
+
+  const pantryLocationId = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".location-settings-row")];
+    const row = rows.find((candidate) => candidate.querySelector(".row-title span")?.textContent.trim() === "Kitchen/Pantry");
+    return row?.querySelector("[data-location-name]")?.getAttribute("data-location-name") || "";
+  });
+  if (!pantryLocationId) throw new Error("Kitchen/Pantry location row was not rendered");
+  await page.locator(`[data-location-name="${pantryLocationId}"]`).fill(`Smoke Pantry ${suffix}`);
+  await page.locator(`[data-location-save="${pantryLocationId}"]`).click();
+  await page.waitForFunction(
+    async ({ id, expectedPath }) => {
+      const response = await fetch("/api/locations", { credentials: "same-origin" });
+      if (!response.ok) return false;
+      const payload = await response.json();
+      return payload.items.some((location) => location.id === id && location.path === expectedPath);
+    },
+    { id: pantryLocationId, expectedPath: `Kitchen/Smoke Pantry ${suffix}` },
+  );
   await fillForm(page.locator("#recipeForm"), {
     name: recipeName,
     prep_minutes: "12",

@@ -27,6 +27,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -63,6 +64,7 @@ button.danger {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -311,22 +313,27 @@ h2 {
   width: 132px;
 }
 
-.product-settings-row {
+.product-settings-row,
+.location-settings-row {
   gap: 10px;
 }
 
-.product-settings-grid {
+.product-settings-grid,
+.location-settings-grid {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.product-settings-grid label {
+.product-settings-grid label,
+.location-settings-grid label {
   color: var(--muted);
   font-size: 0.76rem;
 }
 
-.product-settings-grid input {
+.product-settings-grid input,
+.location-settings-grid input,
+.location-settings-grid select {
   min-width: 0;
   width: 100%;
 }

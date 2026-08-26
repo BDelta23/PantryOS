@@ -317,7 +317,7 @@ def public_state(core: PantryCore) -> dict[str, Any]:
         "meal_plan": meal_plan_legacy(core),
         "leftovers": [lot_to_item(lot) for lot in lots if lot["status"] == "active" and lot["lot_type"] == "leftover"],
         "meals_with_two_or_fewer_missing": recipe_matches(core, recipes, max_missing=2),
-        "core": {"products": products, "lots": lots, "events": dashboard["events"], "summary": dashboard["summary"]},
+        "core": {"products": products, "lots": lots, "events": dashboard["events"], "locations": dashboard["locations"], "summary": dashboard["summary"]},
     }
 
 
@@ -612,6 +612,9 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/state", "/api/v1/dashboard"):
             self._send_json(public_state(self.core))
             return
+        if parsed.path in ("/api/locations", "/api/v1/locations"):
+            self._send_json(self.core.list_locations())
+            return
         if parsed.path == "/api/v1/locations/summary":
             summary = self.core.dashboard()["summary"]
             self._send_json(
@@ -847,6 +850,10 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             product_id = product_path(parsed.path)
             if product_id is not None:
                 self._send_json(update_product(self.core, product_id, body))
+                return
+            location_id = location_path(parsed.path)
+            if location_id is not None:
+                self._send_json(self.core.update_location(location_id, body))
                 return
             shopping_id = shopping_item_path(parsed.path)
             if shopping_id is not None:
@@ -1402,6 +1409,16 @@ def product_path(path: str) -> str | None:
         return unquote(suffix)
     return None
 
+
+def location_path(path: str) -> str | None:
+    for prefix in ("/api/locations/", "/api/v1/locations/"):
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        if not suffix or "/" in suffix or suffix == "summary":
+            return None
+        return unquote(suffix)
+    return None
 
 def barcode_lookup_path(path: str) -> str | None:
     for prefix in ("/api/barcodes/", "/api/v1/barcodes/"):

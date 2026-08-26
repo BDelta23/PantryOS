@@ -1163,6 +1163,68 @@ def test_event_stream_waits_for_new_revisions_before_closing() -> None:
     assert f"id: {revision + 1}" in stream
     assert ": heartbeat" in stream
 
+
+def test_location_api_and_browser_routes_update_stable_location_records() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            created = request_json(
+                f"{base}/api/v1/inventory/lots",
+                method="POST",
+                token="test-token",
+                payload={"name": "Location API Beans", "quantity": "1", "unit": "can", "location": "Kitchen/Refrigerator/Door"},
+            )
+            locations = request_json(f"{base}/api/v1/locations", token="test-token")
+            door = next(row for row in locations["items"] if row["path"] == "Kitchen/Refrigerator/Door")
+            kitchen = next(row for row in locations["items"] if row["path"] == "Kitchen")
+            renamed = request_json(
+                f"{base}/api/v1/locations/{door['id']}",
+                method="PATCH",
+                token="test-token",
+                payload={"name": "API Shelf", "type": "shelf"},
+            )
+            moved = request_json(
+                f"{base}/api/v1/locations/{door['id']}",
+                method="PATCH",
+                token="test-token",
+                payload={"parent_id": kitchen["id"], "temperature_entity_id": "sensor.top_shelf"},
+            )
+            state = request_json(f"{base}/api/v1/dashboard", token="test-token")
+            status, problem = request_error(
+                f"{base}/api/v1/locations/{kitchen['id']}",
+                method="PATCH",
+                token="test-token",
+                payload={"parent_id": door["id"]},
+            )
+
+            cookie, csrf_token, _set_cookie = browser_login(base)
+            browser_update = request_json(
+                f"{base}/api/locations/{door['id']}",
+                method="PATCH",
+                cookie=cookie,
+                csrf_token=csrf_token,
+                origin=base,
+                payload={"name": "Door Shelf", "parent_path": "Kitchen/Refrigerator"},
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert renamed["location"]["path"] == "Kitchen/Refrigerator/API Shelf"
+    assert moved["location"]["path"] == "Kitchen/API Shelf"
+    assert moved["location"]["temperature_entity_id"] == "sensor.top_shelf"
+    state_item = next(item for item in state["items"] if item["id"] == created["item"]["id"])
+    assert state_item["location"] == "Kitchen/API Shelf"
+    assert state["core"]["locations"]
+    assert status == 400
+    assert problem["code"] == "validation_error"
+    assert browser_update["location"]["path"] == "Kitchen/Refrigerator/Door Shelf"
+
 def test_static_browser_workflows_are_not_stubbed() -> None:
     static_dir = Path(__file__).resolve().parents[1] / "app" / "static"
     app_js = (static_dir / "app.js").read_text(encoding="utf-8")
@@ -1201,6 +1263,9 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "handlePurchaseDetail" in app_js
     assert "handlePriceAnalysis" in app_js
     assert "renderProductSettings" in app_js
+    assert "renderLocationSettings" in app_js
+    assert "data-location-save" in app_js
+    assert "/api/locations/" in app_js
     assert "data-product-save" in app_js
     assert "minimum_stock_quantity" in app_js
     assert "recent_median_compatible_unit" not in app_js
@@ -1219,6 +1284,7 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "id=\"purchaseDetail\"" in index_html
     assert "id=\"priceAnalysis\"" in index_html
     assert "id=\"productSettingsList\"" in index_html
+    assert "id=\"locationSettingsList\"" in index_html
     assert "id=\"barcodeForm\"" in index_html
     assert "id=\"barcodeScannerPanel\"" in index_html
     assert "id=\"barcodeVideo\"" in index_html

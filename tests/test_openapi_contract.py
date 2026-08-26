@@ -102,4 +102,6 @@ def test_openapi_endpoint_is_authenticated_and_serves_contract() -> None:
     assert problem["code"] == "unauthorized"
     assert document["info"]["title"] == "PantryOS Core API"
     assert "/api/v1/inventory/lots" in document["paths"]
+    assert "/api/v1/locations/{id}" in document["paths"]
+    assert document["paths"]["/api/v1/locations/{id}"]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/LocationUpdateRequest"
     assert "/api/v1/openapi.json" in document["paths"]

@@ -17,6 +17,8 @@ API_PATHS: tuple[str, ...] = (
     "/api/v1/events/{id}",
     "/api/v1/inventory/events",
     "/api/v1/barcodes/{barcode}",
+    "/api/v1/locations",
+    "/api/v1/locations/{id}",
     "/api/v1/locations/summary",
     "/api/v1/waste/monthly",
     "/api/v1/purchases",
@@ -64,6 +66,7 @@ READ_ONLY_METHODS: dict[str, tuple[str, str, str]] = {
     "/api/v1/events/{id}": ("Events", "Inventory event detail", "ObjectEnvelope"),
     "/api/v1/inventory/events": ("Events", "Recent inventory events", "ObjectEnvelope"),
     "/api/v1/barcodes/{barcode}": ("Barcodes", "Resolve barcode mapping", "ObjectEnvelope"),
+    "/api/v1/locations": ("Locations", "List active hierarchical locations", "ObjectEnvelope"),
     "/api/v1/locations/summary": ("Locations", "Location counts and inventory value", "ObjectEnvelope"),
     "/api/v1/waste/monthly": ("Waste", "Current monthly food waste value", "ObjectEnvelope"),
     "/api/v1/purchases": ("Purchases", "Purchase history list", "ObjectEnvelope"),
@@ -103,6 +106,7 @@ POST_METHODS: dict[str, tuple[str, str, str]] = {
 
 PATCH_METHODS: dict[str, tuple[str, str, str]] = {
     "/api/v1/products/{id}": ("Products", "Update product settings", "ProductUpdateRequest"),
+    "/api/v1/locations/{id}": ("Locations", "Update location name, parent, and metadata", "LocationUpdateRequest"),
     "/api/v1/receipts/{id}/review": ("Receipts", "Update editable receipt review", "ReceiptReviewRequest"),
     "/api/v1/recipes/{id}": ("Recipes", "Update recipe", "RecipeRequest"),
     "/api/v1/shopping/{id}": ("Shopping", "Update shopping item", "ShoppingUpdateRequest"),
@@ -268,6 +272,7 @@ def _components() -> dict[str, Any]:
             "RejectReceiptRequest": _object_schema([], reason="string"),
             "ReceiptReviewRequest": {"type": "object", "additionalProperties": True},
             "ProductUpdateRequest": _object_schema([], category="string", default_unit="string", minimum_stock_quantity="string", minimum_stock_unit="string", preferred_location="string", default_shelf_life_days="integer", opened_shelf_life_days="integer"),
+            "LocationUpdateRequest": _object_schema([], name="string", parent_id="string", parent_path="string", type="string", temperature_entity_id="string"),
             "RecipeRequest": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "prep_minutes": {"type": "integer"}, "instructions": {"type": "string"}, "ingredients": {"type": "array", "items": {"type": "object", "additionalProperties": True}}}, "additionalProperties": True},
             "MealPlanRequest": _object_schema(["day", "recipe_name"], day="string", recipe_name="string"),
             "ShoppingRequest": _object_schema(["name", "quantity"], name="string", quantity="string", unit="string", note="string", store="string", source_key="string"),

@@ -41,6 +41,7 @@ PURGEABLE_RECEIPT_STATUSES = {"uploaded", "review", "rejected"}
 BACKUP_ARCHIVE_DB = "pantryos.sqlite3"
 BACKUP_ARCHIVE_MANIFEST = "manifest.json"
 BACKUP_ARCHIVE_RECEIPTS = "receipts"
+LOCATION_TYPES = {"house", "room", "refrigerator", "freezer", "pantry", "shelf", "bin", "cabinet", "other"}
 
 
 def utc_now() -> str:
@@ -1236,6 +1237,87 @@ class PantryCore:
         self.migrate()
         with closing(self.connect()) as connection:
             return self._purchase_snapshot(connection, purchase_id)
+
+    def list_locations(self) -> dict[str, Any]:
+        self.migrate()
+        with closing(self.connect()) as connection:
+            return {"items": self._location_records(connection)}
+
+    def update_location(self, location_id: str, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
+        self.migrate()
+        with self.transaction() as connection:
+            existing = connection.execute("SELECT * FROM locations WHERE id = ? AND active = 1", (location_id,)).fetchone()
+            if existing is None:
+                raise NotFoundError(f"Location not found: {location_id}")
+            before = self._location_snapshot(connection, location_id)
+
+            name = existing["name"]
+            parent_id = existing["parent_id"]
+            location_type = existing["type"]
+            temperature_entity_id = existing["temperature_entity_id"]
+
+            if "name" in data:
+                name = str(data["name"] or "").strip()
+                if not name:
+                    raise ValidationError("Location name is required")
+            if "parent_path" in data:
+                parent_path = str(data["parent_path"] or "").strip()
+                parent_id = self.ensure_location_path(connection, parent_path) if parent_path else None
+            elif "parent_id" in data:
+                raw_parent_id = data["parent_id"]
+                if raw_parent_id is None or str(raw_parent_id).strip() == "":
+                    parent_id = None
+                else:
+                    parent_id = str(raw_parent_id).strip()
+                    parent = connection.execute("SELECT id FROM locations WHERE id = ? AND active = 1", (parent_id,)).fetchone()
+                    if parent is None:
+                        raise NotFoundError(f"Parent location not found: {parent_id}")
+            if parent_id == location_id:
+                raise ValidationError("Location cannot be its own parent")
+            if parent_id is not None and self._location_is_descendant(connection, descendant_id=parent_id, ancestor_id=location_id):
+                raise ValidationError("Location move would create a cycle")
+
+            if "type" in data:
+                location_type = str(data["type"] or "other").strip().casefold() or "other"
+                if location_type not in LOCATION_TYPES:
+                    raise ValidationError(f"Location type must be one of: {', '.join(sorted(LOCATION_TYPES))}")
+            if "temperature_entity_id" in data:
+                temperature = data["temperature_entity_id"]
+                temperature_entity_id = None if temperature is None else str(temperature).strip() or None
+
+            normalized = normalize_name(name)
+            if parent_id is None:
+                duplicate = connection.execute(
+                    "SELECT id FROM locations WHERE parent_id IS NULL AND normalized_name = ? AND active = 1 AND id <> ?",
+                    (normalized, location_id),
+                ).fetchone()
+            else:
+                duplicate = connection.execute(
+                    "SELECT id FROM locations WHERE parent_id = ? AND normalized_name = ? AND active = 1 AND id <> ?",
+                    (parent_id, normalized, location_id),
+                ).fetchone()
+            if duplicate is not None:
+                raise ValidationError("Sibling location names must be unique")
+
+            connection.execute(
+                """
+                UPDATE locations
+                SET parent_id = ?, name = ?, normalized_name = ?, type = ?, temperature_entity_id = ?,
+                    updated_at = ?, version = version + 1
+                WHERE id = ?
+                """,
+                (parent_id, name, normalized, location_type, temperature_entity_id, utc_now(), location_id),
+            )
+            after = self._location_snapshot(connection, location_id)
+            revision = self._append_event(
+                connection,
+                "location.changed",
+                from_location_id=before["id"],
+                to_location_id=after["id"],
+                source=source,
+                metadata={"fields": sorted(data.keys()), "before_path": before["path"], "after_path": after["path"]},
+            )
+            return {"location": after, "revision": revision}
 
     def update_product(self, product_id: str, data: dict[str, Any], *, source: str = "api") -> dict[str, Any]:
         self.migrate()
@@ -2787,6 +2869,7 @@ class PantryCore:
         recipes = [self._recipe_snapshot(connection, row["id"]) for row in connection.execute("SELECT id FROM recipes WHERE active = 1 ORDER BY name")]
         shopping = [dict(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name")]
         events = [dict(row) for row in connection.execute("SELECT * FROM inventory_events ORDER BY revision DESC LIMIT 25")]
+        locations = self._location_records(connection)
         location_summary = self._location_summary(lots)
         return {
             "revision": revision,
@@ -2796,6 +2879,7 @@ class PantryCore:
             "recipes": recipes,
             "shopping": shopping,
             "events": events,
+            "locations": locations,
             "summary": {
                 "product_count": len(products),
                 "active_lot_count": sum(1 for lot in lots if lot["status"] == "active"),
@@ -2826,6 +2910,49 @@ class PantryCore:
             return path
 
         return {location_id: resolve(location_id) for location_id in rows}
+
+    def _location_snapshot(self, connection: sqlite3.Connection, location_id: str) -> dict[str, Any]:
+        rows = self._location_records(connection)
+        for row in rows:
+            if row["id"] == location_id:
+                return row
+        raise NotFoundError(f"Location not found: {location_id}")
+
+    def _location_records(self, connection: sqlite3.Connection) -> list[dict[str, Any]]:
+        location_paths = self._location_paths(connection)
+        active_counts = {
+            row["location_id"]: row["active_lot_count"]
+            for row in connection.execute(
+                """
+                SELECT location_id, COUNT(*) AS active_lot_count
+                FROM inventory_lots
+                WHERE status = 'active'
+                GROUP BY location_id
+                """
+            )
+        }
+        rows = []
+        for row in connection.execute("SELECT * FROM locations WHERE active = 1"):
+            record = dict(row)
+            record["path"] = location_paths.get(record["id"], record["name"])
+            record["parent_path"] = location_paths.get(record["parent_id"], "") if record["parent_id"] else ""
+            record["active_lot_count"] = int(active_counts.get(record["id"], 0))
+            rows.append(record)
+        rows.sort(key=lambda row: row["path"])
+        return rows
+
+    def _location_is_descendant(self, connection: sqlite3.Connection, *, descendant_id: str, ancestor_id: str) -> bool:
+        current_id: str | None = descendant_id
+        seen: set[str] = set()
+        while current_id is not None:
+            if current_id == ancestor_id:
+                return True
+            if current_id in seen:
+                return False
+            seen.add(current_id)
+            row = connection.execute("SELECT parent_id FROM locations WHERE id = ?", (current_id,)).fetchone()
+            current_id = row["parent_id"] if row is not None else None
+        return False
 
     def _location_summary(self, lots: list[dict[str, Any]]) -> dict[str, Any]:
         counts = {"Kitchen": 0, "Refrigerator": 0, "Freezer": 0, "Pantry": 0}
