@@ -443,6 +443,46 @@ def test_shopping_items_can_be_removed_or_suppressed_without_deleting_history() 
         assert rows["Beans"]["accepted"] == 0
 
 
+def test_meal_plan_rebuild_preserves_suppressed_generated_demand_until_reactivated() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        with core.transaction() as connection:
+            product_id = core.ensure_product(connection, name="Override Beans", default_unit="can")
+            recipe_id = core._upsert_recipe(connection, {"name": "Override Chili", "ingredients": []})
+            core._insert_recipe_ingredient(
+                connection,
+                recipe_id,
+                {"name": "Override Beans", "quantity": "2", "unit": "can"},
+                product_id,
+                0,
+            )
+            core._upsert_meal_plan(
+                connection,
+                plan_date="2026-08-26",
+                meal_type="Dinner",
+                recipe_id=recipe_id,
+                servings="1",
+            )
+
+        first = core.rebuild_shopping_demand()
+        generated = next(item for item in first["items"] if item["display_name"] == "Override Beans")
+
+        core.update_shopping_item(generated["id"], {"status": "suppressed"})
+        suppressed = core.rebuild_shopping_demand()
+        suppressed_row = next(item for item in suppressed["items"] if item["id"] == generated["id"])
+
+        reactivated = core.update_shopping_item(generated["id"], {"status": "active"})
+        rebuilt = core.rebuild_shopping_demand()
+        active_row = next(item for item in rebuilt["items"] if item["id"] == generated["id"])
+
+        assert suppressed_row["status"] == "suppressed"
+        assert suppressed_row["accepted"] == 0
+        assert suppressed_row["quantity"] == "2"
+        assert reactivated["item"]["accepted"] == 1
+        assert active_row["status"] == "active"
+        assert active_row["accepted"] == 1
+
+
 def test_barcode_mapping_resolves_adds_lot_and_persists() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

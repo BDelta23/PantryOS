@@ -1811,6 +1811,8 @@ class PantryCore:
                 values.append(status)
                 if status == "suppressed":
                     updates.append("accepted = 0")
+                elif status == "active":
+                    updates.append("accepted = 1")
             if not updates:
                 row = self._shopping_row(connection, demand_id)
                 return {"item": dict(row), "revision": int(self._metadata(connection, "state_revision"))}
@@ -2025,6 +2027,7 @@ class PantryCore:
                     source_kind="meal_plan",
                     source_id="active_plan",
                     accepted=True,
+                    preserve_user_override=True,
                 )
                 changed_keys.add(source_key)
 
@@ -2804,7 +2807,28 @@ class PantryCore:
         source_id: str | None,
         accepted: bool,
         checked: bool = False,
+        preserve_user_override: bool = False,
     ) -> None:
+        quantity_text = decimal_text(require_positive(quantity))
+        unit_text = unit_code(unit)
+        if preserve_user_override:
+            existing = connection.execute(
+                "SELECT status, accepted FROM shopping_demands WHERE source_key = ?",
+                (source_key,),
+            ).fetchone()
+            if existing is not None and (existing["status"] in {"suppressed", "removed"} or not existing["accepted"]):
+                connection.execute(
+                    """
+                    UPDATE shopping_demands
+                    SET product_id = ?, display_name = ?, quantity = ?, unit = ?,
+                        source_kind = ?, source_id = ?, checked = 0,
+                        recalculated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    WHERE source_key = ?
+                    """,
+                    (product_id, display_name, quantity_text, unit_text, source_kind, source_id, source_key),
+                )
+                self._append_event(connection, "shopping.changed", source=source_kind)
+                return
         connection.execute(
             """
             INSERT INTO shopping_demands(
@@ -2824,8 +2848,8 @@ class PantryCore:
                 source_key,
                 product_id,
                 display_name,
-                decimal_text(require_positive(quantity)),
-                unit_code(unit),
+                quantity_text,
+                unit_text,
                 source_kind,
                 source_id,
                 1 if accepted else 0,
