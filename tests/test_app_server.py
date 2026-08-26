@@ -709,6 +709,8 @@ def test_receipt_api_review_commit_and_price_history() -> None:
             purchase_detail = request_json(f"{base}/api/v1/purchases/{committed['purchase']['id']}", token="test-token")
             product_id = purchase_detail["lines"][0]["product_id"]
             prices = request_json(f"{base}/api/v1/products/{product_id}/prices", token="test-token")
+            cookie, _csrf_token, _set_cookie = browser_login(base)
+            browser_prices = request_json(f"{base}/api/products/{product_id}/prices", cookie=cookie)
         finally:
             httpd.shutdown()
             thread.join(timeout=5)
@@ -729,6 +731,8 @@ def test_receipt_api_review_commit_and_price_history() -> None:
     assert prices["prices"][0]["comparable_unit"] == "count"
     assert prices["analysis"]["baseline_policy"] == "recent_median_compatible_unit"
     assert prices["analysis"]["latest"]["status"] == "baseline"
+    assert browser_prices["analysis"]["baseline_policy"] == "recent_median_compatible_unit"
+    assert browser_prices["product"]["id"] == product_id
 
 
 def test_receipt_upload_enforces_limits_and_private_storage() -> None:
@@ -922,6 +926,9 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "Cooking mode queued" not in app_js
     assert "/api/cooking/sessions" in app_js
     assert "/api/shopping/complete-purchase" in app_js
+    assert "/api/purchases" in app_js
+    assert "/api/products/" in app_js
+    assert "/prices" in app_js
     assert "/api/barcodes/" in app_js
     assert "handleBarcodeSubmit" in app_js
     assert "supportsBarcodeCamera" in app_js
@@ -932,12 +939,19 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "Manual barcode entry is available" in app_js
     assert "handleStartCooking" in app_js
     assert "handlePurchaseSubmit" in app_js
+    assert "renderPurchases" in app_js
+    assert "handlePurchaseDetail" in app_js
+    assert "handlePriceAnalysis" in app_js
+    assert "recent_median_compatible_unit" not in app_js
     assert "navigator.serviceWorker.register(\"/service-worker.js\")" in app_js
     assert "PantryOS Core is offline; the request was not committed." in app_js
     assert "rel=\"manifest\" href=\"/manifest.webmanifest\"" in index_html
     assert "name=\"theme-color\"" in index_html
     assert "id=\"cookingForm\"" in index_html
     assert "id=\"purchaseForm\"" in index_html
+    assert "id=\"purchaseHistoryList\"" in index_html
+    assert "id=\"purchaseDetail\"" in index_html
+    assert "id=\"priceAnalysis\"" in index_html
     assert "id=\"barcodeForm\"" in index_html
     assert "id=\"barcodeScannerPanel\"" in index_html
     assert "id=\"barcodeVideo\"" in index_html

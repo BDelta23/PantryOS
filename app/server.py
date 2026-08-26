@@ -1262,13 +1262,14 @@ def purchase_path(path: str) -> str | None:
 
 
 def product_prices_path(path: str) -> str | None:
-    prefix = "/api/v1/products/"
-    if not path.startswith(prefix) or not path.endswith("/prices"):
-        return None
-    suffix = path.removeprefix(prefix).removesuffix("/prices")
-    if not suffix or "/" in suffix:
-        return None
-    return unquote(suffix)
+    for prefix in ("/api/products/", "/api/v1/products/"):
+        if not path.startswith(prefix) or not path.endswith("/prices"):
+            continue
+        suffix = path.removeprefix(prefix).removesuffix("/prices")
+        if not suffix or "/" in suffix:
+            return None
+        return unquote(suffix)
+    return None
 
 
 def barcode_lookup_path(path: str) -> str | None:

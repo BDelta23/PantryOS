@@ -3,6 +3,10 @@ const state = {
   filter: "",
   activeCookingSession: null,
   activeReceipt: null,
+  purchases: [],
+  activePurchase: null,
+  activePriceAnalysis: null,
+  priceError: "",
   authenticated: false,
   csrfToken: "",
   barcodeScanner: {
@@ -44,6 +48,7 @@ async function api(path, options = {}) {
 
 async function refresh() {
   state.data = await api("/api/state");
+  await loadPurchases();
   render();
 }
 
@@ -77,6 +82,27 @@ function decimalNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function formatMoney(value, currency = "USD") {
+  if (value === null || value === undefined || value === "") return "total pending";
+  return `${currency || "USD"} ${Number.parseFloat(String(value)).toFixed(2)}`;
+}
+
+function formatPurchaseDate(value) {
+  if (!value) return "date pending";
+  return String(value).slice(0, 10);
+}
+
+async function loadPurchases() {
+  try {
+    const result = await api("/api/purchases");
+    state.purchases = result.items || [];
+    state.priceError = "";
+  } catch (error) {
+    state.purchases = [];
+    state.priceError = error.message;
+  }
+}
+
 function render() {
   const data = state.data;
   const summary = data.summary;
@@ -100,6 +126,9 @@ function render() {
   renderInventory(data.items);
   renderRecipes(data.recipes, data.summary.possible_meals);
   renderReceiptReview();
+  renderPurchases();
+  renderPurchaseDetail();
+  renderPriceAnalysis();
 }
 
 function renderReceiptReview() {
@@ -112,6 +141,115 @@ function renderReceiptReview() {
   }
   form.hidden = false;
   textarea.value = JSON.stringify(state.activeReceipt.review, null, 2);
+}
+
+function renderPurchases() {
+  const list = $("#purchaseHistoryList");
+  if (state.priceError && !state.purchases.length) {
+    list.innerHTML = `<li class="empty">${escapeHtml(state.priceError)}</li>`;
+    return;
+  }
+  if (!state.purchases.length) {
+    list.innerHTML = `<li class="empty">Complete a shopping list or commit a receipt to see purchase history.</li>`;
+    return;
+  }
+  list.innerHTML = state.purchases
+    .slice(0, 8)
+    .map(
+      (purchase) => `
+        <li class="list-row">
+          <div class="row-title">
+            <span>${escapeHtml(purchase.store || "Purchase")}</span>
+            <span class="badge">${escapeHtml(formatMoney(purchase.total_cost, purchase.currency))}</span>
+          </div>
+          <div class="row-subtitle">${escapeHtml(formatPurchaseDate(purchase.purchased_at))}</div>
+          <div class="row-actions">
+            <button class="secondary" type="button" data-purchase-detail="${escapeHtml(purchase.id)}">Inspect</button>
+          </div>
+        </li>`
+    )
+    .join("");
+}
+
+function renderPurchaseDetail() {
+  const panel = $("#purchaseDetail");
+  if (!state.activePurchase) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  const purchase = state.activePurchase.purchase || {};
+  const lines = state.activePurchase.lines || [];
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="row-title">
+      <span>${escapeHtml(purchase.store || "Purchase detail")}</span>
+      <span class="badge">${escapeHtml(formatMoney(purchase.total_cost, purchase.currency))}</span>
+    </div>
+    <div class="row-subtitle">${escapeHtml(formatPurchaseDate(purchase.purchased_at))}</div>
+    <div class="detail-stack">
+      ${lines.length ? lines.map(renderPurchaseLine).join("") : `<div class="empty">No purchase lines recorded.</div>`}
+    </div>`;
+}
+
+function renderPurchaseLine(line) {
+  const productName = line.product_name || line.name || line.display_name || line.product_id || "Product";
+  const quantity = formatQty(line.quantity || "1", line.unit || "count");
+  const lineTotal = line.line_total || line.total_cost;
+  return `
+    <div class="detail-row">
+      <div>
+        <div class="row-title"><span>${escapeHtml(productName)}</span></div>
+        <div class="row-subtitle">${escapeHtml(quantity)}${lineTotal ? ` | ${escapeHtml(formatMoney(lineTotal, line.currency))}` : ""}</div>
+      </div>
+      ${line.product_id ? `<button class="secondary" type="button" data-price-analysis="${escapeHtml(line.product_id)}">Price Trend</button>` : ""}
+    </div>`;
+}
+
+function renderPriceAnalysis() {
+  const panel = $("#priceAnalysis");
+  if (state.priceError && state.activePurchase) {
+    panel.hidden = false;
+    panel.innerHTML = `<div class="empty">${escapeHtml(state.priceError)}</div>`;
+    return;
+  }
+  if (!state.activePriceAnalysis) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  const product = state.activePriceAnalysis.product || {};
+  const analysis = state.activePriceAnalysis.analysis || {};
+  const latest = analysis.latest;
+  const prices = state.activePriceAnalysis.prices || [];
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="price-summary">
+      <div class="row-title">
+        <span>${escapeHtml(product.name || "Price analysis")}</span>
+        <span class="badge ${escapeHtml(priceStatusClass(latest?.status))}">${escapeHtml(latest?.status || "no history")}</span>
+      </div>
+      <div class="row-subtitle">${escapeHtml(latest?.explanation || analysis.evidence_window || "No comparable purchase history yet.")}</div>
+      <div class="row-subtitle">Baseline: ${escapeHtml(formatMoney(latest?.baseline_unit_price, latest?.currency))} | Latest: ${escapeHtml(formatMoney(latest?.unit_price, latest?.currency))} | Ratio: ${escapeHtml(latest?.anomaly_ratio ? `${Number.parseFloat(String(latest.anomaly_ratio)).toFixed(2)}x` : "n/a")}</div>
+    </div>
+    <div class="detail-stack">
+      ${prices.length ? prices.slice(0, 6).map(renderPriceRow).join("") : `<div class="empty">No price rows recorded.</div>`}
+    </div>`;
+}
+
+function renderPriceRow(row) {
+  return `
+    <div class="price-row">
+      <span>${escapeHtml(formatPurchaseDate(row.purchased_at))}${row.store ? ` | ${escapeHtml(row.store)}` : ""}</span>
+      <span>${escapeHtml(formatMoney(row.unit_price, row.currency))}/${escapeHtml(row.comparable_unit || row.unit || "unit")}</span>
+    </div>`;
+}
+
+function priceStatusClass(status) {
+  if (status === "high") return "alert";
+  if (status === "low") return "info";
+  if (status === "normal") return "";
+  return "warn";
 }
 
 function renderCooking(recipe) {
@@ -497,6 +635,9 @@ async function handleReceiptReviewSubmit(event) {
   });
   const committed = await api(`/api/receipts/${encodeURIComponent(state.activeReceipt.id)}/commit`, { method: "POST" });
   state.activeReceipt = null;
+  state.activePurchase = null;
+  state.activePriceAnalysis = null;
+  state.priceError = "";
   $("#receiptForm").reset();
   showToast(`${committed.lots.length} receipt item${committed.lots.length === 1 ? "" : "s"} added`);
   await refresh();
@@ -511,6 +652,25 @@ async function handleRejectReceipt() {
   state.activeReceipt = null;
   showToast("Receipt rejected");
   renderReceiptReview();
+}
+
+async function handlePurchaseDetail(purchaseId) {
+  state.activePurchase = await api(`/api/purchases/${encodeURIComponent(purchaseId)}`);
+  state.activePriceAnalysis = null;
+  state.priceError = "";
+  renderPurchaseDetail();
+  renderPriceAnalysis();
+}
+
+async function handlePriceAnalysis(productId) {
+  state.priceError = "";
+  try {
+    state.activePriceAnalysis = await api(`/api/products/${encodeURIComponent(productId)}/prices`);
+  } catch (error) {
+    state.activePriceAnalysis = null;
+    state.priceError = error.message;
+  }
+  renderPriceAnalysis();
 }
 
 async function handlePurchaseSubmit(event) {
@@ -533,6 +693,9 @@ async function handlePurchaseSubmit(event) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  state.activePurchase = null;
+  state.activePriceAnalysis = null;
+  state.priceError = "";
   form.reset();
   showToast(`${result.lots.length} purchased item${result.lots.length === 1 ? "" : "s"} added`);
   await refresh();
@@ -610,6 +773,18 @@ function cookingAllocations() {
 async function handlePageClick(event) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+
+  const purchaseDetail = target.dataset.purchaseDetail;
+  if (purchaseDetail) {
+    await handlePurchaseDetail(purchaseDetail);
+    return;
+  }
+
+  const priceProduct = target.dataset.priceAnalysis;
+  if (priceProduct) {
+    await handlePriceAnalysis(priceProduct);
+    return;
+  }
 
   const consumeId = target.dataset.consume;
   if (consumeId) {
@@ -728,6 +903,10 @@ async function handleLogout() {
   state.csrfToken = "";
   state.activeCookingSession = null;
   state.activeReceipt = null;
+  state.purchases = [];
+  state.activePurchase = null;
+  state.activePriceAnalysis = null;
+  state.priceError = "";
   stopBarcodeScanner();
   setAuthenticated(false);
   showToast("Signed out");
@@ -778,6 +957,9 @@ async function main() {
   $("#resetButton").addEventListener("click", async () => {
     state.activeCookingSession = null;
     state.activeReceipt = null;
+    state.activePurchase = null;
+    state.activePriceAnalysis = null;
+    state.priceError = "";
     await api("/api/seed?reset=true", { method: "POST" });
     showToast("Demo data reset");
     await refresh();

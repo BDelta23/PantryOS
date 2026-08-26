@@ -339,6 +339,39 @@ h2 {
   padding-top: 14px;
 }
 
+.detail-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.detail-panel[hidden] {
+  display: none;
+}
+
+.detail-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-row,
+.price-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px;
+  background: #fbfcfb;
+}
+
+.price-summary {
+  display: grid;
+  gap: 6px;
+}
+
 .scanner-panel {
   display: grid;
   gap: 10px;
@@ -423,7 +456,9 @@ h2 {
   }
 
   .inventory-row,
-  .allocation-row {
+  .allocation-row,
+  .detail-row,
+  .price-row {
     grid-template-columns: 1fr;
   }
 
