@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 REJECTED_VALUES = {"", "todo", "tbd", "pending", "unknown", "n/a", "na", "replace-me", "changeme"}
+SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class ManualReleaseEvidenceError(AssertionError):
@@ -94,12 +96,19 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
         if check is None:
             problems.append({"field": "checks", "problem": f"missing required check {check_id}"})
             continue
-        problems.extend(_validate_check(check_id, check, rule, root=root))
+        problems.extend(_validate_check(check_id, check, rule, root=root, expected_commit=expected_commit))
 
     return _result(path, root=root, ok=not problems, problems=problems)
 
 
-def _validate_check(check_id: str, check: dict[str, Any], rule: dict[str, tuple[str, ...]], *, root: Path) -> list[dict[str, str]]:
+def _validate_check(
+    check_id: str,
+    check: dict[str, Any],
+    rule: dict[str, tuple[str, ...]],
+    *,
+    root: Path,
+    expected_commit: str,
+) -> list[dict[str, str]]:
     problems: list[dict[str, str]] = []
     prefix = f"checks[{check_id}]"
     if check.get("result") != "PASS":
@@ -121,6 +130,7 @@ def _validate_check(check_id: str, check: dict[str, Any], rule: dict[str, tuple[
     else:
         for field in rule["details"]:
             _require_clean_string(details.get(field), f"{prefix}.details.{field}", problems)
+        _validate_check_specific_details(check_id, details, prefix, root=root, expected_commit=expected_commit, problems=problems)
 
     evidence = check.get("evidence")
     if not isinstance(evidence, dict):
@@ -142,6 +152,40 @@ def _validate_check(check_id: str, check: dict[str, Any], rule: dict[str, tuple[
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": f"missing {value}"})
 
     return problems
+
+
+def _validate_check_specific_details(
+    check_id: str,
+    details: dict[str, Any],
+    prefix: str,
+    *,
+    root: Path,
+    expected_commit: str,
+    problems: list[dict[str, str]],
+) -> None:
+    if check_id == "published-image-signature":
+        digest = details.get("digest")
+        if not isinstance(digest, str) or SHA256_DIGEST_RE.fullmatch(digest.strip()) is None:
+            problems.append({"field": f"{prefix}.details.digest", "problem": "must be a sha256:<64 lowercase hex> digest"})
+        command = details.get("verification_command")
+        if not isinstance(command, str) or "cosign" not in command.lower() or "verify" not in command.lower():
+            problems.append({"field": f"{prefix}.details.verification_command", "problem": "must record a cosign verify command"})
+    elif check_id == "independent-full-review":
+        if details.get("decision") != "PASS":
+            problems.append({"field": f"{prefix}.details.decision", "problem": "must be PASS"})
+        if str(details.get("open_critical_high", "")).strip() != "0":
+            problems.append({"field": f"{prefix}.details.open_critical_high", "problem": "must be 0"})
+        if str(details.get("release_blocking_medium", "")).strip() != "0":
+            problems.append({"field": f"{prefix}.details.release_blocking_medium", "problem": "must be 0"})
+        if details.get("reviewed_commit") != expected_commit:
+            problems.append({"field": f"{prefix}.details.reviewed_commit", "problem": f"must match current commit {expected_commit}"})
+        review_path = details.get("review_path")
+        if isinstance(review_path, str) and not _rejected(review_path):
+            resolved = Path(review_path)
+            if not resolved.is_absolute():
+                resolved = root / resolved
+            if not resolved.exists():
+                problems.append({"field": f"{prefix}.details.review_path", "problem": f"missing {review_path}"})
 
 
 def _validate_timestamp(value: Any, field: str, problems: list[dict[str, str]]) -> None:

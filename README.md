@@ -136,7 +136,7 @@ Validate manual release evidence before tagging v1.0:
 python scripts/manual_release_evidence.py
 ```
 
-The command expects `docs/release/manual-validation.json` for the current Git commit and requires `PASS` records for `physical-barcode-camera`, `real-receipt-ocr`, `published-image-signature`, and `independent-full-review`. Each record must include an operator, UTC timestamp, acceptance IDs, concrete environment or release details, a summary, and local evidence artifact paths. The command exits nonzero until those external checks are recorded.
+The command expects `docs/release/manual-validation.json` for the current Git commit and requires `PASS` records for `physical-barcode-camera`, `real-receipt-ocr`, `published-image-signature`, and `independent-full-review`. Each record must include an operator, UTC timestamp, acceptance IDs, concrete environment or release details, a summary, and local evidence artifact paths. Signature evidence must include a `sha256:<digest>` image digest and the exact `cosign verify` command that passed. Independent review evidence must point at an existing review artifact for the same commit with `decision=PASS`, `open_critical_high=0`, and `release_blocking_medium=0`. The command exits nonzero until those external checks are recorded.
 
 ## Home Assistant Integration
 

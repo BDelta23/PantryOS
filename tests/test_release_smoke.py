@@ -230,16 +230,34 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
         evidence_dir.mkdir(parents=True)
         artifact = evidence_dir / "manual-check.md"
         artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review = evidence_dir / "independent-review.md"
+        review.write_text("# Independent review\n\nPASS: no release-blocking findings.\n", encoding="utf-8")
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
         commit = "b" * 40
         checks = []
         for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
             details = {field: f"value-{field}" for field in rule["details"]}
-            if check_id == "independent-full-review":
-                details["decision"] = "PASS"
-                details["open_critical_high"] = "0"
-                details["release_blocking_medium"] = "0"
+            if check_id == "published-image-signature":
+                details.update(
+                    {
+                        "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "digest": "sha256:" + "1" * 64,
+                        "tag": "v1.0.0",
+                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "signature_identity": "release@example.test",
+                    }
+                )
+            elif check_id == "independent-full-review":
+                details.update(
+                    {
+                        "review_path": "docs/release/evidence/independent-review.md",
+                        "reviewed_commit": commit,
+                        "decision": "PASS",
+                        "open_critical_high": "0",
+                        "release_blocking_medium": "0",
+                    }
+                )
             checks.append(
                 {
                     "id": check_id,
@@ -300,3 +318,67 @@ def test_manual_release_evidence_rejects_incomplete_records() -> None:
     assert any(problem["field"] == "checks[physical-barcode-camera].result" for problem in result["problems"])
     assert any("missing required check real-receipt-ocr" in problem["problem"] for problem in result["problems"])
     assert any(problem["field"] == "checks[physical-barcode-camera].evidence.artifact_paths[0]" for problem in result["problems"])
+
+
+def test_manual_release_evidence_rejects_weak_signature_and_review_records() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        commit = "d" * 40
+        checks = []
+        for check_id, rule in manual_release_evidence.REQUIRED_CHECKS.items():
+            details = {field: f"value-{field}" for field in rule["details"]}
+            if check_id == "published-image-signature":
+                details.update(
+                    {
+                        "digest": "value-digest",
+                        "verification_command": "docker inspect pantryos",
+                    }
+                )
+            elif check_id == "independent-full-review":
+                details.update(
+                    {
+                        "review_path": "docs/release/evidence/missing-review.md",
+                        "reviewed_commit": "e" * 40,
+                        "decision": "FAIL",
+                        "open_critical_high": "1",
+                        "release_blocking_medium": "2",
+                    }
+                )
+            checks.append(
+                {
+                    "id": check_id,
+                    "result": "PASS",
+                    "operator": "release-operator",
+                    "timestamp_utc": "2026-08-26T12:00:00Z",
+                    "acceptance": list(rule["acceptance"]),
+                    "details": details,
+                    "evidence": {
+                        "summary": f"{check_id} passed against the release candidate.",
+                        "artifact_paths": ["docs/release/evidence/manual-check.md"],
+                    },
+                }
+            )
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    fields = {problem["field"] for problem in result["problems"]}
+    assert result["ok"] is False
+    assert "checks[published-image-signature].details.digest" in fields
+    assert "checks[published-image-signature].details.verification_command" in fields
+    assert "checks[independent-full-review].details.review_path" in fields
+    assert "checks[independent-full-review].details.reviewed_commit" in fields
+    assert "checks[independent-full-review].details.decision" in fields
+    assert "checks[independent-full-review].details.open_critical_high" in fields
+    assert "checks[independent-full-review].details.release_blocking_medium" in fields
