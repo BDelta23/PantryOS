@@ -46,7 +46,7 @@ REQUIRED_CHECKS: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "published-image-signature": {
         "acceptance": ("I4", "I5", "J8"),
-        "details": ("image", "digest", "tag", "verification_command", "signature_identity"),
+        "details": ("image", "digest", "tag", "verification_command", "signature_identity", "transparency_log_url"),
     },
     "independent-full-review": {
         "acceptance": ("J7", "J8"),
@@ -345,6 +345,19 @@ def _validate_check_specific_details(
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include the recorded digest"})
         elif identity_value and identity_value not in command:
             problems.append({"field": f"{prefix}.details.verification_command", "problem": "must include signature_identity"})
+        transparency_log_url = details.get("transparency_log_url")
+        transparency_value = transparency_log_url.strip() if isinstance(transparency_log_url, str) else ""
+        unavailable_prefix = "not available:"
+        if transparency_value:
+            transparency_lower = transparency_value.lower()
+            unavailable_reason = transparency_value[len(unavailable_prefix) :].strip()
+            if not HTTP_URL_RE.match(transparency_value) and not (transparency_lower.startswith(unavailable_prefix) and unavailable_reason):
+                problems.append(
+                    {
+                        "field": f"{prefix}.details.transparency_log_url",
+                        "problem": "must be an http(s) URL or start with 'not available:' and include a reason",
+                    }
+                )
     elif check_id == "independent-full-review":
         if details.get("decision") != "PASS":
             problems.append({"field": f"{prefix}.details.decision", "problem": "must be PASS"})

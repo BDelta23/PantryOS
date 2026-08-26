@@ -25,6 +25,6 @@ python scripts/supply_chain_audit.py
 
 ## Image signing policy
 
-Published v1 release images must be signed outside this repository after the final image digest is known. Use a keyless or external-key `cosign sign` workflow controlled by the release operator, then record the image digest, signature identity, transparency-log URL when available, and verification command in the release notes. The final verification command recorded for release must verify the same published image reference, digest, and signature identity recorded in `docs/release/manual-validation.json`.
+Published v1 release images must be signed outside this repository after the final image digest is known. Use a keyless or external-key `cosign sign` workflow controlled by the release operator, then record the image digest, signature identity, transparency-log URL or explicit unavailability reason, and verification command in the release notes. The final verification command recorded for release must verify the same published image reference, digest, and signature identity recorded in `docs/release/manual-validation.json`.
 
 No signing keys, registry tokens, cosign passwords, or private certificates may be committed to this repository, copied into the image, stored in `.env`, or recorded in generated release artifacts.
