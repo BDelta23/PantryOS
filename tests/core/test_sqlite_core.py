@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sqlite3
 import tempfile
 from contextlib import closing
 import threading
 from decimal import Decimal
 from pathlib import Path
 
+import pantryos.core as core_module
 from pantryos.core import PantryCore
 from pantryos.errors import InsufficientInventoryError, ValidationError
 
@@ -117,6 +120,60 @@ def test_twenty_concurrent_mutations_do_not_lose_successful_writes() -> None:
         assert core.instance()["state_revision"] == 20
 
 
+def test_failed_pending_migration_restores_prior_database_and_leaves_backup() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        core = make_core(directory)
+        core.add_inventory_lot(
+            {
+                "name": "Migration Beans",
+                "quantity": "2",
+                "unit": "can",
+                "location": "Kitchen/Pantry",
+            }
+        )
+        before_summary = core.dashboard()["summary"]
+        migration_dir = Path(directory) / "migrations"
+        migration_dir.mkdir()
+        for path in sorted(core_module.MIGRATIONS_DIR.glob("*.sql")):
+            shutil.copy2(path, migration_dir / path.name)
+        (migration_dir / "005_injected_failure.sql").write_text(
+            """
+            CREATE TABLE migration_partial_write(id INTEGER PRIMARY KEY);
+            INSERT INTO missing_table_for_failure(id) VALUES (1);
+            """,
+            encoding="utf-8",
+        )
+
+        original_migrations_dir = core_module.MIGRATIONS_DIR
+        core_module.MIGRATIONS_DIR = migration_dir
+        try:
+            try:
+                core.migrate()
+            except sqlite3.DatabaseError:
+                pass
+            else:
+                raise AssertionError("failing migration should raise a database error")
+        finally:
+            core_module.MIGRATIONS_DIR = original_migrations_dir
+
+        backups = list((Path(directory) / "backups" / "migrations").glob("pantryos-pre-migration-*.sqlite3"))
+        failed_copies = list(Path(directory).glob("pantryos.sqlite3.*.failed"))
+        assert len(backups) == 1
+        assert len(failed_copies) == 1
+        with closing(sqlite3.connect(core.db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            max_version = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+            partial_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_partial_write'"
+            ).fetchone()
+            lot_count = connection.execute(
+                "SELECT COUNT(*) FROM inventory_lots l JOIN products p ON p.id = l.product_id WHERE p.name = 'Migration Beans'"
+            ).fetchone()[0]
+        assert max_version == 4
+        assert partial_table is None
+        assert lot_count == 1
+        assert core.dashboard()["summary"] == before_summary
+        core.integrity_check()
 def test_consume_product_uses_fefo_and_rejects_over_consumption() -> None:
     with tempfile.TemporaryDirectory() as directory:
         core = make_core(directory)

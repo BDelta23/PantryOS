@@ -231,7 +231,7 @@ python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pa
 python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/pantryos.json --dry-run
 ```
 
-`backup --output *.sqlite3` writes a SQLite backup plus a `.sha256.json` manifest. `backup --output *.zip` writes an upload-inclusive archive with `pantryos.sqlite3`, private `receipts/*` payloads, and `manifest.json` checksums. `restore` verifies the backup before replacing the target database; `.zip` restores also rewrite receipt storage paths for the destination data directory and restore receipt payload files. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
+`backup --output *.sqlite3` writes a SQLite backup plus a `.sha256.json` manifest. `backup --output *.zip` writes an upload-inclusive archive with `pantryos.sqlite3`, private `receipts/*` payloads, and `manifest.json` checksums. `restore` verifies the backup before replacing the target database; `.zip` restores also rewrite receipt storage paths for the destination data directory and restore receipt payload files. When an existing database has pending migrations, PantryOS writes a pre-migration SQLite backup under `data/backups/migrations/`; if a migration fails, it restores that backup after saving a `.failed` copy for inspection. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
 
 The server writes structured JSON request logs to stdout. Each line includes `event`, `request_id`, `method`, `path`, `status`, `duration_ms`, and `client`. Request bodies, authorization headers, cookies, CSRF tokens, receipt contents, and browser session values are not logged.
 

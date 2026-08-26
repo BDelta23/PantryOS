@@ -82,31 +82,87 @@ class PantryCore:
         return connection
 
     def migrate(self) -> None:
+        migration_paths = sorted(MIGRATIONS_DIR.glob("*.sql"))
+        had_existing_database = self.db_path.exists() and self.db_path.stat().st_size > 0
         with closing(self.connect()) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                connection.execute(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
-                )
-                applied = {
-                    row["version"]
-                    for row in connection.execute("SELECT version FROM schema_migrations")
-                }
-                for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
-                    version = int(path.stem.split("_", 1)[0])
-                    if version in applied:
-                        continue
-                    connection.executescript(path.read_text(encoding="utf-8"))
+            applied = self._applied_migration_versions(connection)
+        pending_paths = [path for path in migration_paths if int(path.stem.split("_", 1)[0]) not in applied]
+        recovery_backup = self._create_pre_migration_backup() if pending_paths and had_existing_database else None
+        try:
+            with closing(self.connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
                     connection.execute(
-                        "INSERT INTO schema_migrations(version) VALUES (?)",
-                        (version,),
+                        "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))"
                     )
-                self._ensure_metadata(connection)
-                connection.commit()
-            except Exception:
-                connection.rollback()
-                raise
+                    applied = {
+                        row["version"]
+                        for row in connection.execute("SELECT version FROM schema_migrations")
+                    }
+                    for path in migration_paths:
+                        version = int(path.stem.split("_", 1)[0])
+                        if version in applied:
+                            continue
+                        self._execute_migration_script(connection, path.read_text(encoding="utf-8"))
+                        connection.execute(
+                            "INSERT INTO schema_migrations(version) VALUES (?)",
+                            (version,),
+                        )
+                    self._ensure_metadata(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+        except Exception:
+            if recovery_backup is not None:
+                failed_copy = self.db_path.with_suffix(self.db_path.suffix + f".{utc_now().replace(':', '-')}.failed")
+                if self.db_path.exists():
+                    shutil.copy2(self.db_path, failed_copy)
+                self._replace_database_file(recovery_backup, self.db_path)
+            raise
 
+    def _applied_migration_versions(self, connection: sqlite3.Connection) -> set[int]:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+        ).fetchone()
+        if exists is None:
+            return set()
+        return {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
+
+    def _execute_migration_script(self, connection: sqlite3.Connection, script: str) -> None:
+        statement_lines: list[str] = []
+        for line in script.splitlines():
+            statement_lines.append(line)
+            statement = "\n".join(statement_lines).strip()
+            if not statement or not sqlite3.complete_statement(statement):
+                continue
+            connection.execute(statement)
+            statement_lines = []
+        trailing = "\n".join(statement_lines).strip()
+        if trailing:
+            raise ValidationError("Migration script ended with an incomplete SQL statement")
+
+    def _create_pre_migration_backup(self) -> Path:
+        backup_dir = self.db_path.parent / "backups" / "migrations"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = utc_now().replace(":", "-")
+        backup_path = backup_dir / f"{self.db_path.stem}-pre-migration-{timestamp}.sqlite3"
+        with closing(sqlite3.connect(self.db_path)) as source, closing(sqlite3.connect(backup_path)) as destination:
+            source.backup(destination)
+        return backup_path
+
+    def _replace_database_file(self, source: Path, target: Path) -> None:
+        for sidecar in self._sqlite_sidecars(target):
+            sidecar.unlink(missing_ok=True)
+        shutil.copy2(source, target)
+        for sidecar in self._sqlite_sidecars(target):
+            sidecar.unlink(missing_ok=True)
+
+    def _sqlite_sidecars(self, database: Path) -> list[Path]:
+        return [
+            database.with_name(database.name + suffix)
+            for suffix in ("-wal", "-shm", "-journal")
+        ]
     def integrity_check(self) -> None:
         with closing(self.connect()) as connection:
             result = connection.execute("PRAGMA integrity_check").fetchone()[0]
@@ -338,7 +394,8 @@ class PantryCore:
         restored = PantryCore(temp)
         restored.migrate()
         restored.integrity_check()
-        temp.replace(self.db_path)
+        self._replace_database_file(temp, self.db_path)
+        temp.unlink(missing_ok=True)
 
     def verify_backup_archive(self, backup_path: Path | str) -> dict[str, Any]:
         source = Path(backup_path)
@@ -391,10 +448,10 @@ class PantryCore:
                 if receipt_dir.exists():
                     shutil.rmtree(receipt_dir)
                 shutil.move(str(staging_receipts), receipt_dir)
-                shutil.copy2(temp_db, self.db_path)
+                self._replace_database_file(temp_db, self.db_path)
             except Exception:
                 if db_rollback.exists():
-                    shutil.copy2(db_rollback, self.db_path)
+                    self._replace_database_file(db_rollback, self.db_path)
                 if receipt_rollback.exists():
                     if receipt_dir.exists():
                         shutil.rmtree(receipt_dir)
