@@ -98,6 +98,14 @@ python scripts/supply_chain_audit.py
 
 The supply-chain audit enforces the digest-pinned base image, `docs/release/container-image.lock.json`, `docs/release/pantryos-image-sbom.spdx.json`, required `tesseract-ocr` package inventory, and the release signing policy in `docs/release/SUPPLY_CHAIN.md`.
 
+Audit release-critical artifacts for J5 release debt markers:
+
+```powershell
+python scripts/release_artifact_audit.py
+```
+
+Every intentional match is path-aware and must carry a non-blocking reason; unexpected matches fail `python scripts/check.py`.
+
 ## Home Assistant Integration
 
 Copy `custom_components/pantryos` into your Home Assistant config directory:

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,3 +113,30 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     assert "Status: **NOT READY**" in markdown
     assert "python scripts/container_smoke.py" in markdown
     assert "Independent review pending." in markdown
+
+def test_release_artifact_audit_blocks_unallowed_completion_debt() -> None:
+    from scripts import release_artifact_audit
+
+    with TemporaryDirectory() as directory:
+        debt_file = Path(directory) / "debt.py"
+        debt_file.write_text("# " + "TO" + "DO: replace " + "fake " + "response" + " before release\n", encoding="utf-8")
+
+        result = release_artifact_audit.audit_repository(
+            [debt_file],
+            require_allowance_coverage=False,
+        )
+
+    assert result["ok"] is False
+    assert {finding["rule"] for finding in result["findings"]} == {"todo-marker", "fake-or-stub"}
+
+
+def test_release_artifact_audit_current_allowances_are_reasoned() -> None:
+    from scripts import release_artifact_audit
+
+    result = release_artifact_audit.audit_repository()
+
+    assert result["ok"] is True
+    assert result["allowed_matches"]
+    assert result["missing_allowances"] == []
+    for match in result["allowed_matches"]:
+        assert match["reason"].strip()

@@ -64,6 +64,10 @@ def main() -> None:
 
     release_readiness.check_readiness()
     print("release readiness: current")
+    import scripts.release_artifact_audit as release_artifact_audit
+
+    release_artifact_audit.check_release_artifacts()
+    print("release artifact audit: current")
     run_js_check()
 
 

@@ -138,6 +138,7 @@ def release_commands() -> list[str]:
         "python scripts/supply_chain_audit.py",
         "python scripts/ha_installed_smoke.py",
         "python scripts/ha_core_live_smoke.py",
+        "python scripts/release_artifact_audit.py",
         "python scripts/release_readiness.py --check",
     ]
 
