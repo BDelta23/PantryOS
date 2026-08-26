@@ -78,8 +78,12 @@ class FakeHass:
         self.services = FakeServices()
         self.bus = FakeBus()
         self.config_entries = FakeConfigEntries()
-        self.interval_callbacks = []
-        self.unsubscribed = 0
+        self.tasks = []
+
+    def async_create_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self.tasks.append(task)
+        return task
 
 
 class FakeEntry:
@@ -92,15 +96,6 @@ class FakeEntry:
 class FakeServiceCall:
     def __init__(self, data):
         self.data = data
-
-
-def fake_async_track_time_interval(hass, callback, interval):
-    hass.interval_callbacks.append(callback)
-
-    def unsubscribe():
-        hass.unsubscribed += 1
-
-    return unsubscribe
 
 
 class FakeClient:
@@ -166,7 +161,6 @@ async def scenario():
     importlib.import_module("custom_components.pantryos.diagnostics")
 
     integration.PantryAPIClient = FakeClient
-    integration.async_track_time_interval = fake_async_track_time_interval
 
     hass = FakeHass()
     entry = FakeEntry()
@@ -188,13 +182,17 @@ async def scenario():
     await open_registration["handler"](FakeServiceCall({"item_id": "lot-1", "opened_at": "2026-08-26"}))
     require(runtime.client.opened_items == [{"item_id": "lot-1", "opened_at": "2026-08-26"}], "open_item did not call client")
 
-    await hass.interval_callbacks[0](None)
+    for _ in range(40):
+        if hass.bus.last_event_data.get("event_types") == ["cooking.started"]:
+            break
+        await asyncio.sleep(0.05)
     require(hass.bus.events[-1] == f"{integration.DOMAIN}_updated", "update event was not fired")
     require(hass.bus.last_event_data["event_types"] == ["cooking.started"], "event metadata was not surfaced")
     require(hass.bus.last_event_data["events"][0]["lot_id"] == "lot-1", "event details were not bounded and copied")
 
     require(await integration.async_unload_entry(hass, entry) is True, "unload did not return True")
-    require(hass.unsubscribed == 1, "poll unsubscribe was not called")
+    await asyncio.sleep(0)
+    require(hass.tasks and all(task.cancelled() for task in hass.tasks), "stream task was not cancelled")
     require((integration.DOMAIN, "add_item") in hass.services.removed, "services were not removed")
 
     try:
@@ -211,6 +209,7 @@ async def scenario():
         "platforms": list(integration.PLATFORMS),
         "last_event_types": hass.bus.last_event_data["event_types"],
         "last_revision": runtime.coordinator.last_revision,
+        "stream_task_cancelled": all(task.cancelled() for task in hass.tasks),
     }
 
 

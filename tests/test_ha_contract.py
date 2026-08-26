@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import types
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from types import SimpleNamespace
 import json
 import sys
@@ -39,11 +39,13 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     assert "PantryRuntime" in init_py
     assert "entry.runtime_data" in init_py
     assert "PantryDataCoordinator" in coordinator_py
-    assert "async_refresh_from_event_stream" in init_py
-    assert "async_refresh_from_events" in init_py
-    assert "async_track_time_interval" in init_py
+    assert "async_refresh_from_event_stream" in coordinator_py
+    assert "async_refresh_from_events" in coordinator_py
+    assert "async_create_task" in init_py
     assert "event_types" in init_py
     assert "last_events" in coordinator_py
+    assert "async_listen_for_events" in init_py
+    assert "async_listen_for_events" in coordinator_py
     assert "self._coordinator.summary()" in sensor_py
     assert "await self._pantry.async_refresh()" not in sensor_py
     assert "async_open_item" in init_py
@@ -257,6 +259,62 @@ def test_home_assistant_coordinator_refreshes_snapshot_when_event_stream_advance
 
     asyncio.run(scenario())
 
+
+def test_home_assistant_coordinator_continuous_listener_signals_change_and_cancels() -> None:
+    module = load_coordinator_module()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.refresh_count = 0
+            self.stream_count = 0
+
+        async def async_refresh(self):
+            self.refresh_count += 1
+            return {
+                "revision": self.refresh_count,
+                "summary": {"total_items": self.refresh_count, "state_revision": self.refresh_count},
+            }
+
+        async def async_event_stream(self, *, after_revision=None, timeout_seconds=25, heartbeat_seconds=10):
+            self.stream_count += 1
+            if self.stream_count == 1:
+                assert after_revision == 1
+                assert timeout_seconds == 0.1
+                assert heartbeat_seconds == 0.1
+                return {"items": [{"id": "evt-2", "event_type": "ADD", "revision": 2}], "revision": 2, "stream": True}
+            await asyncio.sleep(60)
+            return {"items": [], "revision": 2, "stream": True}
+
+    async def scenario() -> None:
+        client = FakeClient()
+        coordinator = module.PantryDataCoordinator(client)
+        await coordinator.async_refresh()
+        changes = []
+
+        task = asyncio.create_task(
+            coordinator.async_listen_for_events(
+                lambda: changes.append(coordinator.last_revision),
+                timeout_seconds=0.1,
+                heartbeat_seconds=0.1,
+                reconnect_seconds=0.01,
+                retry_seconds=0.01,
+            )
+        )
+        try:
+            for _ in range(50):
+                if changes:
+                    break
+                await asyncio.sleep(0.01)
+            assert changes == [2]
+            assert coordinator.last_events == [{"event_type": "ADD", "revision": 2, "id": "evt-2"}]
+            assert coordinator.summary()["total_items"] == 2
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    asyncio.run(scenario())
+
 @contextmanager
 def fake_homeassistant_modules():
     module_names = [
@@ -365,15 +423,6 @@ def fake_homeassistant_modules():
     cv.positive_int = int
     cv.ensure_list = lambda value: value if isinstance(value, list) else [value]
 
-    def async_track_time_interval(hass, callback, interval):
-        hass.interval_callbacks.append(callback)
-
-        def unsubscribe():
-            hass.unsubscribed += 1
-
-        return unsubscribe
-
-    event.async_track_time_interval = async_track_time_interval
 
     ha.config_entries = config_entries
     ha.helpers = helpers
@@ -460,8 +509,21 @@ class FakeHass:
         self.services = FakeServices()
         self.bus = FakeBus()
         self.config_entries = FakeConfigEntries()
-        self.interval_callbacks = []
-        self.unsubscribed = 0
+        self.tasks = []
+
+    def async_create_task(self, coroutine):
+        task = FakeTask(coroutine)
+        self.tasks.append(task)
+        return task
+
+class FakeTask:
+    def __init__(self, coroutine) -> None:
+        self.coroutine = coroutine
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        self.coroutine.close()
 
 
 class FakeEntry:
@@ -536,13 +598,10 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
             assert runtime.coordinator.last_revision >= 2
             assert hass.bus.events[-1] == f"{module.DOMAIN}_updated"
 
-            await hass.interval_callbacks[0](None)
-            assert runtime.coordinator.last_revision >= 3
-            assert hass.bus.last_event_data["event_types"] == ["cooking.started"]
-            assert hass.bus.last_event_data["events"][0]["id"] == "evt-1"
+            assert runtime.stream_task is hass.tasks[0]
 
             assert await module.async_unload_entry(hass, entry) is True
-            assert hass.unsubscribed == 1
+            assert hass.tasks[0].cancelled is True
             assert (module.DOMAIN, "add_item") in hass.services.removed
             assert entry.entry_id not in hass.data.get(module.DOMAIN, {})
 

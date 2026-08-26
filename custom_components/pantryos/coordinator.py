@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from inspect import isawaitable
 from typing import Any
 
 
@@ -75,6 +77,43 @@ class PantryDataCoordinator:
         )
         return await self._refresh_from_event_payload(events)
 
+    async def async_listen_for_events(
+        self,
+        on_change: Callable[[], Any],
+        *,
+        timeout_seconds: float = 300,
+        heartbeat_seconds: float = 15,
+        reconnect_seconds: float = 0.2,
+        retry_seconds: float = 5,
+    ) -> None:
+        """Continuously subscribe to Core events and refresh the cache on change."""
+        while True:
+            try:
+                changed = await self.async_refresh_from_event_stream(
+                    timeout_seconds=timeout_seconds,
+                    heartbeat_seconds=heartbeat_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.available = False
+                self.last_error = str(exc)
+                if hasattr(self.client, "available"):
+                    self.client.available = False
+                try:
+                    changed = await self.async_refresh_from_events()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    await asyncio.sleep(retry_seconds)
+                    continue
+
+            if changed:
+                result = on_change()
+                if isawaitable(result):
+                    await result
+            await asyncio.sleep(reconnect_seconds)
+
     async def _refresh_from_event_payload(self, events: dict[str, Any]) -> bool:
         self.last_events = _event_summaries(events)
         event_revision = _revision_from_events(events)
@@ -120,6 +159,7 @@ class PantryRuntime:
     coordinator: PantryDataCoordinator
     instance: dict[str, Any] = field(default_factory=dict)
     unsubscribers: list[Callable[[], None]] = field(default_factory=list)
+    stream_task: Any | None = None
 
 
 def _event_summaries(payload: dict[str, Any], *, limit: int = 10) -> list[dict[str, Any]]:

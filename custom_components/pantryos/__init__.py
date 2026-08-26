@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -11,13 +10,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_track_time_interval
 
 from .api_client import PantryAPIAuthError, PantryAPIClient, PantryAPIError
 from .const import CONF_API_TOKEN, CONF_BASE_URL, DOMAIN, PLATFORMS
 from .coordinator import PantryDataCoordinator, PantryRuntime
 
-SCAN_INTERVAL = timedelta(seconds=30)
+STREAM_TIMEOUT_SECONDS = 300
+STREAM_HEARTBEAT_SECONDS = 15
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -32,25 +31,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except PantryAPIError as exc:
         raise ConfigEntryNotReady(str(exc)) from exc
 
+    async def _signal_stream_change() -> None:
+        _signal_entities_updated(hass, coordinator)
+
     runtime = PantryRuntime(client=pantry, coordinator=coordinator, instance=instance)
-
-    async def _poll_events(now: Any) -> None:
-        try:
-            changed = await coordinator.async_refresh_from_event_stream()
-        except PantryAPIError:
-            try:
-                changed = await coordinator.async_refresh_from_events()
-            except PantryAPIError:
-                try:
-                    await coordinator.async_refresh()
-                except PantryAPIError:
-                    changed = True
-                else:
-                    changed = True
-        if changed:
-            _signal_entities_updated(hass, coordinator)
-
-    runtime.unsubscribers.append(async_track_time_interval(hass, _poll_events, SCAN_INTERVAL))
+    stream_task = hass.async_create_task(
+        coordinator.async_listen_for_events(
+            _signal_stream_change,
+            timeout_seconds=STREAM_TIMEOUT_SECONDS,
+            heartbeat_seconds=STREAM_HEARTBEAT_SECONDS,
+        )
+    )
+    runtime.stream_task = stream_task
+    runtime.unsubscribers.append(stream_task.cancel)
     entry.runtime_data = runtime
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
     _register_services(hass)
