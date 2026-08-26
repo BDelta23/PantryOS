@@ -59,10 +59,10 @@ def _complete_manual_release_checks(manual_release_evidence: Any, commit: str) -
         elif check_id == "published-image-signature":
             details.update(
                 {
-                    "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                    "image": "ghcr.io/example/pantryos:v1.0.0@sha256:" + "1" * 64,
                     "digest": "sha256:" + "1" * 64,
                     "tag": "v1.0.0",
-                    "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:"
+                    "verification_command": "cosign verify ghcr.io/example/pantryos:v1.0.0@sha256:"
                     + "1" * 64
                     + " --certificate-identity release@example.test",
                     "signature_identity": "release@example.test",
@@ -499,10 +499,10 @@ def test_manual_release_evidence_accepts_complete_current_commit_record() -> Non
             elif check_id == "published-image-signature":
                 details.update(
                     {
-                        "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "image": "ghcr.io/example/pantryos:v1.0.0@sha256:" + "1" * 64,
                         "digest": "sha256:" + "1" * 64,
                         "tag": "v1.0.0",
-                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:"
+                        "verification_command": "cosign verify ghcr.io/example/pantryos:v1.0.0@sha256:"
                         + "1" * 64
                         + " --certificate-identity release@example.test",
                         "signature_identity": "release@example.test",
@@ -1351,10 +1351,10 @@ def test_manual_release_evidence_rejects_weak_physical_and_receipt_records() -> 
             elif check_id == "published-image-signature":
                 details.update(
                     {
-                        "image": "ghcr.io/example/pantryos@sha256:" + "1" * 64,
+                        "image": "ghcr.io/example/pantryos:v1.0.0@sha256:" + "1" * 64,
                         "digest": "sha256:" + "1" * 64,
                         "tag": "v1.0.0",
-                        "verification_command": "cosign verify ghcr.io/example/pantryos@sha256:"
+                        "verification_command": "cosign verify ghcr.io/example/pantryos:v1.0.0@sha256:"
                         + "1" * 64
                         + " --certificate-identity release@example.test",
                         "signature_identity": "release@example.test",
@@ -1448,7 +1448,7 @@ def test_manual_release_evidence_rejects_mismatched_signature_and_review_artifac
             elif check_id == "published-image-signature":
                 details.update(
                     {
-                        "image": "ghcr.io/example/pantryos@" + other_digest,
+                        "image": "ghcr.io/example/pantryos:v1.0.0@" + other_digest,
                         "digest": recorded_digest,
                         "tag": "v1.0.0",
                         "verification_command": "cosign verify ghcr.io/example/pantryos@"
@@ -1514,9 +1514,9 @@ def test_manual_release_evidence_rejects_signature_image_reference_mismatch() ->
         for check in checks:
             if check["id"] == "published-image-signature":
                 digest = check["details"]["digest"]
-                check["details"]["image"] = "ghcr.io/example/pantryos-release@" + digest
+                check["details"]["image"] = "ghcr.io/example/pantryos-release:v1.0.0@" + digest
                 check["details"]["verification_command"] = (
-                    "cosign verify ghcr.io/example/pantryos@" + digest + " --certificate-identity release@example.test"
+                    "cosign verify ghcr.io/example/pantryos:v1.0.0@" + digest + " --certificate-identity release@example.test"
                 )
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1531,6 +1531,43 @@ def test_manual_release_evidence_rejects_signature_image_reference_mismatch() ->
     assert {
         "field": "checks[published-image-signature].details.verification_command",
         "problem": "must include the recorded image reference",
+    } in result["problems"]
+
+
+def test_manual_release_evidence_rejects_signature_image_without_recorded_tag() -> None:
+    from scripts import manual_release_evidence
+
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        evidence_dir = root / "docs" / "release" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        artifact = evidence_dir / "manual-check.md"
+        artifact.write_text("release evidence captured by operator\n", encoding="utf-8")
+        review_dir = root / "docs" / "reviews"
+        review_dir.mkdir(parents=True)
+        review = review_dir / "independent-review.md"
+        commit = "d" * 40
+        review.write_text(_passing_review_text(commit), encoding="utf-8")
+        checks = _complete_manual_release_checks(manual_release_evidence, commit)
+        for check in checks:
+            if check["id"] == "published-image-signature":
+                digest = check["details"]["digest"]
+                image = "ghcr.io/example/pantryos@" + digest
+                check["details"]["image"] = image
+                check["details"]["verification_command"] = "cosign verify " + image + " --certificate-identity release@example.test"
+        evidence_path = root / "docs" / "release" / "manual-validation.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps({"schema_version": 1, "release_commit": commit, "checks": checks}),
+            encoding="utf-8",
+        )
+
+        result = manual_release_evidence.validate_evidence(evidence_path, root=root, commit=commit)
+
+    assert result["ok"] is False
+    assert {
+        "field": "checks[published-image-signature].details.image",
+        "problem": "must include the recorded SemVer tag before the digest",
     } in result["problems"]
 
 
@@ -1553,7 +1590,7 @@ def test_manual_release_evidence_rejects_signature_identity_mismatch() -> None:
             if check["id"] == "published-image-signature":
                 digest = check["details"]["digest"]
                 check["details"]["verification_command"] = (
-                    "cosign verify ghcr.io/example/pantryos@" + digest + " --certificate-identity other@example.test"
+                    "cosign verify ghcr.io/example/pantryos:v1.0.0@" + digest + " --certificate-identity other@example.test"
                 )
         evidence_path = root / "docs" / "release" / "manual-validation.json"
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1589,7 +1626,7 @@ def test_manual_release_evidence_rejects_signature_identity_only_outside_cosign_
         for check in checks:
             if check["id"] == "published-image-signature":
                 digest = check["details"]["digest"]
-                image = "ghcr.io/example/pantryos@" + digest
+                image = "ghcr.io/example/pantryos:v1.0.0@" + digest
                 check["details"]["image"] = image
                 check["details"]["verification_command"] = (
                     "cosign verify " + image + " --certificate-identity other@example.test --annotations release@example.test"
@@ -1628,7 +1665,7 @@ def test_manual_release_evidence_rejects_signature_identity_without_cosign_flag(
         for check in checks:
             if check["id"] == "published-image-signature":
                 digest = check["details"]["digest"]
-                image = "ghcr.io/example/pantryos@" + digest
+                image = "ghcr.io/example/pantryos:v1.0.0@" + digest
                 check["details"]["image"] = image
                 check["details"]["verification_command"] = "cosign verify " + image + " release@example.test"
         evidence_path = root / "docs" / "release" / "manual-validation.json"
@@ -1680,7 +1717,7 @@ def test_manual_release_evidence_rejects_free_text_signature_image_reference() -
     assert result["ok"] is False
     assert {
         "field": "checks[published-image-signature].details.image",
-        "problem": "must be a digest-pinned image reference like ghcr.io/org/pantryos@sha256:<digest>",
+        "problem": "must be a SemVer-tagged digest-pinned image reference like ghcr.io/org/pantryos:v1.0.0@sha256:<digest>",
     } in result["problems"]
 
 

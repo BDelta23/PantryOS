@@ -385,9 +385,11 @@ def _validate_check_specific_details(
             problems.append(
                 {
                     "field": f"{prefix}.details.image",
-                    "problem": "must be a digest-pinned image reference like ghcr.io/org/pantryos@sha256:<digest>",
+                    "problem": "must be a SemVer-tagged digest-pinned image reference like ghcr.io/org/pantryos:v1.0.0@sha256:<digest>",
                 }
             )
+        if image_value and tag_value and ":" + tag_value + "@" not in image_value:
+            problems.append({"field": f"{prefix}.details.image", "problem": "must include the recorded SemVer tag before the digest"})
         if image_value and digest_value and digest_value not in image_value:
             problems.append({"field": f"{prefix}.details.image", "problem": "must include the recorded digest"})
         signature_identity = details.get("signature_identity")
