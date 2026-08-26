@@ -271,6 +271,25 @@ def test_release_readiness_generator_tracks_acceptance_and_blockers() -> None:
     assert "Independent review pending." in markdown
 
 
+def test_release_readiness_latest_evidence_is_newest_first() -> None:
+    from scripts import release_readiness
+
+    evidence = [
+        release_readiness.EvidenceRow(
+            date=f"2026-08-{day:02d}",
+            phase="Phase 8/J",
+            change=f"change {day}",
+            commands=f"command {day}",
+            gap=f"gap {day}",
+        )
+        for day in range(1, 11)
+    ]
+
+    latest = release_readiness.latest_evidence_rows(evidence)
+
+    assert [row.change for row in latest] == [f"change {day}" for day in range(10, 2, -1)]
+
+
 def test_release_artifact_audit_blocks_unallowed_completion_debt() -> None:
     from scripts import release_artifact_audit
 

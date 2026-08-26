@@ -86,6 +86,10 @@ def parse_evidence(text: str) -> list[EvidenceRow]:
     return rows
 
 
+def latest_evidence_rows(evidence: list[EvidenceRow], *, limit: int = 8) -> list[EvidenceRow]:
+    return list(reversed(evidence[-limit:]))
+
+
 def parse_open_blockers(text: str) -> list[str]:
     marker = "## Open blockers"
     if marker not in text:
@@ -123,7 +127,7 @@ def readiness_summary() -> dict[str, Any]:
         "phase_gate_count": len(gates),
         "open_phase_gates": open_gates,
         "open_blockers": blockers,
-        "latest_evidence": evidence[-8:],
+        "latest_evidence": latest_evidence_rows(evidence),
         "required_release_commands": release_commands(),
     }
 

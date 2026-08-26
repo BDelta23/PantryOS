@@ -462,7 +462,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "d4d9df5982f6d3d5cf0b9a64ac2998152b17a5d036af6d59b045296449d76222"
+          "checksumValue": "85bcc364c3c0a4f3abb739d5f436436507a2cf6d7124ee4eec1219f4279d896a"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -858,7 +858,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "555b2cf6872238e63bbbff6ef1c1747ba774dcc215d9a6e3d2605d2b14fba6e0"
+          "checksumValue": "71080f9c586710799da42a5279de6826fc0e56906bbf7cbd5bbb0af0d4b4b991"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -885,7 +885,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "1137efa8285a8b6ffb70f094556f1f28465f848aff349dcc68f240d6714faec1"
+          "checksumValue": "de4a06d7542e6706abbcd64d1a81f4a69ef9cfeeb02622cbe70f96e9e765b784"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -3744,7 +3744,7 @@
     "schema_version": 1,
     "signing_policy": "docs/release/SUPPLY_CHAIN.md",
     "source_file_count": 72,
-    "source_tree_sha256": "1137efa8285a8b6ffb70f094556f1f28465f848aff349dcc68f240d6714faec1"
+    "source_tree_sha256": "de4a06d7542e6706abbcd64d1a81f4a69ef9cfeeb02622cbe70f96e9e765b784"
   },
   "relationships": [
     {
