@@ -38,12 +38,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", help="Run database readiness and integrity checks.")
     doctor.set_defaults(func=run_doctor)
 
-    backup = subparsers.add_parser("backup", help="Create a verified SQLite backup plus checksum manifest.")
-    backup.add_argument("--output", required=True, help="Backup SQLite output path.")
+    backup = subparsers.add_parser("backup", help="Create a verified SQLite backup or upload-inclusive .zip archive.")
+    backup.add_argument("--output", required=True, help="Backup output path. Use .zip to include receipt upload files.")
     backup.set_defaults(func=run_backup)
 
-    restore = subparsers.add_parser("restore", help="Restore a backup after checksum and integrity verification.")
-    restore.add_argument("--input", required=True, help="Backup SQLite input path.")
+    restore = subparsers.add_parser("restore", help="Restore a SQLite backup or upload-inclusive .zip archive after verification.")
+    restore.add_argument("--input", required=True, help="Backup input path. .zip archives restore receipt upload files too.")
     restore.add_argument("--verify", action="store_true", help="Run integrity verification after restore.")
     restore.add_argument("--verify-only", action="store_true", help="Validate the backup and checksum without restoring.")
     restore.set_defaults(func=run_restore)
@@ -78,11 +78,25 @@ def run_doctor(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_backup(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
-    output = core.backup(Path(args.output))
+    output_path = Path(args.output)
+    if output_path.suffix.casefold() == ".zip":
+        archive = core.backup_archive(output_path)
+        return {
+            "ok": True,
+            "format": "archive",
+            "backup": archive["path"],
+            "manifest": "manifest.json",
+            "sha256": archive["sha256"],
+            "schema_version": archive["schema_version"],
+            "state_revision": archive["state_revision"],
+            "receipt_upload_count": archive["receipt_upload_count"],
+        }
+    output = core.backup(output_path)
     core.integrity_check()
     manifest = write_backup_manifest(core, output)
     return {
         "ok": True,
+        "format": "sqlite",
         "backup": str(output),
         "manifest": str(manifest),
         "sha256": sha256_file(output),
@@ -91,6 +105,31 @@ def run_backup(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
 
 def run_restore(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
     source = Path(args.input)
+    if source.suffix.casefold() == ".zip":
+        archive_probe = core.verify_backup_archive(source)
+        if args.verify_only:
+            return {
+                "ok": True,
+                "format": "archive",
+                "verified": True,
+                "restored": False,
+                "schema_version": archive_probe["schema_version"],
+                "receipt_upload_count": archive_probe["receipt_upload_count"],
+            }
+        core.restore_archive(source)
+        if args.verify:
+            core.integrity_check()
+        instance = core.instance()
+        return {
+            "ok": True,
+            "format": "archive",
+            "verified": bool(args.verify),
+            "restored": True,
+            "schema_version": instance["schema_version"],
+            "state_revision": instance["state_revision"],
+            "receipt_upload_count": archive_probe["receipt_upload_count"],
+        }
+
     verify_backup_manifest(source)
     probe_path = source.with_suffix(source.suffix + ".verify.tmp")
     try:
@@ -102,12 +141,19 @@ def run_restore(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:
         if probe_path.exists():
             probe_path.unlink()
     if args.verify_only:
-        return {"ok": True, "verified": True, "restored": False, "schema_version": probe_instance["schema_version"]}
+        return {"ok": True, "format": "sqlite", "verified": True, "restored": False, "schema_version": probe_instance["schema_version"]}
     core.restore(source)
     if args.verify:
         core.integrity_check()
     instance = core.instance()
-    return {"ok": True, "verified": bool(args.verify), "restored": True, "schema_version": instance["schema_version"], "state_revision": instance["state_revision"]}
+    return {
+        "ok": True,
+        "format": "sqlite",
+        "verified": bool(args.verify),
+        "restored": True,
+        "schema_version": instance["schema_version"],
+        "state_revision": instance["state_revision"],
+    }
 
 
 def run_import_legacy(core: PantryCore, args: argparse.Namespace) -> dict[str, Any]:

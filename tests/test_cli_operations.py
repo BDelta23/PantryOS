@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from zipfile import ZipFile
 
 from pantryos.core import PantryCore
 
@@ -69,7 +72,7 @@ def test_pantryos_cli_doctor_backup_restore_and_legacy_dry_run() -> None:
         assert doctor["counts"]["lots"] == 1
         assert Path(backup["backup"]).exists()
         assert manifest["sha256"] == backup["sha256"]
-        assert verify == {"ok": True, "restored": False, "schema_version": 4, "verified": True}
+        assert verify == {"ok": True, "format": "sqlite", "restored": False, "schema_version": 4, "verified": True}
         assert restore["ok"] is True
         assert restore["verified"] is True
         assert restored_doctor["counts"] == doctor["counts"]
@@ -80,3 +83,69 @@ def test_pantryos_cli_doctor_backup_restore_and_legacy_dry_run() -> None:
         assert imported["imported"] is True
         assert imported["recipe_count"] == 1
         assert Path(imported["backup_path"]).exists()
+
+
+def test_pantryos_cli_archive_backup_restores_receipt_upload_files() -> None:
+    with TemporaryDirectory() as directory:
+        source_db = Path(directory) / "source.sqlite3"
+        restored_db = Path(directory) / "restored.sqlite3"
+        archive_path = Path(directory) / "backup.zip"
+
+        core = PantryCore(source_db)
+        upload = core.upload_receipt(
+            {
+                "filename": "market.txt",
+                "mime_type": "text/plain",
+                "text": "Store: Market\nDate: 2026-08-25\nApples, 2, count, 3.00\nTotal: 3.00",
+            }
+        )
+        receipt_id = upload["receipt"]["id"]
+        with closing(sqlite3.connect(source_db)) as connection:
+            row = connection.execute(
+                "SELECT storage_path FROM receipt_uploads WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+        assert row is not None
+        original_storage_path = Path(row[0])
+        assert original_storage_path.exists()
+
+        backup = run_cli("--db", str(source_db), "backup", "--output", str(archive_path))
+        verify = run_cli("--db", str(restored_db), "restore", "--input", str(archive_path), "--verify-only")
+        restore = run_cli("--db", str(restored_db), "restore", "--input", str(archive_path), "--verify")
+
+        assert backup["format"] == "archive"
+        assert backup["receipt_upload_count"] == 1
+        assert verify == {
+            "ok": True,
+            "format": "archive",
+            "restored": False,
+            "schema_version": 4,
+            "verified": True,
+            "receipt_upload_count": 1,
+        }
+        assert restore["ok"] is True
+        assert restore["format"] == "archive"
+        assert restore["receipt_upload_count"] == 1
+
+        with ZipFile(archive_path) as archive:
+            manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+            assert manifest["database"]["path"] == "pantryos.sqlite3"
+            assert manifest["receipt_uploads"][0]["id"] == receipt_id
+            receipt_member = manifest["receipt_uploads"][0]["path"]
+            assert receipt_member.startswith("receipts/")
+            assert archive.read(receipt_member) == original_storage_path.read_bytes()
+
+        with closing(sqlite3.connect(restored_db)) as connection:
+            row = connection.execute(
+                "SELECT storage_path FROM receipt_uploads WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+        assert row is not None
+        restored_storage_path = Path(row[0])
+        assert restored_storage_path.exists()
+        assert restored_storage_path.parent == restored_db.parent / "receipts"
+        assert restored_storage_path.read_text(encoding="utf-8").startswith("Store: Market")
+
+        restored_core = PantryCore(restored_db)
+        extracted = restored_core.extract_receipt(receipt_id)
+        assert extracted["review"]["store"] == "Market"

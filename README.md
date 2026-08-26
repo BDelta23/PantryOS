@@ -225,11 +225,13 @@ The local operations CLI runs from a checkout or from the installed `pantryos` c
 ```powershell
 python scripts/pantryos.py --db data/pantryos.sqlite3 doctor
 python scripts/pantryos.py --db data/pantryos.sqlite3 backup --output backups/pantryos.sqlite3
+python scripts/pantryos.py --db data/pantryos.sqlite3 backup --output backups/pantryos.zip
 python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pantryos.sqlite3 --verify
+python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pantryos.zip --verify
 python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/pantryos.json --dry-run
 ```
 
-`backup` writes a SQLite backup plus a `.sha256.json` manifest. `restore` verifies that manifest when present and validates the backup before replacing the target database. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
+`backup --output *.sqlite3` writes a SQLite backup plus a `.sha256.json` manifest. `backup --output *.zip` writes an upload-inclusive archive with `pantryos.sqlite3`, private `receipts/*` payloads, and `manifest.json` checksums. `restore` verifies the backup before replacing the target database; `.zip` restores also rewrite receipt storage paths for the destination data directory and restore receipt payload files. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
 
 The server writes structured JSON request logs to stdout. Each line includes `event`, `request_id`, `method`, `path`, `status`, `duration_ms`, and `client`. Request bodies, authorization headers, cookies, CSRF tokens, receipt contents, and browser session values are not logged.
 

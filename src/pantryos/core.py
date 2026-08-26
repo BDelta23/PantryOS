@@ -6,7 +6,9 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import tempfile
 import uuid
+import zipfile
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -21,6 +23,9 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 CURRENT_SCHEMA_VERSION = 4
 MAX_RECEIPT_UPLOAD_BYTES = 64_000
 SUPPORTED_RECEIPT_MIME_TYPES = {"text/plain": ".txt", "text/csv": ".csv"}
+BACKUP_ARCHIVE_DB = "pantryos.sqlite3"
+BACKUP_ARCHIVE_MANIFEST = "manifest.json"
+BACKUP_ARCHIVE_RECEIPTS = "receipts"
 
 
 def utc_now() -> str:
@@ -271,6 +276,56 @@ class PantryCore:
             source.backup(destination)
         return target
 
+    def backup_archive(self, output_path: Path | str) -> dict[str, Any]:
+        self.migrate()
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp_db = target.with_name(f".{target.name}.{uuid.uuid4().hex}.sqlite3")
+        try:
+            self.backup(temp_db)
+            instance = self.instance()
+            receipt_entries = self._backup_receipt_entries(temp_db)
+            db_entry = {
+                "path": BACKUP_ARCHIVE_DB,
+                "sha256": self._sha256_file(temp_db),
+                "size_bytes": temp_db.stat().st_size,
+            }
+            manifest = {
+                "format": "pantryos-backup-archive",
+                "format_version": 1,
+                "created_at": utc_now(),
+                "schema_version": instance["schema_version"],
+                "state_revision": instance["state_revision"],
+                "database": db_entry,
+                "receipt_uploads": [
+                    {
+                        "id": entry["id"],
+                        "content_hash": entry["content_hash"],
+                        "original_filename": entry["original_filename"],
+                        "mime_type": entry["mime_type"],
+                        "path": entry["archive_path"],
+                        "sha256": entry["sha256"],
+                        "size_bytes": entry["size_bytes"],
+                    }
+                    for entry in receipt_entries
+                ],
+            }
+            with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.write(temp_db, BACKUP_ARCHIVE_DB)
+                for entry in receipt_entries:
+                    archive.write(entry["source_path"], entry["archive_path"])
+                archive.writestr(BACKUP_ARCHIVE_MANIFEST, json.dumps(manifest, indent=2, sort_keys=True))
+        finally:
+            if temp_db.exists():
+                temp_db.unlink()
+        return {
+            "path": str(target),
+            "sha256": self._sha256_file(target),
+            "schema_version": instance["schema_version"],
+            "state_revision": instance["state_revision"],
+            "receipt_upload_count": len(receipt_entries),
+        }
+
     def restore(self, backup_path: Path | str) -> None:
         source = Path(backup_path)
         if not source.exists():
@@ -284,6 +339,202 @@ class PantryCore:
         restored.migrate()
         restored.integrity_check()
         temp.replace(self.db_path)
+
+    def verify_backup_archive(self, backup_path: Path | str) -> dict[str, Any]:
+        source = Path(backup_path)
+        if not source.exists():
+            raise NotFoundError(f"Backup not found: {source}")
+        with tempfile.TemporaryDirectory(prefix="pantryos-verify-") as directory:
+            temp_root = Path(directory)
+            manifest, temp_db, receipts_dir = self._extract_backup_archive(source, temp_root)
+            restored = PantryCore(temp_db)
+            restored.migrate()
+            self._rewrite_restored_receipt_paths(temp_db, manifest, temp_root / "restored-receipts")
+            restored.integrity_check()
+            self._verify_extracted_receipts(manifest, receipts_dir)
+            instance = restored.instance()
+        return {
+            "schema_version": instance["schema_version"],
+            "state_revision": instance["state_revision"],
+            "receipt_upload_count": len(manifest["receipt_uploads"]),
+        }
+
+    def restore_archive(self, backup_path: Path | str) -> None:
+        source = Path(backup_path)
+        if not source.exists():
+            raise NotFoundError(f"Backup not found: {source}")
+        timestamp = utc_now().replace(":", "-")
+        receipt_dir = self.db_path.parent / "receipts"
+        db_rollback = self.db_path.with_suffix(self.db_path.suffix + f".{timestamp}.bak")
+        receipt_rollback = self.db_path.parent / f"receipts.{timestamp}.{uuid.uuid4().hex}.bak"
+        staging_receipts = self.db_path.parent / f".receipts.restore.{uuid.uuid4().hex}"
+        with tempfile.TemporaryDirectory(prefix="pantryos-restore-", dir=self.db_path.parent) as directory:
+            temp_root = Path(directory)
+            manifest, temp_db, extracted_receipts = self._extract_backup_archive(source, temp_root)
+            restored = PantryCore(temp_db)
+            restored.migrate()
+            self._rewrite_restored_receipt_paths(temp_db, manifest, receipt_dir)
+            restored.integrity_check()
+            self._verify_extracted_receipts(manifest, extracted_receipts)
+
+            staging_receipts.mkdir(parents=True, exist_ok=True)
+            for receipt in manifest["receipt_uploads"]:
+                archive_path = str(receipt["path"])
+                source_file = extracted_receipts / Path(archive_path).name
+                shutil.copy2(source_file, staging_receipts / source_file.name)
+
+            if self.db_path.exists():
+                shutil.copy2(self.db_path, db_rollback)
+            if receipt_dir.exists():
+                shutil.copytree(receipt_dir, receipt_rollback)
+            try:
+                if receipt_dir.exists():
+                    shutil.rmtree(receipt_dir)
+                shutil.move(str(staging_receipts), receipt_dir)
+                shutil.copy2(temp_db, self.db_path)
+            except Exception:
+                if db_rollback.exists():
+                    shutil.copy2(db_rollback, self.db_path)
+                if receipt_rollback.exists():
+                    if receipt_dir.exists():
+                        shutil.rmtree(receipt_dir)
+                    shutil.copytree(receipt_rollback, receipt_dir)
+                raise
+            finally:
+                if staging_receipts.exists():
+                    shutil.rmtree(staging_receipts)
+
+    def _backup_receipt_entries(self, backup_db: Path) -> list[dict[str, Any]]:
+        data_root = self.db_path.parent.resolve()
+        with closing(sqlite3.connect(backup_db)) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = list(
+                connection.execute(
+                    """
+                    SELECT id, content_hash, original_filename, mime_type, storage_path
+                    FROM receipt_uploads
+                    ORDER BY id
+                    """
+                )
+            )
+        entries: list[dict[str, Any]] = []
+        archive_paths: set[str] = set()
+        for row in rows:
+            source_path = Path(str(row["storage_path"]))
+            source_path = source_path.resolve() if source_path.is_absolute() else (data_root / source_path).resolve()
+            if not source_path.exists():
+                raise ValidationError(f"Receipt upload file is missing: {row['id']}")
+            try:
+                source_path.relative_to(data_root)
+            except ValueError as exc:
+                raise ValidationError(f"Receipt upload file is outside the PantryOS data directory: {row['id']}") from exc
+            suffix = source_path.suffix or SUPPORTED_RECEIPT_MIME_TYPES.get(str(row["mime_type"]), ".txt")
+            archive_path = f"{BACKUP_ARCHIVE_RECEIPTS}/{row['content_hash']}{suffix}"
+            if archive_path in archive_paths:
+                raise ValidationError(f"Receipt upload archive path collision: {row['id']}")
+            archive_paths.add(archive_path)
+            entries.append(
+                {
+                    "id": row["id"],
+                    "content_hash": row["content_hash"],
+                    "original_filename": row["original_filename"],
+                    "mime_type": row["mime_type"],
+                    "source_path": source_path,
+                    "archive_path": archive_path,
+                    "sha256": self._sha256_file(source_path),
+                    "size_bytes": source_path.stat().st_size,
+                }
+            )
+        return entries
+
+    def _extract_backup_archive(self, source: Path, temp_root: Path) -> tuple[dict[str, Any], Path, Path]:
+        try:
+            with zipfile.ZipFile(source) as archive:
+                manifest = json.loads(archive.read(BACKUP_ARCHIVE_MANIFEST).decode("utf-8"))
+                if manifest.get("format") != "pantryos-backup-archive" or manifest.get("format_version") != 1:
+                    raise ValidationError("Unsupported PantryOS backup archive format")
+                database = manifest.get("database")
+                receipts = manifest.get("receipt_uploads")
+                if not isinstance(database, dict) or not isinstance(receipts, list):
+                    raise ValidationError("PantryOS backup archive manifest is incomplete")
+                db_member = str(database.get("path") or "")
+                self._validate_archive_member(db_member)
+                temp_db = temp_root / BACKUP_ARCHIVE_DB
+                temp_db.write_bytes(archive.read(db_member))
+                if database.get("sha256") != self._sha256_file(temp_db):
+                    raise ValidationError("PantryOS backup database checksum does not match manifest")
+                if int(database.get("size_bytes") or -1) != temp_db.stat().st_size:
+                    raise ValidationError("PantryOS backup database size does not match manifest")
+                receipts_dir = temp_root / BACKUP_ARCHIVE_RECEIPTS
+                receipts_dir.mkdir(parents=True, exist_ok=True)
+                for receipt in receipts:
+                    if not isinstance(receipt, dict):
+                        raise ValidationError("PantryOS backup archive contains an invalid receipt entry")
+                    archive_path = str(receipt.get("path") or "")
+                    self._validate_archive_member(archive_path, expected_prefix=f"{BACKUP_ARCHIVE_RECEIPTS}/")
+                    target = receipts_dir / Path(archive_path).name
+                    target.write_bytes(archive.read(archive_path))
+                    if receipt.get("sha256") != self._sha256_file(target):
+                        raise ValidationError(f"Receipt upload checksum does not match manifest: {receipt.get('id')}")
+                    if int(receipt.get("size_bytes") or -1) != target.stat().st_size:
+                        raise ValidationError(f"Receipt upload size does not match manifest: {receipt.get('id')}")
+        except KeyError as exc:
+            raise ValidationError("PantryOS backup archive is missing a required file") from exc
+        except zipfile.BadZipFile as exc:
+            raise ValidationError("PantryOS backup archive is not a valid zip file") from exc
+        return manifest, temp_db, receipts_dir
+
+    def _rewrite_restored_receipt_paths(self, db_path: Path, manifest: dict[str, Any], receipt_dir: Path) -> None:
+        receipts = manifest["receipt_uploads"]
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = {
+                row["id"]: row
+                for row in connection.execute("SELECT id, content_hash FROM receipt_uploads")
+            }
+            if len(rows) != len(receipts):
+                raise ValidationError("PantryOS backup archive does not include every receipt upload")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for receipt in receipts:
+                    receipt_id = str(receipt.get("id") or "")
+                    row = rows.get(receipt_id)
+                    if row is None or row["content_hash"] != receipt.get("content_hash"):
+                        raise ValidationError(f"PantryOS backup archive receipt metadata mismatch: {receipt_id}")
+                    archive_path = str(receipt["path"])
+                    restored_path = receipt_dir / Path(archive_path).name
+                    connection.execute(
+                        "UPDATE receipt_uploads SET storage_path = ?, updated_at = ? WHERE id = ?",
+                        (str(restored_path), utc_now(), receipt_id),
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+    def _verify_extracted_receipts(self, manifest: dict[str, Any], receipts_dir: Path) -> None:
+        for receipt in manifest["receipt_uploads"]:
+            archive_path = str(receipt["path"])
+            target = receipts_dir / Path(archive_path).name
+            if not target.exists():
+                raise ValidationError(f"Receipt upload file is missing from backup archive: {receipt.get('id')}")
+            if receipt.get("sha256") != self._sha256_file(target):
+                raise ValidationError(f"Receipt upload checksum does not match manifest: {receipt.get('id')}")
+
+    def _validate_archive_member(self, value: str, *, expected_prefix: str | None = None) -> None:
+        path = Path(value)
+        if not value or path.is_absolute() or ".." in path.parts:
+            raise ValidationError("PantryOS backup archive contains an unsafe path")
+        if expected_prefix is not None and not value.startswith(expected_prefix):
+            raise ValidationError("PantryOS backup archive contains an unexpected path")
+
+    def _sha256_file(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def inspect_legacy_json(self, path: Path | str) -> dict[str, Any]:
         source_path = Path(path)
