@@ -42,6 +42,8 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     assert "async_refresh_from_event_stream" in init_py
     assert "async_refresh_from_events" in init_py
     assert "async_track_time_interval" in init_py
+    assert "event_types" in init_py
+    assert "last_events" in coordinator_py
     assert "self._coordinator.summary()" in sensor_py
     assert "await self._pantry.async_refresh()" not in sensor_py
     assert "async_open_item" in init_py
@@ -54,6 +56,32 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     sensor_strings = strings_json["entity"]["sensor"]
     assert sensor_strings["leftover_count"]["name"] == "Leftovers"
     assert sensor_strings["state_revision"]["name"] == "State revision"
+
+
+def test_home_assistant_example_automations_cover_required_outcomes() -> None:
+    examples = (ROOT / "docs" / "home_assistant" / "example_automations.yaml").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for alias in (
+        "PantryOS use-soon notification",
+        "PantryOS grocery arrival count",
+        "PantryOS cooking mode",
+        "PantryOS freezer risk and value alert",
+    ):
+        assert f"alias: {alias}" in examples
+    for entity_id in (
+        "sensor.pantryos_expiring_soon",
+        "sensor.pantryos_total_items",
+        "sensor.pantryos_freezer_value",
+        "sensor.pantryos_freezer_items",
+    ):
+        assert entity_id in examples
+    for service in ("notify.notify", "scene.turn_on", "media_player.play_media"):
+        assert f"service: {service}" in examples
+    assert "event_type: pantryos_updated" in examples
+    assert "cooking.started" in examples
+    assert "trigger.event.data.event_types" in examples
+    assert "docs/home_assistant/example_automations.yaml" in readme
 
 
 def test_home_assistant_diagnostics_redact_tokens_receipts_and_paths() -> None:
@@ -90,6 +118,21 @@ def load_coordinator_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_home_assistant_event_summaries_skip_malformed_revisions() -> None:
+    module = load_coordinator_module()
+
+    summaries = module._event_summaries(
+        {
+            "items": [
+                {"id": "bad", "event_type": "cooking.started", "revision": "not-a-number"},
+                {"id": "ok", "event_type": "cooking.started", "revision": "7", "product_id": "p1"},
+            ]
+        }
+    )
+
+    assert summaries == [{"event_type": "cooking.started", "revision": 7, "id": "ok", "product_id": "p1"}]
 
 
 def test_home_assistant_coordinator_marks_unavailable_and_recovers_without_losing_cache() -> None:
@@ -391,9 +434,11 @@ class FakeServices:
 class FakeBus:
     def __init__(self) -> None:
         self.events = []
+        self.last_event_data = {}
 
-    def async_fire(self, event_type):
+    def async_fire(self, event_type, event_data=None):
         self.events.append(event_type)
+        self.last_event_data = event_data or {}
 
 
 class FakeConfigEntries:
@@ -458,7 +503,7 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
                 return {"revision": self.refresh_count, "summary": {"total_items": self.refresh_count, "state_revision": self.refresh_count}}
 
             async def async_events(self, *, limit=25, after_revision=None):
-                return {"items": [{"revision": self.refresh_count + 1}], "revision": self.refresh_count + 1}
+                return {"items": [{"id": "evt-1", "event_type": "cooking.started", "revision": self.refresh_count + 1}], "revision": self.refresh_count + 1}
 
             async def async_add_item(self, data):
                 self.added_items.append(data)
@@ -493,6 +538,8 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
 
             await hass.interval_callbacks[0](None)
             assert runtime.coordinator.last_revision >= 3
+            assert hass.bus.last_event_data["event_types"] == ["cooking.started"]
+            assert hass.bus.last_event_data["events"][0]["id"] == "evt-1"
 
             assert await module.async_unload_entry(hass, entry) is True
             assert hass.unsubscribed == 1

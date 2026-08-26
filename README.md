@@ -104,6 +104,8 @@ The integration exposes these sensors:
 ### Service Surface
 
 The integration registers API-backed actions for `add_item`, `consume_item`, `delete_item` as a compatibility discard action, `discard_item`, `move_item`, `open_item`, `add_recipe`, `plan_meal`, `add_shopping_item`, `add_missing_to_shopping_list`, `rebuild_shopping`, `promote_suggested_purchases`, `start_cooking`, `complete_cooking`, and `cancel_cooking`.
+
+Example automations for use-soon notifications, grocery arrival counts, cooking mode, and freezer risk/value alerts are in `docs/home_assistant/example_automations.yaml`. PantryOS also fires a `pantryos_updated` Home Assistant event with the latest bounded PantryOS event metadata so automations can react to events such as `cooking.started`.
 ### Example Service Calls
 
 Add chicken to the garage freezer:

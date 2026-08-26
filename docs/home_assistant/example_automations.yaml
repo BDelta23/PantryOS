@@ -1,0 +1,83 @@
+# PantryOS Home Assistant example automations.
+# Replace notify/mobile/scene/media-player entity IDs with the household's actual devices.
+
+automation:
+  - alias: PantryOS use-soon notification
+    id: pantryos_use_soon_notification
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.pantryos_expiring_soon
+        above: 0
+    action:
+      - service: notify.notify
+        data:
+          title: PantryOS use-soon food
+          message: >-
+            {{ states('sensor.pantryos_expiring_soon') }} item(s) should be used soon:
+            {% for item in state_attr('sensor.pantryos_expiring_soon', 'items') or [] %}
+            {{ item.name }}{% if item.days_left is defined %} ({{ item.days_left }}d){% endif %}{% if not loop.last %}, {% endif %}
+            {% endfor %}
+
+  - alias: PantryOS grocery arrival count
+    id: pantryos_grocery_arrival_count
+    mode: queued
+    trigger:
+      - platform: state
+        entity_id: sensor.pantryos_total_items
+    condition:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none and trigger.to_state is not none
+             and trigger.from_state.state | int(-1) >= 0
+             and trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}
+    action:
+      - service: notify.notify
+        data:
+          title: PantryOS inventory added
+          message: >-
+            Inventory count increased from {{ trigger.from_state.state }} to {{ trigger.to_state.state }} item(s).
+
+  - alias: PantryOS cooking mode
+    id: pantryos_cooking_mode
+    mode: restart
+    trigger:
+      - platform: event
+        event_type: pantryos_updated
+    condition:
+      - condition: template
+        value_template: "{{ 'cooking.started' in (trigger.event.data.event_types or []) }}"
+    action:
+      - service: scene.turn_on
+        target:
+          entity_id: scene.kitchen_cooking
+      - service: media_player.play_media
+        target:
+          entity_id: media_player.kitchen_display
+        data:
+          media_content_type: url
+          media_content_id: http://pantryos.local:8765/
+
+  - alias: PantryOS freezer risk and value alert
+    id: pantryos_freezer_risk_value_alert
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.freezer_temperature
+        above: 20
+        for: "00:10:00"
+    condition:
+      - condition: numeric_state
+        entity_id: sensor.pantryos_freezer_items
+        above: 0
+      - condition: numeric_state
+        entity_id: sensor.pantryos_freezer_value
+        above: 0
+    action:
+      - service: notify.notify
+        data:
+          title: PantryOS freezer risk
+          message: >-
+            Freezer temperature is {{ states('sensor.freezer_temperature') }} and PantryOS reports
+            {{ states('sensor.pantryos_freezer_items') }} freezer item(s) worth about
+            ${{ states('sensor.pantryos_freezer_value') }} at risk.

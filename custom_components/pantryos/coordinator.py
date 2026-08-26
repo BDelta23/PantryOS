@@ -35,6 +35,7 @@ class PantryDataCoordinator:
     available: bool = False
     last_revision: int = 0
     last_event_revision: int = 0
+    last_events: list[dict[str, Any]] = field(default_factory=list)
     last_successful_update: str | None = None
     last_error: str | None = None
 
@@ -75,6 +76,7 @@ class PantryDataCoordinator:
         return await self._refresh_from_event_payload(events)
 
     async def _refresh_from_event_payload(self, events: dict[str, Any]) -> bool:
+        self.last_events = _event_summaries(events)
         event_revision = _revision_from_events(events)
         if event_revision is None:
             reported_revision = _revision_from_payload(events)
@@ -118,6 +120,31 @@ class PantryRuntime:
     coordinator: PantryDataCoordinator
     instance: dict[str, Any] = field(default_factory=dict)
     unsubscribers: list[Callable[[], None]] = field(default_factory=list)
+
+
+def _event_summaries(payload: dict[str, Any], *, limit: int = 10) -> list[dict[str, Any]]:
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in items[-limit:]:
+        if not isinstance(item, dict):
+            continue
+        event_type = item.get("event_type") or item.get("type")
+        revision = item.get("revision")
+        if not event_type or revision is None:
+            continue
+        try:
+            revision_number = int(revision)
+        except (TypeError, ValueError):
+            continue
+        summary: dict[str, Any] = {"event_type": str(event_type), "revision": revision_number}
+        for key in ("id", "product_id", "lot_id", "quantity", "unit"):
+            value = item.get(key)
+            if value not in (None, ""):
+                summary[key] = str(value)
+        summaries.append(summary)
+    return summaries
 
 
 def _revision_from_events(payload: dict[str, Any]) -> int | None:

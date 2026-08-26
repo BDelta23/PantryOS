@@ -48,7 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 else:
                     changed = True
         if changed:
-            _signal_entities_updated(hass)
+            _signal_entities_updated(hass, coordinator)
 
     runtime.unsubscribers.append(async_track_time_interval(hass, _poll_events, SCAN_INTERVAL))
     entry.runtime_data = runtime
@@ -79,7 +79,7 @@ def _register_services(hass: HomeAssistant) -> None:
         runtime = _active_runtime(hass)
         try:
             await runtime.coordinator.async_call_and_refresh(lambda: operation(runtime.client, call))
-            _signal_entities_updated(hass)
+            _signal_entities_updated(hass, runtime.coordinator)
         except PantryAPIError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
@@ -191,11 +191,20 @@ def _active_runtime(hass: HomeAssistant) -> PantryRuntime:
 
 async def _refresh_entities(hass: HomeAssistant, coordinator: PantryDataCoordinator) -> None:
     await coordinator.async_refresh()
-    _signal_entities_updated(hass)
+    _signal_entities_updated(hass, coordinator)
 
 
-def _signal_entities_updated(hass: HomeAssistant) -> None:
-    hass.bus.async_fire(f"{DOMAIN}_updated")
+def _signal_entities_updated(hass: HomeAssistant, coordinator: PantryDataCoordinator | None = None) -> None:
+    event_data: dict[str, Any] = {}
+    if coordinator is not None:
+        events = list(getattr(coordinator, "last_events", []) or [])
+        event_data = {
+            "revision": coordinator.last_revision,
+            "event_revision": coordinator.last_event_revision,
+            "events": events,
+            "event_types": [event.get("event_type") for event in events if event.get("event_type")],
+        }
+    hass.bus.async_fire(f"{DOMAIN}_updated", event_data)
 
 
 def _number(value: Any) -> Decimal:
