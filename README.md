@@ -143,6 +143,15 @@ python scripts/ha_installed_smoke.py
 
 The smoke uses `ghcr.io/home-assistant/home-assistant:stable` by default, or `PANTRYOS_HA_IMAGE` when set. It creates a temporary Home Assistant config directory, copies `custom_components/pantryos`, imports the integration inside the installed Home Assistant Python environment, and exercises setup, background event-stream polling, service schemas/handlers, unload cancellation, and auth-failure recovery against a fake PantryOS client. It does not mutate your PantryOS database.
 
+Run the live Home Assistant Core smoke after PantryOS is running through Docker Compose:
+
+```powershell
+$env:PANTRYOS_API_TOKEN = "replace-with-the-running-core-token"
+python scripts/ha_core_live_smoke.py
+```
+
+The live smoke uses the same Home Assistant image and `PANTRYOS_HA_IMAGE` override, connects to `http://pantryos:8765` on Docker network `pantryos_default` by default, creates a real Home Assistant config entry, registers sensors/services, calls `pantryos.add_item`, then writes a direct Core API item and waits for the Home Assistant event-stream listener to advance state. It passes the token through the container environment and mutates your PantryOS database with uniquely named smoke-test lots. Override `PANTRYOS_DOCKER_NETWORK` or `PANTRYOS_HA_CORE_BASE_URL` if your Compose project name or service URL differs.
+
 ### Example Service Calls
 
 Add chicken to the garage freezer:

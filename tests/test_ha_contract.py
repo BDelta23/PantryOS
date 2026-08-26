@@ -662,3 +662,22 @@ def test_home_assistant_config_flow_reconfigure_and_reauth_update_existing_entry
             assert invalid["errors"] == {"base": "invalid_auth"}
 
         asyncio.run(scenario())
+
+
+def test_home_assistant_live_core_smoke_uses_real_core_api_and_release_docs() -> None:
+    script = (ROOT / "scripts" / "ha_core_live_smoke.py").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    release = (ROOT / "scripts" / "release_readiness.py").read_text(encoding="utf-8")
+
+    assert "async_setup_hass" in script
+    assert "ConfigEntry(" in script
+    assert "hass.config_entries.async_setup" in script
+    assert "hass.services.async_call" in script
+    assert "hass.bus.async_listen" in script
+    assert "runtime.client.async_add_item" in script
+    assert "PANTRYOS_BASE_URL" in script
+    assert '"--env",\n                "PANTRYOS_API_TOKEN"' in script
+    assert "FakeClient" not in script
+    assert "python scripts/ha_core_live_smoke.py" in readme
+    assert "mutates your PantryOS database" in readme
+    assert "python scripts/ha_core_live_smoke.py" in release

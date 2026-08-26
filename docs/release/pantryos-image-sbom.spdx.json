@@ -42,7 +42,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "0752c94116d7f3170ebe6a9eb5c51dd6ebf631deea2afbdcaec1cdabfa1b98f6"
+          "checksumValue": "c2a270c757751eb6e96887d88ba0b1105b47a6cd5d1ff1bd1b74eff237fb5593"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -362,6 +362,18 @@
       "licenseConcluded": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-File-scripts-ha-core-live-smoke.py",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c445102d458a6d6d9eb86de0457b4892f4e976b2f49a0af713de6912b363f1ab"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "fileName": "scripts/ha_core_live_smoke.py",
+      "licenseConcluded": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-File-scripts-ha-installed-smoke.py",
       "checksums": [
         {
@@ -402,7 +414,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "ae9de28b5e33ab107648a0aab5c64a192033fc5a350f8654c6d4f6e239e32bd1"
+          "checksumValue": "d474123a55abd35dfa44ba1faf33117b6b1f72c6d3872e17790e217e01417e03"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -678,7 +690,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "a15fbd41357addfa6c689ef20976675c294bf870c35a545aad0b986307f86a8d"
+          "checksumValue": "920a7e9ef0026ba821a58c01260b7fd31a2b68eddd3c875323400030ffa1be9c"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -753,7 +765,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "23b12e613bd90b1cdb00916233ec76bd060122224b155cf5e6f2782a2615567a"
+          "checksumValue": "b6d6acc0413b3fc92d1ed8c01a58a6171ca24d8868bf7b514c45d7eb10369fed"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -3611,8 +3623,8 @@
     "sbom_path": "docs/release/pantryos-image-sbom.spdx.json",
     "schema_version": 1,
     "signing_policy": "docs/release/SUPPLY_CHAIN.md",
-    "source_file_count": 61,
-    "source_tree_sha256": "23b12e613bd90b1cdb00916233ec76bd060122224b155cf5e6f2782a2615567a"
+    "source_file_count": 62,
+    "source_tree_sha256": "b6d6acc0413b3fc92d1ed8c01a58a6171ca24d8868bf7b514c45d7eb10369fed"
   },
   "relationships": [
     {
