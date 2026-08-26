@@ -47,3 +47,20 @@ def test_container_smoke_script_is_release_runner_ready() -> None:
     nested_lot = {"id": "lot_nested", "product_name": "Nested Rice"}
     assert container_smoke.dashboard_lots({"core": {"lots": [nested_lot]}}) == [nested_lot]
     assert container_smoke.dashboard_lots({"lots": [{"id": "lot_top"}]}) == [{"id": "lot_top"}]
+
+def test_home_assistant_installed_smoke_runner_is_documented_and_scoped() -> None:
+    from scripts import ha_installed_smoke
+
+    args = ha_installed_smoke.build_parser().parse_args(["--image", "local-ha:test", "--timeout", "12"])
+    assert args.image == "local-ha:test"
+    assert args.timeout == 12
+    assert ha_installed_smoke.DEFAULT_IMAGE == "ghcr.io/home-assistant/home-assistant:stable"
+    assert "custom_components.pantryos" in ha_installed_smoke.CONTAINER_SMOKE
+    assert "ConfigEntryAuthFailed" in ha_installed_smoke.CONTAINER_SMOKE
+    assert "async_setup_entry" in ha_installed_smoke.CONTAINER_SMOKE
+    assert "async_unload_entry" in ha_installed_smoke.CONTAINER_SMOKE
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "python scripts/ha_installed_smoke.py" in readme
+    assert "PANTRYOS_HA_IMAGE" in readme
+    assert "installed Home Assistant" in readme
