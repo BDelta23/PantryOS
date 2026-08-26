@@ -150,8 +150,8 @@ def validate_evidence(path: Path = DEFAULT_EVIDENCE_PATH, *, root: Path = ROOT, 
     expected_evidence_path = _rooted_path(DEFAULT_EVIDENCE_PATH, root=root)
     if evidence_path.resolve() != expected_evidence_path.resolve():
         problems.append({"field": "file", "problem": "must be docs/release/manual-validation.json"})
-    elif require_git_tracking and not _is_git_tracked(evidence_path, root=root):
-        problems.append({"field": "file", "problem": "must be tracked by git"})
+    elif require_git_tracking:
+        _validate_git_release_file(evidence_path, root=root, field="file", problems=problems)
     release_commit = data.get("release_commit")
     if data.get("schema_version") != 1:
         problems.append({"field": "schema_version", "problem": "must be 1"})
@@ -264,8 +264,13 @@ def _validate_check(
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": f"missing {value}"})
                 elif not artifact_path.is_file():
                     problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": "must be a file"})
-                elif require_git_tracking and not _is_git_tracked(artifact_path, root=root):
-                    problems.append({"field": f"{prefix}.evidence.artifact_paths[{index}]", "problem": "must be tracked by git"})
+                elif require_git_tracking:
+                    _validate_git_release_file(
+                        artifact_path,
+                        root=root,
+                        field=f"{prefix}.evidence.artifact_paths[{index}]",
+                        problems=problems,
+                    )
 
     return problems
 
@@ -341,8 +346,8 @@ def _validate_check_specific_details(
                 problems.append({"field": f"{prefix}.details.review_path", "problem": f"missing {review_path}"})
             elif not resolved.is_file():
                 problems.append({"field": f"{prefix}.details.review_path", "problem": "must be a file"})
-            elif require_git_tracking and not _is_git_tracked(resolved, root=root):
-                problems.append({"field": f"{prefix}.details.review_path", "problem": "must be tracked by git"})
+            elif require_git_tracking:
+                _validate_git_release_file(resolved, root=root, field=f"{prefix}.details.review_path", problems=problems)
             else:
                 review_text = resolved.read_text(encoding="utf-8", errors="replace")
                 if expected_commit not in review_text:
@@ -412,6 +417,32 @@ def _is_git_tracked(path: Path, *, root: Path) -> bool:
     except FileNotFoundError:
         return False
     return completed.returncode == 0
+
+
+def _is_git_clean(path: Path, *, root: Path) -> bool:
+    try:
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return False
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain", "--", relative],
+            cwd=root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
+    return completed.returncode == 0 and completed.stdout.strip() == ""
+
+
+def _validate_git_release_file(path: Path, *, root: Path, field: str, problems: list[dict[str, str]]) -> None:
+    if not _is_git_tracked(path, root=root):
+        problems.append({"field": field, "problem": "must be tracked by git"})
+    elif not _is_git_clean(path, root=root):
+        problems.append({"field": field, "problem": "must match committed git content"})
 
 
 def _rooted_path(path: Path, *, root: Path) -> Path:
