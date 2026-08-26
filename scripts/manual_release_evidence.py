@@ -61,6 +61,7 @@ IMAGE_DIGEST_REF_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+TRANSPARENCY_LOG_URL_TERMS = ("rekor", "sigstore")
 BARCODE_RE = re.compile(r"^\d{8,14}$")
 SYNTHETIC_RECEIPT_SOURCE_TERMS = ("synthetic", "fixture", "generated", "mock", "sample", "test")
 OCR_CAPTURE_TERMS = ("ocr", "tesseract")
@@ -424,11 +425,15 @@ def _validate_check_specific_details(
         if transparency_value:
             transparency_lower = transparency_value.lower()
             unavailable_reason = transparency_value[len(unavailable_prefix) :].strip()
-            if not HTTP_URL_RE.match(transparency_value) and not (transparency_lower.startswith(unavailable_prefix) and unavailable_reason):
+            has_transparency_log_url = HTTP_URL_RE.match(transparency_value) is not None and any(
+                term in transparency_lower for term in TRANSPARENCY_LOG_URL_TERMS
+            )
+            has_unavailable_reason = transparency_lower.startswith(unavailable_prefix) and bool(unavailable_reason)
+            if not has_transparency_log_url and not has_unavailable_reason:
                 problems.append(
                     {
                         "field": f"{prefix}.details.transparency_log_url",
-                        "problem": "must be an http(s) URL or start with 'not available:' and include a reason",
+                        "problem": "must be a Rekor/Sigstore transparency-log URL or start with 'not available:' and include a reason",
                     }
                 )
     elif check_id == "independent-full-review":
