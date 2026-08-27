@@ -22,6 +22,11 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     coordinator_py = read_component("coordinator.py")
     services_yaml = read_component("services.yaml")
     strings_json = json.loads(read_component("strings.json"))
+    translations_json = json.loads(read_component("translations/en.json"))
+    manifest_json = json.loads(read_component("manifest.json"))
+    hacs_json = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
+    icon_png = ROOT / "custom_components" / "pantryos" / "icon.png"
+    logo_png = ROOT / "custom_components" / "pantryos" / "logo.png"
 
     for service in (
         "discard_item",
@@ -58,6 +63,58 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     sensor_strings = strings_json["entity"]["sensor"]
     assert sensor_strings["leftover_count"]["name"] == "Leftovers"
     assert sensor_strings["state_revision"]["name"] == "State revision"
+    assert translations_json == strings_json
+    assert manifest_json["iot_class"] == "local_push"
+    assert manifest_json["version"] == "0.1.0"
+    assert hacs_json["name"] == "PantryOS"
+    assert icon_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert logo_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert "async def async_setup(hass" in init_py
+    assert "hass.services.async_remove" not in init_py
+    assert "_attr_should_poll = False" in sensor_py
+    assert "_attr_device_info" in sensor_py
+    assert "(DOMAIN, entry_id)" in sensor_py
+    assert "async def async_update" not in sensor_py
+
+    expected_fields = {
+        "add_item": {
+            "name",
+            "quantity",
+            "unit",
+            "location",
+            "purchased",
+            "expires",
+            "opened",
+            "minimum_stock",
+            "barcode",
+            "estimated_cost",
+            "tags",
+            "notes",
+        },
+        "delete_item": {"item_id"},
+        "consume_item": {"item_id", "quantity"},
+        "move_item": {"item_id", "location"},
+        "open_item": {"item_id", "opened_at"},
+        "add_recipe": {"name", "prep_minutes", "ingredients", "instructions", "tags"},
+        "plan_meal": {"day", "recipe_name"},
+        "add_shopping_item": {"name", "quantity", "unit", "source"},
+        "add_missing_to_shopping_list": {"recipe_name"},
+        "promote_suggested_purchases": set(),
+        "discard_item": {"item_id", "reason"},
+        "rebuild_shopping": set(),
+        "start_cooking": {"recipe_id", "recipe_name", "planned_servings", "notes"},
+        "complete_cooking": {"session_id", "actual_servings", "allocations", "leftovers", "notes"},
+        "cancel_cooking": {"session_id", "reason"},
+    }
+    service_strings = strings_json["services"]
+    for service, fields in expected_fields.items():
+        assert f"{service}:" in services_yaml
+        assert service_strings[service]["name"]
+        assert service_strings[service]["description"]
+        assert set(service_strings[service]["fields"]) == fields
+        for field in fields:
+            assert service_strings[service]["fields"][field]["name"]
+            assert service_strings[service]["fields"][field]["description"]
 
 
 def test_home_assistant_example_automations_cover_required_outcomes() -> None:
@@ -120,6 +177,49 @@ def load_coordinator_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_api_client_module():
+    client_path = ROOT / "custom_components" / "pantryos" / "api_client.py"
+    spec = importlib.util.spec_from_file_location("pantryos_api_client_contract", client_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_home_assistant_event_stream_reader_returns_after_first_change_event() -> None:
+    module = load_api_client_module()
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.lines = iter(
+                [
+                    b"event: pantryos.hello\n",
+                    b'data: {"revision": 1}\n',
+                    b"\n",
+                    b"id: 2\n",
+                    b"event: inventory.lot_added\n",
+                    b'data: {"lot_id": "lot-1"}\n',
+                    b"\n",
+                ]
+            )
+
+        def readline(self):
+            try:
+                return next(self.lines)
+            except StopIteration as exc:
+                raise AssertionError("reader should return after the first non-hello event") from exc
+
+    payload = module.PantryAPIClient._read_event_stream(FakeResponse())
+
+    assert payload == {
+        "items": [{"lot_id": "lot-1", "revision": 2, "type": "inventory.lot_added"}],
+        "revision": 2,
+        "limit": 1,
+        "stream": True,
+    }
 
 
 def test_home_assistant_event_summaries_skip_malformed_revisions() -> None:
@@ -587,6 +687,9 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
         entry = FakeEntry()
 
         async def scenario() -> None:
+            assert await module.async_setup(hass, {}) is True
+            assert hass.services.has_service(module.DOMAIN, "add_item")
+
             assert await module.async_setup_entry(hass, entry) is True
             runtime = hass.data[module.DOMAIN][entry.entry_id]
             assert entry.runtime_data is runtime
@@ -609,7 +712,8 @@ def test_home_assistant_setup_service_runtime_unload_and_auth_recovery_paths() -
 
             assert await module.async_unload_entry(hass, entry) is True
             assert hass.tasks[0].cancelled is True
-            assert (module.DOMAIN, "add_item") in hass.services.removed
+            assert (module.DOMAIN, "add_item") not in hass.services.removed
+            assert hass.services.has_service(module.DOMAIN, "add_item")
             assert entry.entry_id not in hass.data.get(module.DOMAIN, {})
 
             bad_entry = FakeEntry({"base_url": "http://pantry.local:8765", "api_token": "bad-token"}, entry_id="bad")
@@ -637,6 +741,12 @@ def test_home_assistant_config_flow_reconfigure_and_reauth_update_existing_entry
                     raise module.PantryAPIAuthError("invalid token", status=401, code="unauthorized")
                 if self.base_url == "http://offline.local":
                     raise module.PantryAPIError("offline")
+                if self.base_url == "http://timeout.local":
+                    raise module.PantryAPIError("Request timed out")
+                if self.base_url == "http://unexpected.local":
+                    raise module.PantryAPIError("wrong endpoint", status=404, code="not_found")
+                if self.base_url == "http://empty.local":
+                    return {"schema_version": 4}
                 return {"instance_id": "pantry-instance"}
 
         module.PantryAPIClient = FakeClient
@@ -667,6 +777,18 @@ def test_home_assistant_config_flow_reconfigure_and_reauth_update_existing_entry
             invalid = await flow.async_step_reauth_confirm({"api_token": "bad-token"})
             assert invalid["type"] == "form"
             assert invalid["errors"] == {"base": "invalid_auth"}
+
+            invalid_url = await flow.async_step_user({"base_url": "not-a-url", "api_token": "token"})
+            assert invalid_url["errors"] == {"base": "invalid_url"}
+
+            timeout = await flow.async_step_user({"base_url": "http://timeout.local", "api_token": "token"})
+            assert timeout["errors"] == {"base": "timeout"}
+
+            unexpected = await flow.async_step_user({"base_url": "http://unexpected.local", "api_token": "token"})
+            assert unexpected["errors"] == {"base": "unexpected_response"}
+
+            empty = await flow.async_step_user({"base_url": "http://empty.local", "api_token": "token"})
+            assert empty["errors"] == {"base": "unexpected_response"}
 
         asyncio.run(scenario())
 

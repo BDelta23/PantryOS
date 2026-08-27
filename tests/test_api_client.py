@@ -66,7 +66,7 @@ def test_api_client_reads_snapshot_and_mutates_inventory() -> None:
         refreshed = await client.async_refresh()
         events = await client.async_events(limit=3)
         latest_event = await client.async_event(events["items"][-1]["id"])
-        streamed = await client.async_event_stream(after_revision=0, timeout_seconds=0.1, heartbeat_seconds=0.1)
+        streamed = await client.async_event_stream(after_revision=latest_event["revision"] - 1, timeout_seconds=0.1, heartbeat_seconds=0.1)
 
         assert instance["schema_version"] == 4
         initial_total = initial["summary"]["total_items"]

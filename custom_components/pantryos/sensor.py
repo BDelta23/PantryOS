@@ -108,11 +108,17 @@ class PantrySensor(SensorEntity):
 
     entity_description: PantrySensorDescription
     _attr_has_entity_name = True
+    _attr_should_poll = False
 
     def __init__(self, coordinator: PantryDataCoordinator, description: PantrySensorDescription, entry_id: str) -> None:
         self._coordinator = coordinator
         self.entity_description = description
         self._attr_unique_id = f"{entry_id}_{description.key}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry_id)},
+            "name": "PantryOS",
+            "manufacturer": "PantryOS",
+        }
         self._remove_listener: CALLBACK_TYPE | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -122,12 +128,6 @@ class PantrySensor(SensorEntity):
         if self._remove_listener is not None:
             self._remove_listener()
             self._remove_listener = None
-
-    async def async_update(self) -> None:
-        try:
-            await self._coordinator.async_refresh()
-        except Exception:
-            return
 
     @property
     def available(self) -> bool:

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Format check
+        run: python -m ruff format --check .
+      - name: Lint
+        run: python -m ruff check .
+      - name: Type check
+        run: python -m mypy src custom_components/pantryos scripts/ha_core_live_smoke.py scripts/concurrency_smoke.py scripts/manual_release_evidence.py scripts/release_readiness.py scripts/container_smoke.py
+      - name: Python tests
+        run: python -m pytest -q
+      - name: Static Docker and HACS-adjacent checks
+        run: python scripts/image_hardening_audit.py --skip-live
+      - name: Docker build
+        run: docker build -t pantryos-ci:${{ github.sha }} .
+      - name: Core container smoke
+        run: python scripts/container_smoke.py --isolated --build-timeout 600 --skip-image-verifier

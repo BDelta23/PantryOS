@@ -9,6 +9,6 @@
   "sbom_path": "docs/release/pantryos-image-sbom.spdx.json",
   "schema_version": 1,
   "signing_policy": "docs/release/SUPPLY_CHAIN.md",
-  "source_file_count": 72,
-  "source_tree_sha256": "c19d36057e0f20a3bddd2255919e2c427b77f3cf769b5e60a2e5cef5249a3dc0"
+  "source_file_count": 75,
+  "source_tree_sha256": "0a774073c707d58a706dbb603996709e0c3d91bef94b667d24739c50c9a52adf"
 }

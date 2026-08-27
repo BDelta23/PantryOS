@@ -153,13 +153,13 @@ def static_checks() -> list[AuditCheck]:
     require(
         checks,
         "compose-data-volume",
-        "pantryos-data:/app/data" in compose,
-        "Compose writes application state only through the named /app/data volume.",
+        "pantryos-data:/data" in compose,
+        "Compose writes application state only through the named /data volume.",
     )
     require(
         checks,
         "compose-path-allowlists",
-        "PANTRYOS_DATA_DIR: /app/data" in compose and "PANTRYOS_BACKUP_DIR: /app/data/backups" in compose,
+        "PANTRYOS_DATA_DIR: /data" in compose and "PANTRYOS_BACKUP_DIR: /data/backups" in compose,
         "Container path allowlists constrain data and backup paths.",
     )
     require(
@@ -222,8 +222,8 @@ def compose_checks(config: dict[str, Any]) -> list[AuditCheck]:
     require(
         checks,
         "compose-config-data-volume",
-        any("pantryos-data" in item and "/app/data" in item for item in volumes),
-        "Rendered Compose config mounts the named data volume at /app/data.",
+        any("pantryos-data" in item and "/data" in item for item in volumes),
+        "Rendered Compose config mounts the named data volume at /data.",
     )
     return checks
 
@@ -284,17 +284,14 @@ def live_checks(image: str, container: str) -> list[AuditCheck]:
     require(
         checks,
         "container-single-writable-mount",
-        len(mounts) == 1
-        and mounts[0].get("Type") == "volume"
-        and mounts[0].get("Destination") == "/app/data"
-        and mounts[0].get("RW") is True,
-        "Only /app/data named volume is writable.",
+        len(mounts) == 1 and mounts[0].get("Type") == "volume" and mounts[0].get("Destination") == "/data" and mounts[0].get("RW") is True,
+        "Only /data named volume is writable.",
     )
     require(
         checks,
         "container-runtime-data-dir",
-        "PANTRYOS_DATA_DIR=/app/data" in list(container_runtime.get("Env") or []),
-        "Runtime data directory is /app/data.",
+        "PANTRYOS_DATA_DIR=/data" in list(container_runtime.get("Env") or []),
+        "Runtime data directory is /data.",
     )
     require(
         checks,

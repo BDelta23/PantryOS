@@ -165,7 +165,8 @@ async def scenario():
 
     hass = FakeHass()
     entry = FakeEntry()
-    require(await integration.async_setup_entry(hass, entry) is True, "setup did not return True")
+    require(await integration.async_setup(hass, {}) is True, "integration setup did not return True")
+    require(await integration.async_setup_entry(hass, entry) is True, "entry setup did not return True")
     runtime = hass.data[integration.DOMAIN][entry.entry_id]
     require(entry.runtime_data is runtime, "runtime_data was not stored on entry")
     require(runtime.coordinator.available is True, "coordinator did not become available")
@@ -194,7 +195,8 @@ async def scenario():
     require(await integration.async_unload_entry(hass, entry) is True, "unload did not return True")
     await asyncio.sleep(0)
     require(hass.tasks and all(task.cancelled() for task in hass.tasks), "stream task was not cancelled")
-    require((integration.DOMAIN, "add_item") in hass.services.removed, "services were not removed")
+    require((integration.DOMAIN, "add_item") not in hass.services.removed, "entry unload should not remove global services")
+    require(hass.services.has_service(integration.DOMAIN, "add_item"), "add_item service should remain registered")
 
     try:
         await integration.async_setup_entry(FakeHass(), FakeEntry({"base_url": "http://pantry.local:8765", "api_token": "bad-token"}, "bad"))
@@ -206,7 +208,7 @@ async def scenario():
     return {
         "ok": True,
         "ha_version": importlib.import_module("homeassistant.const").__version__,
-        "services": sorted(service for domain, service in hass.services.removed if domain == integration.DOMAIN),
+        "services": sorted(service for domain, service in hass.services.handlers if domain == integration.DOMAIN),
         "platforms": list(integration.PLATFORMS),
         "last_event_types": hass.bus.last_event_data["event_types"],
         "last_revision": runtime.coordinator.last_revision,

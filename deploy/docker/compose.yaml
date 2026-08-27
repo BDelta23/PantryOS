@@ -1,0 +1,25 @@
+services:
+  pantryos:
+    image: ${PANTRYOS_IMAGE:-pantryos:0.1.0}
+    build:
+      context: ../..
+    container_name: pantryos
+    env_file:
+      - .env
+    ports:
+      - "${PANTRYOS_PORT:-8765}:8765"
+    volumes:
+      - ./data:/data
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    pids_limit: 256
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

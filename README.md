@@ -60,7 +60,9 @@ python -m venv .venv
 Coverage is configured to include subprocesses so CLI smoke tests executed from pytest count toward the measured gate. The current release threshold is 80% total coverage.
 ## Docker
 
-Build and run the v1 app with Docker Compose. Set `PANTRYOS_API_TOKEN` in your shell or copy `.env.example` to `.env` and replace the placeholder first:
+PantryOS Core is intended to run as a Docker service on a NAS or another always-on local Docker host. The container listens on port `8765`, stores all persistent state under `/data`, and should be reached from Home Assistant with the NAS LAN URL, for example `http://<NAS-LAN-IP>:8765`. Do not enter `127.0.0.1` in Home Assistant unless Home Assistant and PantryOS Core are running on the same host.
+
+For local development from this checkout:
 
 ```powershell
 $env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
@@ -73,12 +75,42 @@ Then open:
 http://127.0.0.1:8765
 ```
 
-The container includes the local `tesseract-ocr` binary for receipt image extraction and writes the SQLite database, private receipt uploads, migration backups, and backup archives to the named Docker volume `pantryos-data`. A named volume is used because Docker Desktop does not reliably bind-mount this UNC checkout as a Windows host path. The entrypoint repairs `/app/data` ownership for named volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the Compose service runs with a read-only root filesystem, drops all Linux capabilities by default, adds only `CHOWN`/`SETGID`/`SETUID` for startup ownership repair and privilege drop, sets `pids_limit: 256`, uses a small `/tmp` tmpfs, `no-new-privileges`, `PANTRYOS_DATA_DIR=/app/data`, and `PANTRYOS_BACKUP_DIR=/app/data/backups`. In the container, CLI database paths must stay under `/app/data`, and backup/restore archive paths must stay under `/app/data/backups`. Change the host port with `PANTRYOS_PORT`:
+For a household NAS deployment, use `deploy/docker/`:
 
 ```powershell
-$env:PANTRYOS_PORT = "8770"
-docker compose up --build
+cd deploy/docker
+copy .env.example .env
+# edit .env and set PANTRYOS_API_TOKEN to a long random value
+docker compose up -d --build
 ```
+
+The NAS compose example bind-mounts `./data` to `/data`. The root development `compose.yaml` uses the named volume `pantryos-data` at `/data`, which avoids Docker Desktop UNC bind-mount issues. In both cases, the SQLite database is `/data/pantryos.sqlite3`, and receipt uploads, browser sessions, migration backups, and backup archives stay under `/data` unless explicitly configured otherwise. Deleting and recreating the container must not delete the mounted data directory or named volume.
+
+The container includes the local `tesseract-ocr` binary for receipt image extraction. The entrypoint repairs `/data` ownership for mounted volumes, then drops the PantryOS process to dedicated UID/GID `10001`; the Compose service runs with a read-only root filesystem, drops all Linux capabilities by default, adds only `CHOWN`/`SETGID`/`SETUID` for startup ownership repair and privilege drop, sets `pids_limit: 256`, uses a small `/tmp` tmpfs, and enables `no-new-privileges`.
+
+Key Docker environment variables:
+
+- `PANTRYOS_API_TOKEN`: required bearer token for API and browser sign-in.
+- `PANTRYOS_LISTEN_HOST`: container listen host; use `0.0.0.0` for Docker/LAN access.
+- `PANTRYOS_LISTEN_PORT`: container listen port; default `8765`.
+- `PANTRYOS_PORT`: host-side port published by Compose; default `8765`.
+- `PANTRYOS_DATA_DIR`: allowed persistent data directory; default `/data` in Docker.
+- `PANTRYOS_DATABASE_PATH`: SQLite database path; default `/data/pantryos.sqlite3` in Docker.
+- `PANTRYOS_BACKUP_DIR`: backup output directory; default `/data/backups` in Docker.
+
+Confirm readiness:
+
+```powershell
+curl http://<NAS-LAN-IP>:8765/api/v1/health/ready
+```
+
+Expected response:
+
+```json
+{"status":"ready"}
+```
+
+Do not expose port `8765` directly to the public internet. PantryOS is designed for a trusted local network with token authentication and no required cloud dependency.
 
 Run the dependency-free verifier in Docker:
 
@@ -94,15 +126,13 @@ $env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
 python scripts/container_smoke.py --isolated
 ```
 
-The isolated container smoke builds and starts the Compose service in a temporary Compose project with its own host port, container name, and Docker volume, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same generated volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/app/data`, compares source/restored counts, runs the dependency-free verifier inside the image, and removes its generated Docker resources before exit.
+The isolated container smoke builds and starts the Compose service in a temporary Compose project with its own host port, container name, and Docker volume, waits for readiness, verifies the non-root hardened runtime, proves bearer-token auth, mutates inventory and receipt state over the live API, restarts against the same generated volume, creates a receipt-inclusive backup archive, restores it into a second database inside `/data`, compares source/restored counts, runs the dependency-free verifier inside the image, and removes its generated Docker resources before exit.
 
-Run the deterministic receipt OCR corpus smoke against the running PantryOS container:
+Run the deterministic receipt OCR corpus smoke against the running PantryOS container and a temporary SQLite database:
 
 ```powershell
 python scripts/receipt_ocr_corpus_smoke.py
 ```
-
-The OCR corpus smoke generates multiple receipt images inside the container with `text2image`, extracts them through the same local `tesseract` boundary PantryOS uses for image receipts, parses the OCR text through PantryOS Core, and commits the result into a temporary SQLite database. It does not mutate your PantryOS database.
 
 Run the image/container hardening audit when Docker Desktop is started:
 
@@ -111,7 +141,7 @@ $env:PANTRYOS_API_TOKEN = "replace-with-a-long-local-token"
 python scripts/image_hardening_audit.py
 ```
 
-Use `python scripts/image_hardening_audit.py --skip-live` for a static Dockerfile, `.dockerignore`, and rendered Compose audit without inspecting a running container. The live audit additionally verifies the image has no baked API token, the container is healthy and not privileged, the root filesystem is read-only, only `/app/data` is writable, and the PantryOS process is UID/GID `10001` with no effective Linux capabilities after startup.
+Use `python scripts/image_hardening_audit.py --skip-live` for a static Dockerfile, `.dockerignore`, and rendered Compose audit without inspecting a running container. The live audit additionally verifies the image has no baked API token, the container is healthy and not privileged, the root filesystem is read-only, only `/data` is writable, and the PantryOS process is UID/GID `10001` with no effective Linux capabilities after startup.
 
 Generate or verify the container supply-chain lock and SPDX-style SBOM after rebuilding the release candidate image:
 
@@ -120,38 +150,39 @@ python scripts/supply_chain_audit.py --write
 python scripts/supply_chain_audit.py
 ```
 
-The supply-chain audit enforces the digest-pinned base image, `docs/release/container-image.lock.json`, `docs/release/pantryos-image-sbom.spdx.json`, required `tesseract-ocr` package inventory, and the release signing policy in `docs/release/SUPPLY_CHAIN.md`.
+## Updates and Backup
 
-Audit release-critical artifacts for J5 release debt markers:
+Update PantryOS Core independently from Home Assistant. For a published image, set `PANTRYOS_IMAGE` in `deploy/docker/.env` to an explicit tag such as `ghcr.io/<owner>/<repo>:0.1.0`, run `docker compose pull`, then run `docker compose up -d`. Keep the `/data` mount in place so the SQLite database and receipt payloads survive container recreation.
 
-```powershell
-python scripts/release_artifact_audit.py
-```
-
-Every intentional match is path-aware and must carry a non-blocking reason; unexpected matches fail `python scripts/check.py`.
-
-Generate the manual evidence scaffold, then validate final manual release evidence before tagging v1.0:
+Back up the persistent PantryOS data directory. At minimum, protect `/data/pantryos.sqlite3` plus `/data/receipts/` if receipt uploads are used. The CLI can also produce a receipt-inclusive archive:
 
 ```powershell
-python scripts/manual_release_evidence.py --write-template --commit <release-candidate-sha>
-python scripts/manual_release_evidence.py --commit <release-candidate-sha>
+python scripts/pantryos.py --db /data/pantryos.sqlite3 backup --output /data/backups/pantryos.zip
+python scripts/pantryos.py --db /data/pantryos.sqlite3 restore --input /data/backups/pantryos.zip --verify
 ```
-
-`--write-template` writes `docs/release/manual-validation.template.json` for the current Git commit, or for an explicit `--commit <release-candidate-sha>`, with every required check and field present. It is intentionally incomplete and guarded against being written over the real evidence file. After physical-device checks, image signing, and final review are complete, save concrete `PASS` records as `docs/release/manual-validation.json`, track that JSON file in git, ensure the tracked file is clean in the validating checkout, and run the validator. The validator requires `PASS` records for exactly `physical-barcode-camera`, `real-receipt-ocr`, `published-image-signature`, and `independent-full-review`; no extra check IDs are accepted. The file must stay on the generated schema with no ignored extra root, check, detail, or evidence fields. Each record must include an operator, UTC timestamp, the exact acceptance IDs generated for that check, concrete environment or release details, a summary, and git-tracked local evidence artifact paths under `docs/release/evidence/` that are clean in the validating checkout, and each listed evidence artifact must be valid UTF-8 text that mentions the check ID it supports. Physical barcode evidence must include an `http` or `https` app URL, a valid 8-14 digit GTIN known barcode result that resolved a product or lot, a different valid 8-14 digit GTIN unknown barcode, and a manual fallback result that creates or resolves a product or lot. Real receipt evidence must identify a representative real receipt source, describe OCR extraction from a receipt image, photo, camera capture, or scan, and include `receipt_<32 lowercase hex>` and `purchase_<32 lowercase hex>` identifiers, a positive committed lot count, and a price-history result covering store, date, package/quantity, total, and unit price. Signature evidence must include a SemVer `vX.Y.Z` release tag, a `sha256:<digest>` image digest, a digest-pinned published image reference in `image:vX.Y.Z@sha256:<digest>` form, a signature identity, a Rekor/Sigstore transparency-log URL or explicit `not available: ...` reason, and the exact `cosign verify` invocation that passed against that same published image reference, digest, and identity with the recorded identity in a `--certificate-identity` value or `--certificate-identity-regexp` pattern and no insecure cosign verification flags. Independent review evidence must point at an existing git-tracked review artifact under `docs/reviews/` that is clean in the validating checkout for the same target release commit, and that artifact must mention the reviewed commit and include machine-readable `decision=PASS`, `open_critical_high=0`, and `release_blocking_medium=0` markers. The command exits nonzero until those external checks are recorded.
 
 ## Home Assistant Integration
 
-Copy `custom_components/pantryos` into your Home Assistant config directory:
+Install the PantryOS Home Assistant integration through HACS as a custom integration repository after the repository is published on GitHub:
 
-```text
-<config>/custom_components/pantryos
-```
+1. In Home Assistant, open HACS.
+2. Open **Custom repositories**.
+3. Enter the PantryOS GitHub repository URL.
+4. Select repository type **Integration**.
+5. Add the repository, install PantryOS, then restart Home Assistant when HACS asks.
+6. Go to **Settings > Devices & services > Add integration**.
+7. Search for `PantryOS`.
+8. Enter the NAS PantryOS Core URL, such as `http://<NAS-LAN-IP>:8765`, and the same API token configured in Docker.
 
-Restart Home Assistant, then go to **Settings > Devices & services > Add integration** and search for `PantryOS`. Enter the PantryOS Core URL, for example `http://127.0.0.1:8765`, and the same `PANTRYOS_API_TOKEN` used by the Core server. The integration supports Home Assistant reconfigure and reauth flows for URL/token changes; authentication failures during setup are reported as credential failures rather than generic connection retries.
+No SSH, SD-card access, Samba copying, or manual copying into `/config/custom_components` is required for the HACS path. The integration validates the URL and token during setup, supports reconfiguration for a moved NAS address, and supports reauthentication for token rotation.
+
+### HACS Release Path
+
+Future integration releases should use semantic version tags such as `0.1.1`, `0.2.0`, or `1.0.0` when maturity supports it. The expected maintainer path is commit, tag/release on GitHub, let HACS detect the update, update from HACS, then restart or reload Home Assistant as required. Core container releases are separate and should use explicit Docker image tags.
 
 ### Main Entities
 
-The integration exposes these sensors:
+The integration exposes these 16 sensors:
 
 - `sensor.pantryos_total_items`
 - `sensor.pantryos_expiring_soon`
@@ -170,11 +201,11 @@ The integration exposes these sensors:
 - `sensor.pantryos_freezer_value`
 - `sensor.pantryos_pantry_value`
 
-### Service Surface
+### Action Surface
 
-The integration registers API-backed actions for `add_item`, `consume_item`, `delete_item` as a compatibility discard action, `discard_item`, `move_item`, `open_item`, `add_recipe`, `plan_meal`, `add_shopping_item`, `add_missing_to_shopping_list`, `rebuild_shopping`, `promote_suggested_purchases`, `start_cooking`, `complete_cooking`, and `cancel_cooking`.
+The integration registers 15 API-backed Home Assistant actions: `add_item`, `consume_item`, `delete_item` as a compatibility discard action, `discard_item`, `move_item`, `open_item`, `add_recipe`, `plan_meal`, `add_shopping_item`, `add_missing_to_shopping_list`, `rebuild_shopping`, `promote_suggested_purchases`, `start_cooking`, `complete_cooking`, and `cancel_cooking`.
 
-Example automations for use-soon notifications, grocery arrival counts, cooking mode, and freezer risk/value alerts are in `docs/home_assistant/example_automations.yaml`. PantryOS runs a background Home Assistant event-stream subscription and fires a `pantryos_updated` Home Assistant event with the latest bounded PantryOS event metadata so automations can react to events such as `cooking.started`. If the stream is interrupted, the coordinator falls back to the authenticated event audit and snapshot refresh path.
+Example automations for use-soon notifications, grocery arrival counts, cooking mode, and freezer risk/value alerts are in `docs/home_assistant/example_automations.yaml`. PantryOS runs a background Home Assistant event-stream subscription and fires a `pantryos_updated` Home Assistant event with the latest bounded PantryOS event metadata so automations can react to events such as `cooking.started`. Sensors do not poll individually; they read the shared coordinator snapshot. If the stream is interrupted, the coordinator falls back to the authenticated event audit and snapshot refresh path, then reconnects without requiring the integration to be deleted and recreated.
 
 Run the installed Home Assistant smoke when Docker is available:
 
@@ -182,7 +213,7 @@ Run the installed Home Assistant smoke when Docker is available:
 python scripts/ha_installed_smoke.py
 ```
 
-The smoke uses `ghcr.io/home-assistant/home-assistant:stable` by default, or `PANTRYOS_HA_IMAGE` when set. It creates a temporary Home Assistant config directory, copies `custom_components/pantryos`, imports the integration inside the installed Home Assistant Python environment, and exercises setup, background event-stream polling, service schemas/handlers, unload cancellation, and auth-failure recovery against a fake PantryOS client. It does not mutate your PantryOS database.
+The smoke uses `ghcr.io/home-assistant/home-assistant:stable` by default, or `PANTRYOS_HA_IMAGE` when set. It creates a temporary Home Assistant config directory, copies `custom_components/pantryos`, imports the integration inside the installed Home Assistant Python environment, and exercises setup, background event-stream updates, service schemas/handlers, unload cancellation, and auth-failure recovery against a fake PantryOS client. It uses a temporary SQLite database and does not mutate your PantryOS database.
 
 Run the live Home Assistant Core smoke after building the PantryOS Docker image:
 
@@ -190,9 +221,9 @@ Run the live Home Assistant Core smoke after building the PantryOS Docker image:
 python scripts/ha_core_live_smoke.py
 ```
 
-The live smoke uses the same Home Assistant image and `PANTRYOS_HA_IMAGE` override. It creates a disposable Docker network, starts an isolated PantryOS Core container from `pantryos-pantryos:latest` or `PANTRYOS_CORE_IMAGE`, uses a fixed non-secret smoke token only on that private network, creates the PantryOS entry through Home Assistant's config-flow manager against the live Core API, registers sensors/services, calls `pantryos.add_item`, then writes a direct Core API item and waits for the Home Assistant event-stream listener to advance the coordinator revision. The disposable Core container, network, and volume are removed before the command exits, and your running PantryOS database is not mutated.
+The live smoke uses the same Home Assistant image and `PANTRYOS_HA_IMAGE` override. It creates a disposable Docker network, starts an isolated PantryOS Core container from `pantryos-pantryos:latest` or `PANTRYOS_CORE_IMAGE`, uses a fixed non-secret smoke token only on that private network, creates the PantryOS entry through Home Assistant's config-flow manager against the live Core API, registers sensors/actions, calls `pantryos.add_item`, then writes a direct Core API item and waits for the Home Assistant event-stream listener to advance the coordinator revision. The disposable Core container, network, and volume are removed before the command exits, and your running PantryOS database is not mutated.
 
-### Example Service Calls
+### Example Action Calls
 
 Add chicken to the garage freezer:
 
@@ -218,7 +249,6 @@ data:
 ```
 
 ## API
-
 The versioned API requires `Authorization: Bearer <PANTRYOS_API_TOKEN>` except for health checks. Errors use a stable problem shape with `type`, `title`, `status`, `code`, `detail`, `errors`, and `request_id`. The current OpenAPI 3.1 document is served at authenticated endpoint `GET /api/v1/openapi.json`; its success responses use concrete per-resource schemas for dashboard, inventory lots, events, locations, purchases, prices, shopping, receipts, cooking sessions, leftovers, and mutation envelopes rather than generic object placeholders.
 
 The browser signs in through `POST /api/session/login` with the same local setup token. The sign-in panel reads `GET /api/session` first, reports whether `PANTRYOS_API_TOKEN` is configured, keeps token entry disabled when the server is not configured, and shows the active cookie policy. Successful login creates a file-backed `pantryos_session` cookie with `HttpOnly`, `SameSite=Lax`, `Path=/`, a default `Max-Age` of `43,200` seconds, and returns a per-session CSRF token. Sessions persist across PantryOS restarts in `browser_sessions.json` beside the SQLite database by default; set `PANTRYOS_BROWSER_SESSION_STORE=memory` to force in-memory sessions, or set it to a file path for a custom store. Browser compatibility routes under `/api/*` require that cookie; unsafe methods also require `X-CSRF-Token`. CORS does not use wildcards: preflight and browser-origin checks only echo the current same-origin `Origin`. The browser session TTL can be overridden with `PANTRYOS_BROWSER_SESSION_SECONDS`. For HTTPS or reverse-proxy deployments, set `PANTRYOS_BROWSER_SECURE_COOKIES=true` to add the `Secure` cookie attribute; PantryOS also reports secure-cookie mode when `X-Forwarded-Proto: https` is present.
@@ -320,8 +350,8 @@ python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pa
 python scripts/pantryos.py --db data/pantryos.sqlite3 restore --input backups/pantryos.zip --verify
 
 # inside the Compose container, use the mounted data volume paths
-python scripts/pantryos.py --db /app/data/pantryos.sqlite3 backup --output /app/data/backups/pantryos.zip
-python scripts/pantryos.py --db /app/data/pantryos.sqlite3 restore --input /app/data/backups/pantryos.zip --verify
+python scripts/pantryos.py --db /data/pantryos.sqlite3 backup --output /data/backups/pantryos.zip
+python scripts/pantryos.py --db /data/pantryos.sqlite3 restore --input /data/backups/pantryos.zip --verify
 python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/pantryos.json --dry-run
 ```
 
@@ -376,3 +406,6 @@ python scripts/release_readiness.py --check
 ```
 
 The readiness document is written to `docs/release/RELEASE_READINESS.md` and remains `NOT READY` until every acceptance criterion in `docs/handoff/08_ACCEPTANCE_CRITERIA.md` is checked off, all phase gates are closed, and implementation-status blockers are cleared.
+
+
+

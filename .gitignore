@@ -12,3 +12,8 @@ data/*.sqlite3-*
 data/backups/
 .coverage
 *.egg-info/
+
+.env
+deploy/docker/.env
+deploy/docker/data/
+

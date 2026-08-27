@@ -121,8 +121,8 @@ def write_isolated_compose_file(directory: Path, *, container: str, volume: str,
       PANTRYOS_RATE_LIMIT_WINDOW_SECONDS: ${{PANTRYOS_RATE_LIMIT_WINDOW_SECONDS:-60}}
       PANTRYOS_BROWSER_SESSION_SECONDS: ${{PANTRYOS_BROWSER_SESSION_SECONDS:-43200}}
       PANTRYOS_BROWSER_SECURE_COOKIES: ${{PANTRYOS_BROWSER_SECURE_COOKIES:-false}}
-      PANTRYOS_DATA_DIR: /app/data
-      PANTRYOS_BACKUP_DIR: /app/data/backups
+      PANTRYOS_DATA_DIR: /data
+      PANTRYOS_BACKUP_DIR: /data/backups
     ports:
       - "{port_mapping}"
     read_only: true
@@ -138,7 +138,7 @@ def write_isolated_compose_file(directory: Path, *, container: str, volume: str,
     security_opt:
       - no-new-privileges:true
     volumes:
-      - {volume}:/app/data
+      - {volume}:/data
     restart: "no"
 volumes:
   {volume}:
@@ -326,8 +326,8 @@ def _run_smoke_in_context(args: argparse.Namespace, *, token: str) -> dict[str, 
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     lot_name = f"Container Smoke Rice {stamp}"
     receipt_item = f"Container Smoke Beans {stamp}"
-    backup_path = f"/app/data/backups/container-smoke-{stamp}.zip"
-    restored_db = f"/app/data/container-smoke-restored-{stamp}.sqlite3"
+    backup_path = f"/data/backups/container-smoke-{stamp}.zip"
+    restored_db = f"/data/container-smoke-restored-{stamp}.sqlite3"
 
     log("checking Docker access")
     docker_version = run_command(["docker", "version", "--format", "{{.Server.Version}}"], timeout=30).stdout.strip()
@@ -424,12 +424,10 @@ def _run_smoke_in_context(args: argparse.Namespace, *, token: str) -> dict[str, 
     )
 
     log("running CLI backup and restore inside the image")
-    doctor = docker_json(
-        args.container, ["python", "scripts/pantryos.py", "--db", "/app/data/pantryos.sqlite3", "doctor"], user="10001:10001"
-    )
+    doctor = docker_json(args.container, ["python", "scripts/pantryos.py", "--db", "/data/pantryos.sqlite3", "doctor"], user="10001:10001")
     backup = docker_json(
         args.container,
-        ["python", "scripts/pantryos.py", "--db", "/app/data/pantryos.sqlite3", "backup", "--output", backup_path],
+        ["python", "scripts/pantryos.py", "--db", "/data/pantryos.sqlite3", "backup", "--output", backup_path],
         user="10001:10001",
     )
     verify = docker_json(

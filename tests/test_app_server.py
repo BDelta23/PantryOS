@@ -48,6 +48,18 @@ def temporary_env(name: str, value: str):
             os.environ[name] = original
 
 
+def test_server_uses_environment_defaults_for_docker_runtime() -> None:
+    with temporary_env("PANTRYOS_LISTEN_HOST", "0.0.0.0"):
+        with temporary_env("PANTRYOS_LISTEN_PORT", "8766"):
+            with temporary_env("PANTRYOS_DATABASE_PATH", "/data/pantryos.sqlite3"):
+                assert server_module._default_host() == "0.0.0.0"
+                assert server_module._env_int("PANTRYOS_LISTEN_PORT", 8765) == 8766
+                assert server_module._default_data_path() == Path("/data/pantryos.sqlite3")
+
+    with temporary_env("PANTRYOS_LISTEN_PORT", "not-a-number"):
+        assert server_module._env_int("PANTRYOS_LISTEN_PORT", 8765) == 8765
+
+
 def request_json(
     url: str,
     method: str = "GET",

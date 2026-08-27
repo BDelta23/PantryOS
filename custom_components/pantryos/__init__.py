@@ -19,6 +19,12 @@ STREAM_TIMEOUT_SECONDS = 300
 STREAM_HEARTBEAT_SECONDS = 15
 
 
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Set up PantryOS services for Home Assistant."""
+    _register_services(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PantryOS from a config entry."""
     pantry = PantryAPIClient(entry.data[CONF_BASE_URL], entry.data[CONF_API_TOKEN])
@@ -46,7 +52,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runtime.unsubscribers.append(stream_task.cancel)
     entry.runtime_data = runtime
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
-    _register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -58,9 +63,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime = hass.data[DOMAIN].pop(entry.entry_id)
         for unsubscribe in runtime.unsubscribers:
             unsubscribe()
-        if not hass.data[DOMAIN]:
-            for service in SERVICES:
-                hass.services.async_remove(DOMAIN, service)
     return unloaded
 
 

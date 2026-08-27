@@ -11,3 +11,8 @@ data/*.json
 data/*.sqlite3
 data/*.sqlite3-*
 data/backups/
+
+.env
+deploy/docker/.env
+deploy/docker/data/
+

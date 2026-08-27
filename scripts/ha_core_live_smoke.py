@@ -79,7 +79,7 @@ async def main():
     require(hass is not None, "async_setup_hass returned None")
     progress("starting Home Assistant")
     await asyncio.wait_for(hass.async_start(), timeout=60)
-    await asyncio.wait_for(hass.async_block_till_done(), timeout=60)
+    await asyncio.sleep(0)
 
     event_payloads = []
     unsubscribe_event = None
@@ -116,6 +116,7 @@ async def main():
             progress("setting up PantryOS config entry")
             setup_ok = await asyncio.wait_for(hass.config_entries.async_setup(entry.entry_id), timeout=60)
             progress(f"config entry setup returned {setup_ok}")
+        await asyncio.sleep(0)
         await asyncio.sleep(0)
         require(setup_ok, f"Config entry setup failed: {entry.state}")
 
@@ -171,7 +172,11 @@ async def main():
         )
         await asyncio.sleep(0)
 
-        sensor_ids = sorted(entity_id for entity_id in hass.states.async_entity_ids("sensor") if "pantryos" in entity_id)
+        progress("waiting for HA sensor entities")
+        sensor_ids = await wait_for(
+            lambda: sorted(entity_id for entity_id in hass.states.async_entity_ids("sensor") if "pantryos" in entity_id) or None,
+            timeout=45,
+        )
         state_revision_entity = next((entity_id for entity_id in sensor_ids if entity_id.endswith("state_revision")), None)
         total_items_entity = next((entity_id for entity_id in sensor_ids if entity_id.endswith("total_items")), None)
         require(state_revision_entity, f"State revision sensor is missing; sensor_ids={sensor_ids}")
@@ -243,7 +248,12 @@ async def main():
         progress("leaving Home Assistant smoke process")
 
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except BaseException:
+    traceback.print_exc(file=sys.stderr)
+    sys.stderr.flush()
+    os._exit(1)
 """
 
 
@@ -311,13 +321,19 @@ def start_isolated_core(args: argparse.Namespace, *, env: dict[str, str], names:
             "--network",
             names["network"],
             "--volume",
-            f"{names['volume']}:/app/data",
+            f"{names['volume']}:/data",
             "--env",
             "PANTRYOS_API_TOKEN",
             "--env",
-            "PANTRYOS_DATA_DIR=/app/data",
+            "PANTRYOS_LISTEN_HOST=0.0.0.0",
             "--env",
-            "PANTRYOS_BACKUP_DIR=/app/data/backups",
+            "PANTRYOS_LISTEN_PORT=8765",
+            "--env",
+            "PANTRYOS_DATABASE_PATH=/data/pantryos.sqlite3",
+            "--env",
+            "PANTRYOS_DATA_DIR=/data",
+            "--env",
+            "PANTRYOS_BACKUP_DIR=/data/backups",
             "--read-only",
             "--cap-drop",
             "ALL",

@@ -35,7 +35,7 @@ def test_compose_hardening_checks_accept_rendered_config_shape() -> None:
                 "pids_limit": 256,
                 "security_opt": ["no-new-privileges:true"],
                 "tmpfs": ["/tmp:mode=1777,size=64m"],
-                "volumes": [{"source": "pantryos-data", "target": "/app/data"}],
+                "volumes": [{"source": "pantryos-data", "target": "/data"}],
             }
         }
     }

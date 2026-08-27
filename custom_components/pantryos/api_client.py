@@ -229,7 +229,7 @@ class PantryAPIClient:
             request.add_header("Last-Event-ID", str(after_revision))
         try:
             with urlopen(request, timeout=max(self.timeout, timeout_seconds + 2)) as response:
-                return self._parse_event_stream(response.read().decode("utf-8"))
+                return self._read_event_stream(response)
         except HTTPError as exc:
             message, code = self._problem_from_http_error(exc)
             if exc.code in (401, 403):
@@ -241,6 +241,54 @@ class PantryAPIClient:
             raise PantryAPIError("Event stream timed out") from exc
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise PantryAPIError("PantryOS returned an invalid event stream") from exc
+
+    @staticmethod
+    def _read_event_stream(response: Any) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        revision = 0
+        event_type = "message"
+        event_id: str | None = None
+        data_lines: list[str] = []
+
+        def flush() -> bool:
+            nonlocal event_type, event_id, data_lines, revision
+            if not data_lines:
+                event_type = "message"
+                event_id = None
+                return False
+            payload = json.loads("\n".join(data_lines))
+            should_return = False
+            if isinstance(payload, dict):
+                numeric_revision = _int_revision(payload.get("revision")) or _int_revision(event_id)
+                if numeric_revision is not None:
+                    revision = max(revision, numeric_revision)
+                    payload.setdefault("revision", numeric_revision)
+                payload.setdefault("type", event_type)
+                if event_type != "pantryos.hello":
+                    items.append(payload)
+                    should_return = True
+            event_type = "message"
+            event_id = None
+            data_lines = []
+            return should_return
+
+        while True:
+            raw_line = response.readline()
+            if raw_line == b"":
+                flush()
+                return {"items": items, "revision": revision, "limit": len(items), "stream": True}
+            line = raw_line.decode("utf-8").rstrip("\r\n")
+            if line == "":
+                if flush():
+                    return {"items": items, "revision": revision, "limit": len(items), "stream": True}
+            elif line.startswith(":"):
+                continue
+            elif line.startswith("id:"):
+                event_id = line[3:].strip()
+            elif line.startswith("event:"):
+                event_type = line[6:].strip() or "message"
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
 
     @staticmethod
     def _parse_event_stream(text: str) -> dict[str, Any]:

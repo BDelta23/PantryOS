@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -11,7 +12,7 @@ from homeassistant import config_entries
 from .api_client import PantryAPIAuthError, PantryAPIClient, PantryAPIError
 from .const import CONF_API_TOKEN, CONF_BASE_URL, DOMAIN
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8765"
+DEFAULT_BASE_URL = ""
 
 
 class PantryOSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
@@ -89,16 +90,34 @@ class PantryOSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ign
 
 async def _validated_entry_data(user_input: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, Any], dict[str, str]]:
     """Normalize config input and validate it against PantryOS Core."""
-    base_url = str(user_input[CONF_BASE_URL]).rstrip("/")
+    base_url = str(user_input[CONF_BASE_URL]).strip().rstrip("/")
     api_token = str(user_input[CONF_API_TOKEN])
+    if not _is_supported_base_url(base_url):
+        return {}, {}, {"base": "invalid_url"}
     client = PantryAPIClient(base_url, api_token)
     try:
         instance = await client.async_instance()
     except PantryAPIAuthError:
         return {}, {}, {"base": "invalid_auth"}
-    except PantryAPIError:
-        return {}, {}, {"base": "cannot_connect"}
+    except PantryAPIError as exc:
+        return {}, {}, {"base": _flow_error_from_api_error(exc)}
+    if not isinstance(instance.get("instance_id"), str) or not instance["instance_id"]:
+        return {}, {}, {"base": "unexpected_response"}
     return {CONF_BASE_URL: base_url, CONF_API_TOKEN: api_token}, instance, {}
+
+
+def _is_supported_base_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _flow_error_from_api_error(exc: PantryAPIError) -> str:
+    if exc.status is not None:
+        return "unexpected_response"
+    message = str(exc).casefold()
+    if "timed out" in message or "timeout" in message:
+        return "timeout"
+    return "cannot_connect"
 
 
 def _data_schema(defaults: Mapping[str, Any] | None = None) -> vol.Schema:

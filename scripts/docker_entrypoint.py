@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 APP_USER = "pantryos"
-WRITABLE_PATHS = (Path("/app/data"),)
+WRITABLE_PATHS = (Path("/data"),)
 
 
 def chown_tree(path: Path, uid: int, gid: int) -> None:

@@ -1753,11 +1753,30 @@ def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     return PantryHTTPServer((host, port), handler)
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _default_host() -> str:
+    return os.environ.get("PANTRYOS_LISTEN_HOST") or os.environ.get("PANTRYOS_HOST") or "127.0.0.1"
+
+
+def _default_data_path() -> Path:
+    configured = os.environ.get("PANTRYOS_DATABASE_PATH") or os.environ.get("PANTRYOS_DATA_PATH")
+    return Path(configured) if configured else DEFAULT_DB_PATH
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the PantryOS local app")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--data", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument("--host", default=_default_host())
+    parser.add_argument("--port", type=int, default=_env_int("PANTRYOS_LISTEN_PORT", _env_int("PANTRYOS_PORT", 8765)))
+    parser.add_argument("--data", type=Path, default=_default_data_path())
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
