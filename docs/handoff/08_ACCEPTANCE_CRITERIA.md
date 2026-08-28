@@ -109,10 +109,10 @@ These are release gates, not aspirational notes. Codex should add automated cove
 ## J. Engineering and release
 
 - [ ] J1. Unit, integration, API, migration, concurrency, HA, browser, and container smoke suites pass from a clean checkout.
-- [ ] J2. Lint, format, and type checks pass.
-- [ ] J3. Domain/application code has meaningful coverage, including failure paths; the configured threshold passes without broad exclusions.
+- [x] J2. Lint, format, and type checks pass.
+- [x] J3. Domain/application code has meaningful coverage, including failure paths; the configured threshold passes without broad exclusions.
 - [ ] J4. OpenAPI, user setup, Home Assistant setup, backup/restore, migration, and troubleshooting docs match actual behavior.
-- [ ] J5. No completion-critical TODO, placeholder URL, fake response, disabled test, or skipped release check remains without a documented non-blocking reason.
-- [ ] J6. A scripted demo proves add → sync → plan → shop → cook → leftover → use-soon across the supported surfaces.
+- [x] J5. No completion-critical TODO, placeholder URL, fake response, disabled test, or skipped release check remains without a documented non-blocking reason.
+- [x] J6. A scripted demo proves add → sync → plan → shop → cook → leftover → use-soon across the supported surfaces.
 - [ ] J7. Independent review reports no open Critical/High findings and no release-blocking Medium finding.
 - [ ] J8. `docs/release/RELEASE_READINESS.md` records exact commands, results, residual risks, and a justified `PASS`.
