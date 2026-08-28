@@ -422,6 +422,7 @@ async function runViewport(browser, baseUrl, viewport) {
   const itemName = `Smoke Flour ${suffix}`;
   const recipeName = `Smoke Pancakes ${suffix}`;
   const barcodeItem = `Smoke Barcode Beans ${suffix}`;
+  const manualBarcode = String(Math.floor(100000000000 + Math.random() * 899999999999));
   const receiptItem = `Smoke Receipt Rice ${suffix}`;
 
   await fillForm(page.locator("#itemForm"), {
@@ -441,13 +442,20 @@ async function runViewport(browser, baseUrl, viewport) {
   }, itemName);
 
   await fillForm(page.locator("#barcodeForm"), {
-    barcode: String(Math.floor(100000000000 + Math.random() * 899999999999)),
-    name: barcodeItem,
+    barcode: manualBarcode,
+    name: "",
     quantity: "2",
     unit: "can",
     location: "Kitchen/Pantry",
     estimated_cost: "4.50",
   });
+  await page.locator('#barcodeForm button[type="submit"]').click();
+  await expectVisibleText(page, "Unknown barcode. Enter product details to map it manually.");
+  await page.locator('#barcodeForm [name="name"]').evaluate((element) => {
+    if (document.activeElement !== element) throw new Error("Unknown barcode did not focus manual product mapping field");
+    if (element.getAttribute("aria-invalid") !== "true") throw new Error("Unknown barcode did not mark product name invalid");
+  });
+  await page.locator('#barcodeForm [name="name"]').fill(barcodeItem);
   await page.locator('#barcodeForm button[type="submit"]').click();
   await expectVisibleText(page, barcodeItem);
 

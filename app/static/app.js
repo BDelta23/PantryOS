@@ -756,9 +756,18 @@ async function handleBarcodeSubmit(event) {
     return;
   } catch (error) {
     if (!mappingName) {
-      throw error;
+      const nameInput = form.elements.name;
+      if (nameInput) {
+        nameInput.setAttribute("aria-invalid", "true");
+        nameInput.focus();
+      }
+      const status = $("#barcodeScannerStatus");
+      if (status) status.textContent = "Unknown barcode. Enter product details to map it manually.";
+      showToast("Unknown barcode. Enter product details to map it.");
+      return;
     }
   }
+  if (form.elements.name) form.elements.name.removeAttribute("aria-invalid");
   await api("/api/barcodes/mappings", {
     method: "POST",
     body: JSON.stringify({

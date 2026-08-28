@@ -60,15 +60,15 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## F. Barcode, receipt, and price workflows
 
-- [ ] F1. A known barcode scan resolves a product/package and can add a lot.
-- [ ] F2. An unknown barcode opens a mapping/product form; manual entry works without camera support.
-- [ ] F3. Barcode mappings are unique and persist across restart.
-- [ ] F4. Receipt upload enforces supported type and size limits and stores files outside the static web root.
-- [ ] F5. At least one local extraction implementation works in the documented container environment.
-- [ ] F6. Extracted receipt data is editable and cannot mutate inventory before confirmation.
-- [ ] F7. Duplicate receipt commit is detected and does not duplicate purchase lines or inventory.
-- [ ] F8. Purchase history shows store, date, package/quantity, total, and comparable unit price.
-- [ ] F9. Price anomaly output uses compatible units, a documented baseline, and an explanation.
+- [x] F1. A known barcode scan resolves a product/package and can add a lot.
+- [x] F2. An unknown barcode opens a mapping/product form; manual entry works without camera support.
+- [x] F3. Barcode mappings are unique and persist across restart.
+- [x] F4. Receipt upload enforces supported type and size limits and stores files outside the static web root.
+- [x] F5. At least one local extraction implementation works in the documented container environment.
+- [x] F6. Extracted receipt data is editable and cannot mutate inventory before confirmation.
+- [x] F7. Duplicate receipt commit is detected and does not duplicate purchase lines or inventory.
+- [x] F8. Purchase history shows store, date, package/quantity, total, and comparable unit price.
+- [x] F9. Price anomaly output uses compatible units, a documented baseline, and an explanation.
 
 ## G. Web/PWA quality
 
