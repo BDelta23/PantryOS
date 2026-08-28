@@ -28,14 +28,14 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## C. Units and recipe intelligence
 
-- [ ] C1. `1 lb` satisfies an `8 oz` requirement and reports the correct remainder.
-- [ ] C2. Incompatible dimensions are rejected; mass-to-volume is not guessed.
-- [ ] C3. Product aliases resolve recipe text to stable product IDs.
-- [ ] C4. Expired/discarded lots do not satisfy recipes by default.
-- [ ] C5. Recipe quantities scale correctly with servings.
-- [ ] C6. Ready, missing-N, and max-time queries return deterministic explainable results.
-- [ ] C7. Unknown prep time follows the documented max-time policy.
-- [ ] C8. Use-soon recommendations identify which urgent lots a recipe consumes and why it ranks highly.
+- [x] C1. `1 lb` satisfies an `8 oz` requirement and reports the correct remainder.
+- [x] C2. Incompatible dimensions are rejected; mass-to-volume is not guessed.
+- [x] C3. Product aliases resolve recipe text to stable product IDs.
+- [x] C4. Expired/discarded lots do not satisfy recipes by default.
+- [x] C5. Recipe quantities scale correctly with servings.
+- [x] C6. Ready, missing-N, and max-time queries return deterministic explainable results.
+- [x] C7. Unknown prep time follows the documented max-time policy.
+- [x] C8. Use-soon recommendations identify which urgent lots a recipe consumes and why it ranks highly.
 
 ## D. Meal planning and shopping
 

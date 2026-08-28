@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 from contextlib import closing, contextmanager
+from datetime import date, timedelta
 from http.client import HTTPConnection
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -264,6 +265,150 @@ def test_seed_core_builds_vertical_slice_state() -> None:
         assert "Chicken Alfredo" in [meal["name"] for meal in state["meals_with_two_or_fewer_missing"]]
         assert state["core"]["products"]
         assert state["core"]["events"]
+
+
+def test_recipe_intelligence_c_section_contracts() -> None:
+    with TemporaryDirectory() as directory:
+        core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")
+        today = date.today()
+        chicken = core.add_inventory_lot(
+            {
+                "name": "Chicken Breast",
+                "quantity": "1",
+                "unit": "lb",
+                "location": "Kitchen/Refrigerator",
+                "expires": (today + timedelta(days=1)).isoformat(),
+            }
+        )["lot"]
+        core.update_product(chicken["product_id"], {"aliases": ["chicken breasts"]})
+        try:
+            core.consume_product(product_id=chicken["product_id"], quantity="1", unit="cup")
+        except server_module.PantryOSError as exc:
+            assert "incompatible dimensions" in str(exc)
+        else:
+            raise AssertionError("mass-to-volume conversion should fail")
+        core.add_inventory_lot(
+            {
+                "name": "Expired Tomato",
+                "quantity": "5",
+                "unit": "count",
+                "location": "Kitchen/Pantry",
+                "expires": (today - timedelta(days=1)).isoformat(),
+            }
+        )
+        discarded = core.add_inventory_lot({"name": "Discard Spice", "quantity": "1", "unit": "count", "location": "Kitchen/Pantry"})["lot"]
+        core.discard_lot(discarded["id"])
+
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Alias Chicken Dinner",
+                "yield_servings": "2",
+                "prep_minutes": 20,
+                "ingredients": [{"name": "chicken breasts", "quantity": "8", "unit": "oz"}],
+            },
+        )
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Scaled Chicken Dinner",
+                "yield_servings": "2",
+                "prep_minutes": 25,
+                "ingredients": [{"name": "Chicken Breast", "quantity": "8", "unit": "oz"}],
+            },
+        )
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Missing One Side",
+                "yield_servings": "1",
+                "prep_minutes": 30,
+                "ingredients": [
+                    {"name": "Chicken Breast", "quantity": "8", "unit": "oz"},
+                    {"name": "Missing Garlic", "quantity": "1", "unit": "count"},
+                ],
+            },
+        )
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Expired Tomato Toast",
+                "yield_servings": "1",
+                "prep_minutes": 10,
+                "ingredients": [{"name": "Expired Tomato", "quantity": "1", "unit": "count"}],
+            },
+        )
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Discarded Spice Toast",
+                "yield_servings": "1",
+                "prep_minutes": 15,
+                "ingredients": [{"name": "Discard Spice", "quantity": "1", "unit": "count"}],
+            },
+        )
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Slow Chicken Dinner",
+                "yield_servings": "1",
+                "prep_minutes": 45,
+                "ingredients": [{"name": "Chicken Breast", "quantity": "4", "unit": "oz"}],
+            },
+        )
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Unknown Time Chicken",
+                "yield_servings": "1",
+                "ingredients": [{"name": "Chicken Breast", "quantity": "4", "unit": "oz"}],
+            },
+        )
+
+        recipes = core.dashboard()["recipes"]
+        ready = {meal["name"]: meal for meal in server_module.recipe_matches(core, recipes, max_missing=0)}
+        missing_two = {meal["name"]: meal for meal in server_module.recipe_matches(core, recipes, max_missing=2)}
+        scaled = {meal["name"]: meal for meal in server_module.recipe_matches(core, recipes, max_missing=0, requested_servings="4")}
+        max_time = {meal["name"] for meal in server_module.recipe_matches(core, recipes, max_missing=2, max_prep_minutes=30)}
+        max_time_with_unknown = {
+            meal["name"]
+            for meal in server_module.recipe_matches(core, recipes, max_missing=2, max_prep_minutes=30, include_unknown_time=True)
+        }
+        public = server_module.public_state(core)
+
+        alias_chicken = ready["Alias Chicken Dinner"]["ingredients"][0]
+        assert alias_chicken["product_id"] == chicken["product_id"]
+        assert alias_chicken["required"] == "8"
+        assert alias_chicken["available"] == "16"
+        assert alias_chicken["remainder"] == "8"
+        assert alias_chicken["allocations"] == [
+            {
+                "lot_id": chicken["id"],
+                "quantity": "8",
+                "unit": "oz",
+                "expires": (today + timedelta(days=1)).isoformat(),
+            }
+        ]
+        assert scaled["Scaled Chicken Dinner"]["ingredients"][0]["required"] == "16"
+        assert scaled["Scaled Chicken Dinner"]["ingredients"][0]["remainder"] == "0"
+        assert "Expired Tomato Toast" not in ready
+        assert missing_two["Expired Tomato Toast"]["missing"] == [{"name": "Expired Tomato", "quantity": "1", "unit": "count"}]
+        assert "Discarded Spice Toast" not in ready
+        assert missing_two["Discarded Spice Toast"]["missing"] == [{"name": "Discard Spice", "quantity": "1", "unit": "count"}]
+        assert missing_two["Missing One Side"]["missing_count"] == 1
+        assert missing_two["Missing One Side"]["unresolved"] == ["Missing Garlic"]
+        assert "Alias Chicken Dinner" in max_time
+        assert "Missing One Side" in max_time
+        assert "Slow Chicken Dinner" not in max_time
+        assert "Unknown Time Chicken" not in max_time
+        assert "Unknown Time Chicken" in max_time_with_unknown
+        recommendation = public["summary"]["use_soon_recipes"][0]
+        assert recommendation["name"] == "Alias Chicken Dinner"
+        assert recommendation["urgent_lots"][0]["lot_id"] == chicken["id"]
+        assert recommendation["urgent_lots"][0]["ingredient"] == "chicken breasts"
+        assert recommendation["score_components"]["urgent_lot_count"] == 1
+        assert recommendation["score_components"]["missing_penalty"] == 0
+        assert public["use_soon_recipes"][0] == recommendation
 
 
 def test_core_backed_server_persists_mutations() -> None:

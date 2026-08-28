@@ -114,7 +114,7 @@ class BrowserSessionStore:
 
     def create(self) -> dict[str, str | float]:
         session_id = secrets.token_urlsafe(32)
-        session = {
+        session: dict[str, str | float] = {
             "id": session_id,
             "csrf_token": secrets.token_urlsafe(32),
             "expires_at": time.time() + self.ttl_seconds,
@@ -327,6 +327,7 @@ def public_state(core: PantryCore) -> dict[str, Any]:
         "meal_plan": meal_plan_legacy(core),
         "leftovers": [lot_to_item(lot) for lot in lots if lot["status"] == "active" and lot["lot_type"] == "leftover"],
         "meals_with_two_or_fewer_missing": recipe_matches(core, recipes, max_missing=2),
+        "use_soon_recipes": use_soon_recommendations(core, recipes),
         "core": {
             "products": products,
             "lots": lots,
@@ -426,6 +427,7 @@ def legacy_summary(core: PantryCore, dashboard: dict[str, Any]) -> dict[str, Any
         "suggested_purchase_count": len(suggestions),
         "possible_meals": possible,
         "possible_meal_count": len(possible),
+        "use_soon_recipes": use_soon_recommendations(core, dashboard["recipes"]),
         "food_waste_this_month": dashboard["summary"]["food_waste_this_month"],
         "location_counts": dashboard["summary"]["location_counts"],
         "location_values": dashboard["summary"]["location_values"],
@@ -478,7 +480,7 @@ def location_counts(lots: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def recipe_matches(core: PantryCore, recipes: list[dict[str, Any]], max_missing: int) -> list[dict[str, Any]]:
+def usable_lots_by_product(core: PantryCore) -> dict[str, list[dict[str, Any]]]:
     with closing(core.connect()) as connection:
         lot_rows = connection.execute("SELECT * FROM inventory_lots WHERE status = 'active' AND CAST(quantity AS REAL) > 0").fetchall()
     available: dict[str, list[dict[str, Any]]] = {}
@@ -488,50 +490,142 @@ def recipe_matches(core: PantryCore, recipes: list[dict[str, Any]], max_missing:
         if lot["expires_at"] and datetime_date(lot["expires_at"]) < today:
             continue
         available.setdefault(lot["product_id"], []).append(lot)
+    for lots in available.values():
+        lots.sort(key=lambda lot: (lot["expires_at"] is None, lot["expires_at"] or "9999-12-31", lot["created_at"], lot["id"]))
+    return available
 
+
+def recipe_matches(
+    core: PantryCore,
+    recipes: list[dict[str, Any]],
+    max_missing: int,
+    *,
+    requested_servings: Decimal | int | str | None = None,
+    max_prep_minutes: int | None = None,
+    include_unknown_time: bool = False,
+) -> list[dict[str, Any]]:
+    available = usable_lots_by_product(core)
     meals = []
     for recipe in recipes:
+        prep_minutes = recipe["prep_minutes"]
+        if max_prep_minutes is not None:
+            if prep_minutes is None and not include_unknown_time:
+                continue
+            if prep_minutes is not None and int(prep_minutes) > max_prep_minutes:
+                continue
         missing = []
         unresolved = []
+        ingredient_rows = []
+        servings = (
+            require_non_negative(requested_servings) if requested_servings is not None else require_non_negative(recipe["yield_servings"])
+        )
+        yield_servings = require_non_negative(recipe["yield_servings"])
+        scale = Decimal("1") if yield_servings == 0 else servings / yield_servings
         for ingredient in recipe["ingredients"]:
             product_id = ingredient["product_id"]
+            unit = unit_code(ingredient["unit"])
+            required = require_non_negative(ingredient["quantity"]) * scale
+            ingredient_result = {
+                "name": ingredient["display_text"],
+                "product_id": product_id,
+                "required": decimal_text(required),
+                "available": "0",
+                "remainder": "0",
+                "unit": unit,
+                "allocations": [],
+            }
             if product_id is None:
                 unresolved.append(ingredient["display_text"])
-                missing.append(
-                    {
-                        "name": ingredient["display_text"],
-                        "quantity": ingredient["quantity"],
-                        "unit": ingredient["unit"],
-                    }
-                )
+                missing.append({"name": ingredient["display_text"], "quantity": decimal_text(required), "unit": unit})
+                ingredient_rows.append(ingredient_result)
                 continue
-            required = require_non_negative(ingredient["quantity"])
-            unit = unit_code(ingredient["unit"])
             on_hand = Decimal("0")
+            allocations = []
             try:
+                remaining = required
                 for lot in available.get(product_id, []):
-                    on_hand += convert(require_non_negative(lot["quantity"]), lot["unit"], unit)
+                    lot_available = convert(require_non_negative(lot["quantity"]), lot["unit"], unit)
+                    on_hand += lot_available
+                    if remaining > 0 and lot_available > 0:
+                        take = min(remaining, lot_available)
+                        allocations.append(
+                            {
+                                "lot_id": lot["id"],
+                                "quantity": decimal_text(take),
+                                "unit": unit,
+                                "expires": lot["expires_at"],
+                            }
+                        )
+                        remaining -= take
             except PantryOSError:
                 on_hand = Decimal("0")
+                allocations = []
+            ingredient_result["available"] = decimal_text(on_hand)
+            ingredient_result["remainder"] = decimal_text(max(on_hand - required, Decimal("0")))
+            ingredient_result["allocations"] = allocations
             if on_hand < required:
-                missing.append(
-                    {
-                        "name": ingredient["display_text"],
-                        "quantity": decimal_text(required - on_hand),
-                        "unit": unit,
-                    }
-                )
+                missing.append({"name": ingredient["display_text"], "quantity": decimal_text(required - on_hand), "unit": unit})
+            ingredient_rows.append(ingredient_result)
         if len(missing) <= max_missing:
             meals.append(
                 {
                     "name": recipe["name"],
-                    "prep_minutes": recipe["prep_minutes"],
+                    "prep_minutes": prep_minutes,
+                    "servings": decimal_text(servings),
                     "missing_count": len(missing),
                     "missing": missing,
                     "unresolved": unresolved,
+                    "ingredients": ingredient_rows,
                 }
             )
     return sorted(meals, key=lambda meal: (meal["missing_count"], meal["prep_minutes"] or 9999, meal["name"]))
+
+
+def use_soon_recommendations(core: PantryCore, recipes: list[dict[str, Any]], *, days: int = 4) -> list[dict[str, Any]]:
+    matches = recipe_matches(core, recipes, max_missing=2)
+    today = datetime_date()
+    recommendations = []
+    for match in matches:
+        urgent_lots = []
+        urgency_score = Decimal("0")
+        consumed_quantity = Decimal("0")
+        for ingredient in match["ingredients"]:
+            for allocation in ingredient["allocations"]:
+                expires = allocation.get("expires")
+                if not expires:
+                    continue
+                days_left = (datetime_date(expires) - today).days
+                if 0 <= days_left <= days:
+                    quantity = require_non_negative(allocation["quantity"])
+                    urgent_lots.append(
+                        {
+                            "lot_id": allocation["lot_id"],
+                            "ingredient": ingredient["name"],
+                            "quantity": allocation["quantity"],
+                            "unit": allocation["unit"],
+                            "expires": expires,
+                            "days_left": days_left,
+                        }
+                    )
+                    urgency_score += Decimal(days + 1 - days_left) * quantity
+                    consumed_quantity += quantity
+        if urgent_lots:
+            score = urgency_score - Decimal(match["missing_count"])
+            recommendations.append(
+                {
+                    "name": match["name"],
+                    "missing_count": match["missing_count"],
+                    "urgent_lots": urgent_lots,
+                    "score_components": {
+                        "urgent_lot_count": len(urgent_lots),
+                        "urgent_quantity": decimal_text(consumed_quantity),
+                        "urgency_score": decimal_text(urgency_score),
+                        "missing_penalty": match["missing_count"],
+                    },
+                    "score": decimal_text(score),
+                }
+            )
+    return sorted(recommendations, key=lambda row: (-Decimal(row["score"]), row["missing_count"], row["name"]))
 
 
 def minimum_stock_suggestions(core: PantryCore) -> list[dict[str, Any]]:
@@ -1566,17 +1660,8 @@ def add_recipe(core: PantryCore, body: dict[str, Any]) -> dict[str, Any]:
         recipe_id = core._upsert_recipe(connection, body)
         connection.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
         for position, ingredient in enumerate(body.get("ingredients", [])):
-            product = connection.execute(
-                "SELECT id FROM products WHERE normalized_name = ?",
-                (normalize_name(ingredient["name"]),),
-            ).fetchone()
-            core._insert_recipe_ingredient(
-                connection,
-                recipe_id,
-                ingredient,
-                product["id"] if product else None,
-                position,
-            )
+            product_id = core._resolve_product_id_for_name(connection, str(ingredient["name"]))
+            core._insert_recipe_ingredient(connection, recipe_id, ingredient, product_id, position)
         snapshot = core._recipe_snapshot(connection, recipe_id)
         revision = int(connection.execute("SELECT value FROM app_metadata WHERE key = 'state_revision'").fetchone()[0])
     return {"recipe": recipe_to_legacy(snapshot), "revision": revision}
@@ -1735,7 +1820,7 @@ def _browser_session_store_path(db_path: Path) -> Path | None:
 
 
 def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
-    handler = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
+    handler: type[PantryRequestHandler] = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
     handler.core = PantryCore(db_path)
     handler.api_token = os.environ.get("PANTRYOS_API_TOKEN")
     handler.rate_limiter = RateLimiter(

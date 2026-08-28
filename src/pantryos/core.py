@@ -413,11 +413,8 @@ class PantryCore:
             )
             connection.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
             for position, ingredient in enumerate(ingredients):
-                product = connection.execute(
-                    "SELECT id FROM products WHERE normalized_name = ? AND active = 1",
-                    (normalize_name(ingredient["name"]),),
-                ).fetchone()
-                self._insert_recipe_ingredient(connection, recipe_id, ingredient, product["id"] if product else None, position)
+                product_id = self._resolve_product_id_for_name(connection, str(ingredient["name"]))
+                self._insert_recipe_ingredient(connection, recipe_id, ingredient, product_id, position)
             revision = self._append_event(connection, "recipe.changed", source=source, metadata={"recipe_id": recipe_id})
             return {"recipe": self._recipe_snapshot(connection, recipe_id), "revision": revision}
 
@@ -796,7 +793,9 @@ class PantryCore:
                 recipe_id = self._upsert_recipe(connection, recipe)
                 connection.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
                 for position, ingredient in enumerate(recipe.get("ingredients", [])):
-                    ingredient_product_id = product_by_name.get(normalize_name(ingredient["name"]))
+                    ingredient_product_id = product_by_name.get(normalize_name(ingredient["name"])) or self._resolve_product_id_for_name(
+                        connection, str(ingredient["name"])
+                    )
                     self._insert_recipe_ingredient(connection, recipe_id, ingredient, ingredient_product_id, position)
 
             for item in data.get("shopping_list", []):
@@ -1433,6 +1432,8 @@ class PantryCore:
                     product_id,
                 ),
             )
+            if "aliases" in data:
+                self._replace_product_aliases(connection, product_id, data["aliases"], source=source)
             revision = self._append_event(
                 connection,
                 "product.changed",
@@ -2915,6 +2916,55 @@ class PantryCore:
         if row is None:
             raise NotFoundError("Product not found")
         return row
+
+    def _resolve_product_id_for_name(self, connection: sqlite3.Connection, name: str) -> str | None:
+        normalized = normalize_name(name)
+        product = connection.execute(
+            "SELECT id FROM products WHERE normalized_name = ? AND active = 1",
+            (normalized,),
+        ).fetchone()
+        if product is not None:
+            return str(product["id"])
+        alias = connection.execute(
+            """
+            SELECT a.product_id
+            FROM product_aliases a
+            JOIN products p ON p.id = a.product_id
+            WHERE a.normalized_alias = ? AND p.active = 1
+            """,
+            (normalized,),
+        ).fetchone()
+        return str(alias["product_id"]) if alias is not None else None
+
+    def _replace_product_aliases(
+        self,
+        connection: sqlite3.Connection,
+        product_id: str,
+        aliases: Any,
+        *,
+        source: str,
+    ) -> None:
+        if aliases is None:
+            aliases = []
+        if not isinstance(aliases, list):
+            raise ValidationError("Product aliases must be a list")
+        connection.execute("DELETE FROM product_aliases WHERE product_id = ?", (product_id,))
+        seen: set[str] = set()
+        for alias in aliases:
+            text = str(alias or "").strip()
+            if not text:
+                continue
+            normalized = normalize_name(text)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            connection.execute(
+                """
+                INSERT INTO product_aliases(id, product_id, alias, normalized_alias, source)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (new_id("alias"), product_id, text, normalized, source),
+            )
 
     def _usable_lots(self, connection: sqlite3.Connection, product_id: str) -> list[sqlite3.Row]:
         today = date.today().isoformat()
