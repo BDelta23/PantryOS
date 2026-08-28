@@ -20,6 +20,7 @@ COPY custom_components ./custom_components
 COPY scripts ./scripts
 COPY tests ./tests
 COPY docs ./docs
+COPY deploy ./deploy
 COPY .github ./.github
 COPY pyproject.toml README.md Dockerfile compose.yaml .dockerignore hacs.json ./
 

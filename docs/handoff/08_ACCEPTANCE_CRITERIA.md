@@ -108,7 +108,7 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## J. Engineering and release
 
-- [ ] J1. Unit, integration, API, migration, concurrency, HA, browser, and container smoke suites pass from a clean checkout.
+- [x] J1. Unit, integration, API, migration, concurrency, HA, browser, and container smoke suites pass from a clean checkout.
 - [x] J2. Lint, format, and type checks pass.
 - [x] J3. Domain/application code has meaningful coverage, including failure paths; the configured threshold passes without broad exclusions.
 - [x] J4. OpenAPI, user setup, Home Assistant setup, backup/restore, migration, and troubleshooting docs match actual behavior.
