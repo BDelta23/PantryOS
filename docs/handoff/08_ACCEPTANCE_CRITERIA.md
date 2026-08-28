@@ -51,12 +51,12 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## E. Cooking, leftovers, waste, and value
 
-- [ ] E1. Starting cooking emits an event but does not consume inventory.
-- [ ] E2. Completing cooking requires confirmed allocations and is atomic.
-- [ ] E3. Completing cooking can create leftover lots with servings, made time, use-by time, location, and recipe/session provenance.
-- [ ] E4. Leftovers appear in the next-meal/use-soon experience.
-- [ ] E5. Monthly waste is calculated from waste events and survives lot cleanup.
-- [ ] E6. Inventory value by freezer/refrigerator/location is available to the API and Home Assistant.
+- [x] E1. Starting cooking emits an event but does not consume inventory.
+- [x] E2. Completing cooking requires confirmed allocations and is atomic.
+- [x] E3. Completing cooking can create leftover lots with servings, made time, use-by time, location, and recipe/session provenance.
+- [x] E4. Leftovers appear in the next-meal/use-soon experience.
+- [x] E5. Monthly waste is calculated from waste events and survives lot cleanup.
+- [x] E6. Inventory value by freezer/refrigerator/location is available to the API and Home Assistant.
 
 ## F. Barcode, receipt, and price workflows
 

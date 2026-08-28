@@ -411,6 +411,72 @@ def test_recipe_intelligence_c_section_contracts() -> None:
         assert public["use_soon_recipes"][0] == recommendation
 
 
+def test_cooking_leftover_appears_in_next_meal_use_soon_experience() -> None:
+    with TemporaryDirectory() as directory:
+        core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")
+        today = date.today()
+        soup_base = core.add_inventory_lot(
+            {"name": "Leftover Soup Base", "quantity": "2", "unit": "cup", "location": "Kitchen/Refrigerator"}
+        )["lot"]
+        server_module.add_recipe(core, {"name": "Make Leftover Soup", "yield_servings": "2", "ingredients": []})
+
+        started = core.start_cooking_session({"recipe_name": "Make Leftover Soup", "planned_servings": "2"})
+        after_start = server_module.public_state(core)
+        source_lot_after_start = next(item for item in after_start["items"] if item["id"] == soup_base["id"])
+        assert started["session"]["status"] == "cooking"
+        assert source_lot_after_start["quantity"] == "2"
+        assert any(event["event_type"] == "cooking.started" for event in core.dashboard()["events"])
+
+        completed = core.complete_cooking_session(
+            started["session"]["id"],
+            {
+                "actual_servings": "2",
+                "allocations": [{"lot_id": soup_base["id"], "quantity": "1", "unit": "cup"}],
+                "leftovers": [
+                    {
+                        "name": "Soup Lunch Leftovers",
+                        "quantity": "2",
+                        "unit": "serving",
+                        "location": "Kitchen/Refrigerator",
+                        "made_at": today.isoformat(),
+                        "use_by": (today + timedelta(days=1)).isoformat(),
+                    }
+                ],
+            },
+        )
+        leftover = completed["leftovers"][0]
+        server_module.add_recipe(
+            core,
+            {
+                "name": "Next Meal Soup Lunch",
+                "yield_servings": "1",
+                "prep_minutes": 5,
+                "ingredients": [{"name": "Soup Lunch Leftovers", "quantity": "1", "unit": "serving"}],
+            },
+        )
+
+        state = server_module.public_state(core)
+        leftover_state = next(item for item in state["leftovers"] if item["name"] == "Soup Lunch Leftovers")
+        next_meal = next(row for row in state["summary"]["use_soon_recipes"] if row["name"] == "Next Meal Soup Lunch")
+
+        assert completed["session"]["status"] == "completed"
+        assert leftover["lot_type"] == "leftover"
+        assert leftover["cooking_session_id"] == started["session"]["id"]
+        assert leftover["expires_at"] == (today + timedelta(days=1)).isoformat()
+        assert leftover_state["id"] == leftover["id"]
+        assert next_meal["urgent_lots"] == [
+            {
+                "lot_id": leftover["id"],
+                "ingredient": "Soup Lunch Leftovers",
+                "quantity": "1",
+                "unit": "serving",
+                "expires": (today + timedelta(days=1)).isoformat(),
+                "days_left": 1,
+            }
+        ]
+        assert next_meal["score_components"]["urgent_lot_count"] == 1
+
+
 def test_meal_plan_and_shopping_d_section_contracts() -> None:
     with TemporaryDirectory() as directory:
         core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")
