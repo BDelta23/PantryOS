@@ -1690,6 +1690,11 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "recent_median_compatible_unit" not in app_js
     assert 'navigator.serviceWorker.register("/service-worker.js")' in app_js
     assert "PantryOS Core is offline; the request was not committed." in app_js
+    assert "PantryOS has newer data for this record. Refresh and try again." in app_js
+    assert "PantryOS hit a server error. The request was not committed." in app_js
+    assert "PantryOS is limiting repeated requests. Wait a moment and try again." in app_js
+    assert "Check the highlighted fields and try again." in app_js
+    assert "userFacingErrorMessage" in app_js
     assert 'rel="manifest" href="/manifest.webmanifest"' in index_html
     assert 'name="theme-color"' in index_html
     assert 'id="cookingForm"' in index_html

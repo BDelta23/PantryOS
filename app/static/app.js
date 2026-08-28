@@ -119,7 +119,7 @@ async function loadPurchases() {
     state.priceError = "";
   } catch (error) {
     state.purchases = [];
-    state.priceError = error.message;
+    state.priceError = userFacingErrorMessage(error);
   }
 }
 
@@ -869,7 +869,7 @@ async function handlePriceAnalysis(productId) {
     state.activePriceAnalysis = await api(`/api/products/${encodeURIComponent(productId)}/prices`);
   } catch (error) {
     state.activePriceAnalysis = null;
-    state.priceError = error.message;
+    state.priceError = userFacingErrorMessage(error);
   }
   renderPriceAnalysis();
 }
@@ -1167,14 +1167,33 @@ function setLoginBusy(busy) {
   $("#loginForm").setAttribute("aria-busy", busy ? "true" : "false");
 }
 
-function loginFailureMessage(error) {
+function userFacingErrorMessage(error) {
   if (error.code === "auth_not_configured") {
     return "Set PANTRYOS_API_TOKEN on the PantryOS server, then restart PantryOS.";
   }
   if (error.code === "unauthorized") {
+    return "Sign in again with the PantryOS setup token.";
+  }
+  if (error.code === "rate_limited" || error.status === 429) {
+    return "PantryOS is limiting repeated requests. Wait a moment and try again.";
+  }
+  if (error.code === "validation_error") {
+    return error.message || "Check the highlighted fields and try again.";
+  }
+  if (error.status === 409 || error.code === "conflict") {
+    return "PantryOS has newer data for this record. Refresh and try again.";
+  }
+  if (error.status >= 500) {
+    return "PantryOS hit a server error. The request was not committed.";
+  }
+  return error.message || "Request failed.";
+}
+
+function loginFailureMessage(error) {
+  if (error.code === "unauthorized") {
     return "Setup token did not match this PantryOS server.";
   }
-  return error.message;
+  return userFacingErrorMessage(error);
 }
 
 function toggleSetupTokenVisibility() {
@@ -1324,7 +1343,7 @@ async function main() {
 
 function handleActionError(error) {
   console.error(error);
-  showToast(error.message);
+  showToast(userFacingErrorMessage(error));
 }
 
 main().catch(handleActionError);

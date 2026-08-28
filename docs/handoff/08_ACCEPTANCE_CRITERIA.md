@@ -72,13 +72,13 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## G. Web/PWA quality
 
-- [ ] G1. All primary inventory, recipe, plan, shopping, cooking, barcode, receipt, and settings workflows are reachable in the UI.
-- [ ] G2. No visible control is a toast-only stub or hard-coded success simulation.
-- [ ] G3. Loading, empty, offline, validation, conflict, and server-error states are clear.
-- [ ] G4. Destructive actions require appropriate confirmation and remain keyboard accessible.
-- [ ] G5. Critical workflows pass automated browser tests at phone and kitchen-tablet viewport sizes.
-- [ ] G6. Forms have labels, focus handling, error association, and no critical automated accessibility violations.
-- [ ] G7. PWA install metadata and an intentional offline/error strategy exist; offline writes are not falsely reported as committed.
+- [x] G1. All primary inventory, recipe, plan, shopping, cooking, barcode, receipt, and settings workflows are reachable in the UI.
+- [x] G2. No visible control is a toast-only stub or hard-coded success simulation.
+- [x] G3. Loading, empty, offline, validation, conflict, and server-error states are clear.
+- [x] G4. Destructive actions require appropriate confirmation and remain keyboard accessible.
+- [x] G5. Critical workflows pass automated browser tests at phone and kitchen-tablet viewport sizes.
+- [x] G6. Forms have labels, focus handling, error association, and no critical automated accessibility violations.
+- [x] G7. PWA install metadata and an intentional offline/error strategy exist; offline writes are not falsely reported as committed.
 
 ## H. Home Assistant
 
