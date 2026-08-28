@@ -152,7 +152,7 @@ python scripts/supply_chain_audit.py
 
 ## Updates and Backup
 
-Update PantryOS Core independently from Home Assistant. For a published image, set `PANTRYOS_IMAGE` in `deploy/docker/.env` to an explicit tag such as `ghcr.io/<owner>/<repo>:0.1.0`, run `docker compose pull`, then run `docker compose up -d`. Keep the `/data` mount in place so the SQLite database and receipt payloads survive container recreation.
+Update PantryOS Core independently from Home Assistant. For a published image, set `PANTRYOS_IMAGE` in `deploy/docker/.env` to an explicit tag such as `ghcr.io/bdelta23/pantryos:0.1.0`, run `docker compose pull`, then run `docker compose up -d`. Keep the `/data` mount in place so the SQLite database and receipt payloads survive container recreation.
 
 Back up the persistent PantryOS data directory. At minimum, protect `/data/pantryos.sqlite3` plus `/data/receipts/` if receipt uploads are used. The CLI can also produce a receipt-inclusive archive:
 
@@ -163,11 +163,11 @@ python scripts/pantryos.py --db /data/pantryos.sqlite3 restore --input /data/bac
 
 ## Home Assistant Integration
 
-Install the PantryOS Home Assistant integration through HACS as a custom integration repository after the repository is published on GitHub:
+Install the PantryOS Home Assistant integration through HACS as a custom integration repository from `https://github.com/BDelta23/PantryOS`:
 
 1. In Home Assistant, open HACS.
 2. Open **Custom repositories**.
-3. Enter the PantryOS GitHub repository URL.
+3. Enter `https://github.com/BDelta23/PantryOS`.
 4. Select repository type **Integration**.
 5. Add the repository, install PantryOS, then restart Home Assistant when HACS asks.
 6. Go to **Settings > Devices & services > Add integration**.

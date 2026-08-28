@@ -64,6 +64,9 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     assert sensor_strings["leftover_count"]["name"] == "Leftovers"
     assert sensor_strings["state_revision"]["name"] == "State revision"
     assert translations_json == strings_json
+    assert manifest_json["documentation"] == "https://github.com/BDelta23/PantryOS#readme"
+    assert manifest_json["issue_tracker"] == "https://github.com/BDelta23/PantryOS/issues"
+    assert manifest_json["codeowners"] == ["@BDelta23"]
     assert manifest_json["iot_class"] == "local_push"
     assert manifest_json["version"] == "0.1.0"
     assert hacs_json["name"] == "PantryOS"

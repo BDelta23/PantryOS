@@ -17,6 +17,6 @@ The compose file bind-mounts `./data` to `/data` in the container. The SQLite da
 
 ## Updates
 
-For a published image, set `PANTRYOS_IMAGE` to an explicit version such as `ghcr.io/<owner>/<repo>:0.1.0`, run `docker compose pull`, then run `docker compose up -d`. Keep `./data` in place.
+For a published image, set `PANTRYOS_IMAGE` to an explicit version such as `ghcr.io/bdelta23/pantryos:0.1.0`, run `docker compose pull`, then run `docker compose up -d`. Keep `./data` in place.
 
 Do not expose port 8765 directly to the public internet. PantryOS is designed for a trusted local network with token authentication.

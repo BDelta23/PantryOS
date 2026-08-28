@@ -9,6 +9,7 @@ def test_dockerfile_drops_runtime_to_pantryos_user_and_limits_writable_volume() 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     entrypoint = (ROOT / "scripts" / "docker_entrypoint.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "container-image.yml").read_text(encoding="utf-8")
 
     assert "--uid 10001" in dockerfile
     assert "--gid 10001" in dockerfile
@@ -35,3 +36,6 @@ def test_dockerfile_drops_runtime_to_pantryos_user_and_limits_writable_volume() 
     assert "pids_limit: 256" in compose
     assert "PANTRYOS_DATA_DIR: /data" in compose
     assert "PANTRYOS_BACKUP_DIR: /data/backups" in compose
+    assert "${GITHUB_REPOSITORY,,}" in workflow
+    assert "ghcr.io/${GITHUB_REPOSITORY,,}" in workflow
+    assert "ghcr.io/${{ github.repository }}" not in workflow
