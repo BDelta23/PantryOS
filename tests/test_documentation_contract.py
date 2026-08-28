@@ -57,7 +57,11 @@ def test_setup_operations_and_troubleshooting_docs_match_runtime_contracts() -> 
     assert "401 unauthorized" in readme
     assert "401 browser_session_required" in readme
     assert "PANTRYOS_LISTEN_HOST=0.0.0.0" in readme
-    manual_validation = (ROOT / "docs" / "release" / "MANUAL_VALIDATION.md").read_text(encoding="utf-8")
+    manual_validation_path = ROOT / "docs" / "release" / "MANUAL_VALIDATION.md"
+    evidence_dir = ROOT / "docs" / "release" / "evidence"
+    manual_validation = manual_validation_path.read_text(encoding="utf-8")
+    assert evidence_dir.is_dir()
+    assert (evidence_dir / ".gitkeep").is_file()
     assert "docs/release/MANUAL_VALIDATION.md" in readme
     assert "python scripts/manual_release_evidence.py --json" in readme
     assert "python scripts/manual_release_evidence.py --write-template --commit <release-candidate-sha>" in manual_validation

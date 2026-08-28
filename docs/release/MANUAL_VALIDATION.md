@@ -27,7 +27,7 @@ python scripts/release_readiness.py --write
 python scripts/release_readiness.py --check
 ```
 
-The validator intentionally rejects untracked or dirty manual evidence files in a Git checkout. Commit the files before treating a validation pass as release evidence.
+The `docs/release/evidence/` directory is intentionally tracked with `.gitkeep` so release operators have a stable destination for manual artifacts. The validator intentionally rejects untracked or dirty manual evidence files in a Git checkout. Commit the files before treating a validation pass as release evidence.
 
 ## Required Checks
 
