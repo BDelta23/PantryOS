@@ -266,16 +266,19 @@ Current versioned endpoints:
 - `GET /api/v1/events/{id}`
 - `GET /api/v1/inventory/events`
 - `GET /api/v1/barcodes/{barcode}`
+- `GET /api/v1/locations`
 - `GET /api/v1/locations/summary`
 - `GET /api/v1/waste/monthly`
 - `GET /api/v1/purchases`
 - `GET /api/v1/purchases/{id}`
 - `GET /api/v1/products/{id}/prices`
+- `PATCH /api/v1/products/{id}`
 - `POST /api/v1/inventory/lots`
 - `POST /api/v1/inventory/lots/{id}/consume`
 - `POST /api/v1/inventory/lots/{id}/move`
 - `POST /api/v1/inventory/lots/{id}/open`
 - `POST /api/v1/inventory/lots/{id}/discard`
+- `PATCH /api/v1/locations/{id}`
 - `POST /api/v1/barcodes/mappings`
 - `POST /api/v1/barcodes/{barcode}/add-lot`
 - `POST /api/v1/receipts`
@@ -285,8 +288,11 @@ Current versioned endpoints:
 - `POST /api/v1/receipts/{id}/commit`
 - `POST /api/v1/receipts/{id}/reject`
 - `POST /api/v1/recipes`
+- `PATCH /api/v1/recipes/{id}`
+- `DELETE /api/v1/recipes/{id}`
 - `POST /api/v1/recipes/{recipe_name}/shopping`
 - `POST /api/v1/meal-plan`
+- `GET /api/v1/shopping`
 - `POST /api/v1/shopping/rebuild`
 - `POST /api/v1/shopping/manual`
 - `PATCH /api/v1/shopping/{id}`
@@ -358,6 +364,16 @@ python scripts/pantryos.py --db data/pantryos.sqlite3 import-legacy --path data/
 `backup --output *.sqlite3` writes a SQLite backup plus a `.sha256.json` manifest. `backup --output *.zip` writes an upload-inclusive archive with `pantryos.sqlite3`, non-purged private `receipts/*` payloads, and `manifest.json` checksums. `restore` verifies the backup before replacing the target database; `.zip` restores also rewrite receipt storage paths for the destination data directory and restore receipt payload files. `purge-receipts` defaults to uncommitted receipt uploads older than 30 days; use `--dry-run` first to inspect eligible rows, and repeat `--status uploaded|review|rejected` to limit cleanup. Purged receipts cannot be extracted or committed until the same payload is uploaded again, which reactivates the existing metadata row. When an existing database has pending migrations, PantryOS writes a pre-migration SQLite backup under `data/backups/migrations/`; if a migration fails, it restores that backup after saving a `.failed` copy for inspection. `import-legacy --dry-run` validates and summarizes legacy JSON without creating or mutating the target database.
 
 The server writes structured JSON request logs to stdout. Each line includes `event`, `request_id`, `method`, `path`, `status`, `duration_ms`, and `client`. Request bodies, authorization headers, cookies, CSRF tokens, receipt contents, and browser session values are not logged.
+
+## Troubleshooting
+
+- `GET /api/v1/health/live` only proves the PantryOS process can answer HTTP. `GET /api/v1/health/ready` also checks SQLite readiness and returns a structured `503 not_ready` problem when Core cannot use the database.
+- `401 unauthorized` from `/api/v1/*` means the request is missing `Authorization: Bearer <PANTRYOS_API_TOKEN>` or the token does not match. `401 browser_session_required` from `/api/*` means the browser needs a fresh sign-in at `/api/session/login`.
+- If Home Assistant cannot connect from a Raspberry Pi, use the NAS LAN URL such as `http://<NAS-LAN-IP>:8765`, not `127.0.0.1`, and confirm Docker is publishing the service with `PANTRYOS_LISTEN_HOST=0.0.0.0` and the expected `PANTRYOS_PORT`.
+- If HACS setup reports an invalid token or unexpected response, first confirm `curl http://<NAS-LAN-IP>:8765/api/v1/health/ready` returns `{"status":"ready"}`, then confirm the same token works against an authenticated endpoint such as `GET /api/v1/instance`.
+- If a migration fails, PantryOS writes a pre-migration backup under the configured backup directory and keeps a `.failed` copy for inspection. Run `python scripts/pantryos.py --db /data/pantryos.sqlite3 doctor` before retrying, and restore a known-good archive with `restore --verify` when needed.
+- Release readiness intentionally remains `NOT READY` until `python scripts/manual_release_evidence.py --json` validates the tracked manual evidence for physical barcode camera, real receipt OCR, published image signature, and final independent review.
+
 
 ## Development
 
