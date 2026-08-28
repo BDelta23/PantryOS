@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import threading
 from contextlib import closing
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -362,6 +363,7 @@ def test_failed_pending_migration_restores_prior_database_and_leaves_backup() ->
 
 def test_consume_product_uses_fefo_and_rejects_over_consumption() -> None:
     with tempfile.TemporaryDirectory() as directory:
+        today = date.today()
         core = make_core(directory)
         later = core.add_inventory_lot(
             {
@@ -369,7 +371,7 @@ def test_consume_product_uses_fefo_and_rejects_over_consumption() -> None:
                 "quantity": "1",
                 "unit": "lb",
                 "location": "Garage/Freezer",
-                "expires": "2026-09-10",
+                "expires": (today + timedelta(days=14)).isoformat(),
             }
         )["lot"]
         earlier = core.add_inventory_lot(
@@ -378,7 +380,7 @@ def test_consume_product_uses_fefo_and_rejects_over_consumption() -> None:
                 "quantity": "8",
                 "unit": "oz",
                 "location": "Kitchen/Refrigerator",
-                "expires": "2026-08-27",
+                "expires": (today + timedelta(days=3)).isoformat(),
             }
         )["lot"]
 

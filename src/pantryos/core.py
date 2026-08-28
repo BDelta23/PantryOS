@@ -1778,12 +1778,14 @@ class PantryCore:
     def shopping_items(self) -> list[dict[str, Any]]:
         self.migrate()
         with closing(self.connect()) as connection:
-            return [dict(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name, unit")]
+            return [
+                self._shopping_snapshot(row) for row in connection.execute("SELECT * FROM shopping_demands ORDER BY display_name, unit")
+            ]
 
     def update_shopping_item(self, demand_id: str, data: dict[str, Any]) -> dict[str, Any]:
         self.migrate()
         with self.transaction() as connection:
-            self._shopping_row(connection, demand_id)
+            existing = self._shopping_row(connection, demand_id)
             updates: list[str] = []
             values: list[Any] = []
             if "name" in data:
@@ -1814,9 +1816,12 @@ class PantryCore:
                     updates.append("accepted = 0")
                 elif status == "active":
                     updates.append("accepted = 1")
+            edited_generated_quantity = existing["source_kind"] != "manual" and any(key in data for key in ("name", "quantity", "unit"))
+            if edited_generated_quantity and "accepted = 0" not in updates:
+                updates.append("accepted = 0")
             if not updates:
                 row = self._shopping_row(connection, demand_id)
-                return {"item": dict(row), "revision": int(self._metadata(connection, "state_revision"))}
+                return {"item": self._shopping_snapshot(row), "revision": int(self._metadata(connection, "state_revision"))}
             updates.append("recalculated_at = ?")
             values.append(utc_now())
             values.append(demand_id)
@@ -1832,7 +1837,7 @@ class PantryCore:
                 source="api",
                 metadata={"shopping_demand_id": demand_id},
             )
-        return {"item": dict(row), "revision": revision}
+        return {"item": self._shopping_snapshot(row), "revision": revision}
 
     def set_shopping_checked(self, demand_id: str, checked: bool) -> dict[str, Any]:
         self.migrate()
@@ -1852,7 +1857,7 @@ class PantryCore:
                 source="api",
                 metadata={"shopping_demand_id": demand_id},
             )
-        return {"item": dict(row), "revision": revision}
+        return {"item": self._shopping_snapshot(row), "revision": revision}
 
     def remove_shopping_item(self, demand_id: str, *, status: str = "removed") -> dict[str, Any]:
         self.migrate()
@@ -2003,7 +2008,15 @@ class PantryCore:
                     },
                 )
                 entry["quantity"] += required
-                entry["sources"].append({"meal_plan_id": row["meal_plan_id"], "recipe_name": row["recipe_name"]})
+                entry["sources"].append(
+                    {
+                        "source_kind": "meal_plan",
+                        "meal_plan_id": row["meal_plan_id"],
+                        "recipe_name": row["recipe_name"],
+                        "quantity": decimal_text(required),
+                        "unit": unit,
+                    }
+                )
 
             existing_generated = {
                 row["source_key"] for row in connection.execute("SELECT source_key FROM shopping_demands WHERE source_kind = 'meal_plan'")
@@ -2043,10 +2056,13 @@ class PantryCore:
                 revision = self._append_event(connection, "shopping.rebuilt", source="meal_plan")
             else:
                 revision = int(self._metadata(connection, "state_revision"))
-            rows = [
-                dict(row)
-                for row in connection.execute("SELECT * FROM shopping_demands WHERE source_kind = 'meal_plan' ORDER BY display_name, unit")
-            ]
+            rows = []
+            for row in connection.execute("SELECT * FROM shopping_demands WHERE source_kind = 'meal_plan' ORDER BY display_name, unit"):
+                snapshot = self._shopping_snapshot(row)
+                identity = row["source_key"].removeprefix("meal_plan:")
+                if identity in generated:
+                    snapshot["source_breakdown"] = generated[identity]["sources"]
+                rows.append(snapshot)
         return {"items": rows, "changed_source_keys": sorted(changed_keys), "revision": revision}
 
     def _usable_product_quantity(
@@ -2811,6 +2827,21 @@ class PantryCore:
             raise NotFoundError(f"Unknown shopping item: {demand_id}")
         return row
 
+    def _shopping_snapshot(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        data = dict(row)
+        data["source_breakdown"] = [
+            {
+                "source_key": data["source_key"],
+                "source_kind": data["source_kind"],
+                "source_id": data["source_id"],
+                "quantity": data["quantity"],
+                "unit": data["unit"],
+                "accepted": bool(data["accepted"]),
+                "status": data["status"],
+            }
+        ]
+        return data
+
     def _upsert_shopping_demand(
         self,
         connection: sqlite3.Connection,
@@ -2830,10 +2861,10 @@ class PantryCore:
         unit_text = unit_code(unit)
         if preserve_user_override:
             existing = connection.execute(
-                "SELECT status, accepted FROM shopping_demands WHERE source_key = ?",
+                "SELECT status, accepted, quantity, unit FROM shopping_demands WHERE source_key = ?",
                 (source_key,),
             ).fetchone()
-            if existing is not None and (existing["status"] in {"suppressed", "removed"} or not existing["accepted"]):
+            if existing is not None and existing["status"] in {"suppressed", "removed"}:
                 connection.execute(
                     """
                     UPDATE shopping_demands
@@ -2843,6 +2874,18 @@ class PantryCore:
                     WHERE source_key = ?
                     """,
                     (product_id, display_name, quantity_text, unit_text, source_kind, source_id, source_key),
+                )
+                self._append_event(connection, "shopping.changed", source=source_kind)
+                return
+            if existing is not None and not existing["accepted"]:
+                connection.execute(
+                    """
+                    UPDATE shopping_demands
+                    SET product_id = ?, display_name = ?, source_kind = ?, source_id = ?, checked = 0,
+                        recalculated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    WHERE source_key = ?
+                    """,
+                    (product_id, display_name, source_kind, source_id, source_key),
                 )
                 self._append_event(connection, "shopping.changed", source=source_kind)
                 return

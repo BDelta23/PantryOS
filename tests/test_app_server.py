@@ -411,6 +411,124 @@ def test_recipe_intelligence_c_section_contracts() -> None:
         assert public["use_soon_recipes"][0] == recommendation
 
 
+def test_meal_plan_and_shopping_d_section_contracts() -> None:
+    with TemporaryDirectory() as directory:
+        core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")
+        flour = core.add_inventory_lot({"name": "Plan Flour", "quantity": "8", "unit": "oz", "location": "Kitchen/Pantry"})["lot"]
+        eggs = core.add_inventory_lot(
+            {"name": "Stock Eggs", "quantity": "4", "unit": "count", "location": "Kitchen/Refrigerator", "minimum_stock": "12"}
+        )["lot"]
+        recipe = server_module.add_recipe(
+            core,
+            {
+                "name": "Plan Biscuits",
+                "yield_servings": "2",
+                "ingredients": [
+                    {"name": "Plan Flour", "quantity": "16", "unit": "oz"},
+                    {"name": "Baking Powder", "quantity": "1", "unit": "tbsp"},
+                ],
+            },
+        )["recipe"]
+        with core.transaction() as connection:
+            core._upsert_meal_plan(
+                connection,
+                plan_date="2026-09-01",
+                meal_type="Lunch",
+                recipe_id=recipe["id"],
+                servings="2",
+            )
+            core._upsert_meal_plan(
+                connection,
+                plan_date="2026-09-02",
+                meal_type="Dinner",
+                recipe_id=recipe["id"],
+                servings="2",
+            )
+            plan_rows = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT plan_date, meal_type, recipe_id, servings, status FROM meal_plan_entries ORDER BY plan_date, meal_type"
+                )
+            ]
+
+        manual = server_module.add_manual_shopping(core, {"name": "Napkins", "quantity": "1", "unit": "count"})["item"]
+        before_promote = server_module.public_state(core)
+        first = core.rebuild_shopping_demand()
+        second = core.rebuild_shopping_demand()
+        first_items = {item["display_name"]: item for item in first["items"]}
+        second_items = {item["display_name"]: item for item in second["items"]}
+        recipe_missing_once = server_module.add_missing_to_shopping(core, "Plan Biscuits")
+        recipe_missing_twice = server_module.add_missing_to_shopping(core, "Plan Biscuits")
+        public_after_rebuild = server_module.public_state(core)
+
+        assert plan_rows == [
+            {"plan_date": "2026-09-01", "meal_type": "Lunch", "recipe_id": recipe["id"], "servings": "2", "status": "planned"},
+            {"plan_date": "2026-09-02", "meal_type": "Dinner", "recipe_id": recipe["id"], "servings": "2", "status": "planned"},
+        ]
+        assert {name: (item["source_key"], item["quantity"], item["unit"], item["source_kind"]) for name, item in first_items.items()} == {
+            name: (item["source_key"], item["quantity"], item["unit"], item["source_kind"]) for name, item in second_items.items()
+        }
+        assert first_items["Plan Flour"]["quantity"] == "24"
+        assert first_items["Plan Flour"]["product_id"] == flour["product_id"]
+        assert first_items["Baking Powder"]["quantity"] == "2"
+        assert len(first_items["Plan Flour"]["source_breakdown"]) == 2
+        assert {source["meal_plan_id"] for source in first_items["Plan Flour"]["source_breakdown"]}
+        assert all(source["quantity"] == "16" and source["unit"] == "oz" for source in first_items["Plan Flour"]["source_breakdown"])
+        assert recipe_missing_once == recipe_missing_twice
+        assert {item["name"]: item["quantity"] for item in recipe_missing_once["items"]} == {
+            "Plan Flour": "8",
+            "Baking Powder": "1",
+        }
+        public_rows = {item["name"]: item for item in public_after_rebuild["shopping_list"] if item["source_kind"] == "manual"}
+        assert public_rows["Napkins"]["source_kind"] == "manual"
+        assert public_rows["Napkins"]["source_breakdown"][0]["source_kind"] == "manual"
+        assert any(item["name"] == "Plan Flour" and item["source_kind"] == "meal_plan" for item in public_after_rebuild["shopping_list"])
+        assert before_promote["summary"]["suggested_purchases"] == [
+            {"name": "Stock Eggs", "quantity": "8", "unit": "count", "current": "4", "minimum_stock": "12"}
+        ]
+        assert all(item["source_kind"] != "minimum_stock" for item in before_promote["shopping_list"])
+
+        promoted = {item["name"]: item for item in server_module.promote_suggestions(core)["items"]}
+        assert promoted["Stock Eggs"]["source"] == f"minimum:{eggs['product_id']}"
+        generated_flour = first_items["Plan Flour"]
+        edited = core.update_shopping_item(generated_flour["id"], {"quantity": "30", "note": "brand", "store": "Market"})["item"]
+        checked = core.set_shopping_checked(generated_flour["id"], True)["item"]
+        unchecked = core.set_shopping_checked(generated_flour["id"], False)["item"]
+        suppressed = core.update_shopping_item(first_items["Baking Powder"]["id"], {"status": "suppressed"})["item"]
+        removed = core.remove_shopping_item(manual["id"])
+        rebuilt_after_override = {item["display_name"]: item for item in core.rebuild_shopping_demand()["items"]}
+
+        assert edited["quantity"] == "30"
+        assert edited["note"] == "brand"
+        assert edited["store"] == "Market"
+        assert edited["accepted"] == 0
+        assert checked["checked"] == 1
+        assert unchecked["checked"] == 0
+        assert suppressed["status"] == "suppressed"
+        assert suppressed["accepted"] == 0
+        assert removed["ok"] is True
+        assert rebuilt_after_override["Plan Flour"]["quantity"] == "30"
+        assert rebuilt_after_override["Plan Flour"]["accepted"] == 0
+
+        coffee = server_module.add_manual_shopping(core, {"name": "Coffee", "quantity": "1", "unit": "count"})["item"]
+        core.set_shopping_checked(coffee["id"], True)
+        purchase = core.complete_purchase(
+            {
+                "store": "Market",
+                "location": "Kitchen/Pantry",
+                "items": [{"shopping_id": coffee["id"], "quantity": "1", "total_cost": "12.50"}],
+            }
+        )
+        with closing(core.connect()) as connection:
+            completed = dict(connection.execute("SELECT status, checked FROM shopping_demands WHERE id = ?", (coffee["id"],)).fetchone())
+
+        assert purchase["purchase"]["store"] == "Market"
+        assert purchase["lines"][0]["shopping_demand_id"] == coffee["id"]
+        assert purchase["lots"][0]["product_name"] == "Coffee"
+        assert purchase["lots"][0]["purchase_line_id"] == purchase["lines"][0]["id"]
+        assert completed == {"status": "completed", "checked": 1}
+
+
 def test_core_backed_server_persists_mutations() -> None:
     with TemporaryDirectory() as directory:
         core = server_module.PantryCore(Path(directory) / "pantryos.sqlite3")

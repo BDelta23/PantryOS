@@ -382,6 +382,17 @@ def recipe_to_legacy(recipe: dict[str, Any]) -> dict[str, Any]:
 
 
 def shopping_to_legacy(row: dict[str, Any]) -> dict[str, Any]:
+    source_breakdown = row.get("source_breakdown") or [
+        {
+            "source_key": row["source_key"],
+            "source_kind": row["source_kind"],
+            "source_id": row["source_id"],
+            "quantity": row["quantity"],
+            "unit": row["unit"],
+            "accepted": bool(row["accepted"]),
+            "status": row["status"],
+        }
+    ]
     return {
         "id": row["id"],
         "name": row["display_name"],
@@ -395,6 +406,7 @@ def shopping_to_legacy(row: dict[str, Any]) -> dict[str, Any]:
         "checked": bool(row["checked"]),
         "note": row["note"],
         "store": row["store"],
+        "source_breakdown": source_breakdown,
     }
 
 
@@ -1712,15 +1724,12 @@ def add_missing_to_shopping(core: PantryCore, recipe_name: str) -> dict[str, Any
         recipe = core._recipe_snapshot(connection, recipe_row["id"])
         missing = recipe_matches(core, [recipe], max_missing=999)[0]["missing"]
         for row in missing:
-            product = connection.execute(
-                "SELECT id FROM products WHERE normalized_name = ?",
-                (normalize_name(row["name"]),),
-            ).fetchone()
+            product_id = core._resolve_product_id_for_name(connection, str(row["name"]))
             source_key = f"recipe:{recipe['id']}:{normalize_name(row['name'])}:{unit_code(row['unit'])}"
             core._upsert_shopping_demand(
                 connection,
                 source_key=source_key,
-                product_id=product["id"] if product else None,
+                product_id=product_id,
                 display_name=row["name"],
                 quantity=row["quantity"],
                 unit=row["unit"],

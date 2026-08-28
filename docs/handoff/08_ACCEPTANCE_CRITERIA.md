@@ -39,15 +39,15 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## D. Meal planning and shopping
 
-- [ ] D1. A weekly plan stores date, meal type, recipe ID, servings, and status.
-- [ ] D2. Ingredient demand aggregates across all planned meals and subtracts usable inventory.
-- [ ] D3. Rebuilding shopping demand twice produces the same generated demand, not double quantities.
-- [ ] D4. Repeating “add missing” for one recipe/plan source is idempotent.
-- [ ] D5. Manual demand and generated demand can coexist with visible source breakdown.
-- [ ] D6. Minimum-stock suggestions remain separate until accepted.
-- [ ] D7. Shopping lines can be edited, checked, unchecked, suppressed/removed, and assigned notes/store.
-- [ ] D8. Completing a purchase creates purchase lines and selected inventory lots transactionally.
-- [ ] D9. A user override is preserved or explicitly reconciled when generated demand is rebuilt.
+- [x] D1. A weekly plan stores date, meal type, recipe ID, servings, and status.
+- [x] D2. Ingredient demand aggregates across all planned meals and subtracts usable inventory.
+- [x] D3. Rebuilding shopping demand twice produces the same generated demand, not double quantities.
+- [x] D4. Repeating “add missing” for one recipe/plan source is idempotent.
+- [x] D5. Manual demand and generated demand can coexist with visible source breakdown.
+- [x] D6. Minimum-stock suggestions remain separate until accepted.
+- [x] D7. Shopping lines can be edited, checked, unchecked, suppressed/removed, and assigned notes/store.
+- [x] D8. Completing a purchase creates purchase lines and selected inventory lots transactionally.
+- [x] D9. A user override is preserved or explicitly reconciled when generated demand is rebuilt.
 
 ## E. Cooking, leftovers, waste, and value
 
