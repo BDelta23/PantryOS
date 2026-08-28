@@ -27,6 +27,8 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     hacs_json = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
     icon_png = ROOT / "custom_components" / "pantryos" / "icon.png"
     logo_png = ROOT / "custom_components" / "pantryos" / "logo.png"
+    legacy_inventory_py = ROOT / "custom_components" / "pantryos" / "inventory.py"
+    legacy_store_py = ROOT / "custom_components" / "pantryos" / "store.py"
 
     for service in (
         "discard_item",
@@ -64,6 +66,8 @@ def test_home_assistant_services_sensors_and_translations_cover_current_surface(
     assert sensor_strings["leftover_count"]["name"] == "Leftovers"
     assert sensor_strings["state_revision"]["name"] == "State revision"
     assert translations_json == strings_json
+    assert not legacy_inventory_py.exists()
+    assert not legacy_store_py.exists()
     assert manifest_json["documentation"] == "https://github.com/BDelta23/PantryOS#readme"
     assert manifest_json["issue_tracker"] == "https://github.com/BDelta23/PantryOS/issues"
     assert manifest_json["codeowners"] == ["@BDelta23"]

@@ -16,7 +16,6 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SRC))
 
 TEST_MODULES = (
-    "tests.test_inventory",
     "tests.test_app_server",
     "tests.test_api_client",
     "tests.test_cross_surface_sync",

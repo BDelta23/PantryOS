@@ -42,7 +42,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "2ec3bd1865385d9a8dce947cb09aefba93e8fa62f02fd083378f8436c5c06279"
+          "checksumValue": "a9d25fa51db52ccbca072f1206c85d6e8fc05454f811ab5cc2f8826b4edd0455"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -198,7 +198,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "9007707d17a7bd5aa93158a667df77c021dcd5e7f583ecaf8e454eff20565e8c"
+          "checksumValue": "3ffdd2e4d8dd44263a1443a0fd5aec3ac55c17eda8b0fbe28b1888d8b231aeb9"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -239,18 +239,6 @@
       ],
       "copyrightText": "NOASSERTION",
       "fileName": "custom_components/pantryos/icon.png",
-      "licenseConcluded": "NOASSERTION"
-    },
-    {
-      "SPDXID": "SPDXRef-File-custom-components-pantryos-inventory.py",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "0aa9c74dcf03cafb139e7fb72e871c471d12ca255ae540d7c5d7dc71d538fc4a"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "fileName": "custom_components/pantryos/inventory.py",
       "licenseConcluded": "NOASSERTION"
     },
     {
@@ -299,18 +287,6 @@
       ],
       "copyrightText": "NOASSERTION",
       "fileName": "custom_components/pantryos/services.yaml",
-      "licenseConcluded": "NOASSERTION"
-    },
-    {
-      "SPDXID": "SPDXRef-File-custom-components-pantryos-store.py",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "2901618233e1cc706071106b5b8fd7440cd6248eae9b038a1b52a2ec96460293"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "fileName": "custom_components/pantryos/store.py",
       "licenseConcluded": "NOASSERTION"
     },
     {
@@ -522,7 +498,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "0be0e0a76c3154c12f8c5c8c886f3efcebcf46eab6cb9fb38534cf1f72b97c73"
+          "checksumValue": "39564dd2aea7d2c63d4a14c2ad3abb94ab52a46133d3d1b8879e0b3c6b294871"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -846,7 +822,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "b78b9e10e7c36c8c49ffe7ecb77f6dd58cd18c05ba9d41597f865286bd905805"
+          "checksumValue": "8a70acf24935b71feec16708ea3a2841b82da717532ad48b8c79d28422adb298"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -863,18 +839,6 @@
       ],
       "copyrightText": "NOASSERTION",
       "fileName": "tests/test_image_hardening_audit.py",
-      "licenseConcluded": "NOASSERTION"
-    },
-    {
-      "SPDXID": "SPDXRef-File-tests-test-inventory.py",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "47a67446db1844b3a3e87552af95f31d0e7d16c7f05013d24dccc20725d841ad"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "fileName": "tests/test_inventory.py",
       "licenseConcluded": "NOASSERTION"
     },
     {
@@ -921,7 +885,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "7a28b6a344876891c4f2be80572f95af233bc71053aecc3f2b843795d4629cae"
+          "checksumValue": "e7dbc23fecdff987dbffec5ea4f63aa935113ff4f1ba31140c52a01d45dd8294"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -3779,8 +3743,8 @@
     "sbom_path": "docs/release/pantryos-image-sbom.spdx.json",
     "schema_version": 1,
     "signing_policy": "docs/release/SUPPLY_CHAIN.md",
-    "source_file_count": 75,
-    "source_tree_sha256": "7a28b6a344876891c4f2be80572f95af233bc71053aecc3f2b843795d4629cae"
+    "source_file_count": 72,
+    "source_tree_sha256": "e7dbc23fecdff987dbffec5ea4f63aa935113ff4f1ba31140c52a01d45dd8294"
   },
   "relationships": [
     {

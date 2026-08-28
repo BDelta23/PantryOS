@@ -82,16 +82,16 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## H. Home Assistant
 
-- [ ] H1. Config flow accepts and validates base URL/token and uses the PantryOS instance ID as unique identity.
-- [ ] H2. Reconfigure and authentication failure recovery are supported.
-- [ ] H3. The integration uses one coordinated cache/push subscription and performs no I/O in entity properties.
-- [ ] H4. Entities become unavailable when Core is unreachable and recover automatically.
-- [ ] H5. Actions call the API, return useful errors/responses, and remain registered according to current HA conventions.
-- [ ] H6. Existing action names are retained or have a documented compatibility/migration path.
-- [ ] H7. Sensors cover total inventory, expiring soon, shopping, possible meals, leftovers, waste, and location values/counts without unbounded attributes.
-- [ ] H8. Diagnostics redact token, authorization headers, session data, receipt text/images, and secrets.
-- [ ] H9. HA tests cover setup, unload, auth failure, unavailable/recovery, sensor updates, and representative actions.
-- [ ] H10. Example automations demonstrate use-soon notification, grocery arrival count, cooking mode, and freezer risk/value.
+- [x] H1. Config flow accepts and validates base URL/token and uses the PantryOS instance ID as unique identity.
+- [x] H2. Reconfigure and authentication failure recovery are supported.
+- [x] H3. The integration uses one coordinated cache/push subscription and performs no I/O in entity properties.
+- [x] H4. Entities become unavailable when Core is unreachable and recover automatically.
+- [x] H5. Actions call the API, return useful errors/responses, and remain registered according to current HA conventions.
+- [x] H6. Existing action names are retained or have a documented compatibility/migration path.
+- [x] H7. Sensors cover total inventory, expiring soon, shopping, possible meals, leftovers, waste, and location values/counts without unbounded attributes.
+- [x] H8. Diagnostics redact token, authorization headers, session data, receipt text/images, and secrets.
+- [x] H9. HA tests cover setup, unload, auth failure, unavailable/recovery, sensor updates, and representative actions.
+- [x] H10. Example automations demonstrate use-soon notification, grocery arrival count, cooking mode, and freezer risk/value.
 
 ## I. Security and operations
 

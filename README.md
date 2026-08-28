@@ -361,7 +361,7 @@ The server writes structured JSON request logs to stdout. Each line includes `ev
 
 ## Development
 
-The authoritative inventory engine lives in `src/pantryos` and is exposed through the local Core API. The older pure inventory engine in `custom_components/pantryos/inventory.py` is retained temporarily as baseline coverage for the original proof of concept.
+The authoritative inventory engine lives in `src/pantryos` and is exposed through the local Core API. The Home Assistant custom integration contains only API client, coordinator, entity, action, diagnostics, config-flow, translation, and metadata code; it does not persist an independent inventory store.
 
 Run tests when `pytest` is installed:
 
