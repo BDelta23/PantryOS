@@ -57,4 +57,17 @@ def test_setup_operations_and_troubleshooting_docs_match_runtime_contracts() -> 
     assert "401 unauthorized" in readme
     assert "401 browser_session_required" in readme
     assert "PANTRYOS_LISTEN_HOST=0.0.0.0" in readme
+    manual_validation = (ROOT / "docs" / "release" / "MANUAL_VALIDATION.md").read_text(encoding="utf-8")
+    assert "docs/release/MANUAL_VALIDATION.md" in readme
     assert "python scripts/manual_release_evidence.py --json" in readme
+    assert "python scripts/manual_release_evidence.py --write-template --commit <release-candidate-sha>" in manual_validation
+    assert "python scripts/manual_release_evidence.py --json --commit <release-candidate-sha>" in manual_validation
+    for check_id in (
+        "physical-barcode-camera",
+        "real-receipt-ocr",
+        "published-image-signature",
+        "independent-full-review",
+    ):
+        assert check_id in manual_validation
+    for marker in ("decision=PASS", "open_critical_high=0", "release_blocking_medium=0"):
+        assert marker in manual_validation

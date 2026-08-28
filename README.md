@@ -372,7 +372,7 @@ The server writes structured JSON request logs to stdout. Each line includes `ev
 - If Home Assistant cannot connect from a Raspberry Pi, use the NAS LAN URL such as `http://<NAS-LAN-IP>:8765`, not `127.0.0.1`, and confirm Docker is publishing the service with `PANTRYOS_LISTEN_HOST=0.0.0.0` and the expected `PANTRYOS_PORT`.
 - If HACS setup reports an invalid token or unexpected response, first confirm `curl http://<NAS-LAN-IP>:8765/api/v1/health/ready` returns `{"status":"ready"}`, then confirm the same token works against an authenticated endpoint such as `GET /api/v1/instance`.
 - If a migration fails, PantryOS writes a pre-migration backup under the configured backup directory and keeps a `.failed` copy for inspection. Run `python scripts/pantryos.py --db /data/pantryos.sqlite3 doctor` before retrying, and restore a known-good archive with `restore --verify` when needed.
-- Release readiness intentionally remains `NOT READY` until `python scripts/manual_release_evidence.py --json` validates the tracked manual evidence for physical barcode camera, real receipt OCR, published image signature, and final independent review.
+- Release readiness intentionally remains `NOT READY` until `python scripts/manual_release_evidence.py --json` validates the tracked manual evidence for physical barcode camera, real receipt OCR, published image signature, and final independent review. Follow `docs/release/MANUAL_VALIDATION.md` to generate the commit-bound scaffold and record only concrete PASS evidence.
 
 
 ## Development
