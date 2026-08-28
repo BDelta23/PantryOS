@@ -4,11 +4,11 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## A. One source of truth and durability
 
-- [ ] A1. There is one authoritative SQLite database owned by PantryOS Core.
-- [ ] A2. The web UI and Home Assistant do not maintain independent inventory state.
-- [ ] A3. Adding an item in the web UI changes Home Assistant state promptly without either process restarting.
-- [ ] A4. Consuming an item through a Home Assistant action changes the web UI promptly.
-- [ ] A5. Restarting PantryOS and Home Assistant preserves and reconciles the same state revision.
+- [x] A1. There is one authoritative SQLite database owned by PantryOS Core.
+- [x] A2. The web UI and Home Assistant do not maintain independent inventory state.
+- [x] A3. Adding an item in the web UI changes Home Assistant state promptly without either process restarting.
+- [x] A4. Consuming an item through a Home Assistant action changes the web UI promptly.
+- [x] A5. Restarting PantryOS and Home Assistant preserves and reconciles the same state revision.
 - [x] A6. A test with at least 20 concurrent supported mutations produces no lost successful writes and no corrupt database.
 - [x] A7. Database transactions roll back all related changes on injected failure.
 - [x] A8. Legacy JSON import is validated, backed up, atomic, and idempotent.

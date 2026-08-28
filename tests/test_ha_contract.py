@@ -823,10 +823,15 @@ def test_home_assistant_live_core_smoke_uses_real_core_api_and_release_docs() ->
     assert "PANTRYOS_API_TOKEN" in script
     assert 'ha_env["PANTRYOS_BASE_URL"] = base_url' in script
     assert 'ha_env["PANTRYOS_API_TOKEN"]' not in script
-    assert '"--env",\n            "PANTRYOS_BASE_URL"' in script
-    assert '"--env",\n            "PANTRYOS_API_TOKEN"' in script
+    assert 'env_args = ["--env", "PANTRYOS_BASE_URL"]' in script
+    assert '"PANTRYOS_EXPECTED_REVISION"' in script
+    assert '"PANTRYOS_RESTART_CHECK"' in script
+    assert 'result["restart_recovery"] = parse_smoke_result(restarted)' in script
+    assert '["docker", "restart", names["container"]]' in script
+    assert '"PANTRYOS_API_TOKEN"' in script
     assert "FakeClient" not in script
     assert "python scripts/ha_core_live_smoke.py" in readme
     assert "config-flow manager" in readme
+    assert "restarted HA process reconciles the persisted Core state revision" in readme
     assert "your running PantryOS database is not mutated" in readme
     assert "python scripts/ha_core_live_smoke.py" in release

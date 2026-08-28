@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HA_IMAGE = "ghcr.io/home-assistant/home-assistant:stable"
 DEFAULT_CORE_IMAGE = "pantryos-pantryos:latest"
 SMOKE_TOKEN = "pantryos-ha-core-smoke-public-token"
+EXPECTED_REVISION = int(os.environ.get("PANTRYOS_EXPECTED_REVISION") or "0")
+RESTART_CHECK = os.environ.get("PANTRYOS_RESTART_CHECK") == "1"
 
 
 class HACoreLiveSmokeFailure(AssertionError):
@@ -52,6 +54,8 @@ from custom_components.pantryos.const import CONF_API_TOKEN, CONF_BASE_URL, DOMA
 
 BASE_URL = os.environ["PANTRYOS_BASE_URL"]
 TOKEN = "pantryos-ha-core-smoke-public-token"
+EXPECTED_REVISION = int(os.environ.get("PANTRYOS_EXPECTED_REVISION") or "0")
+RESTART_CHECK = os.environ.get("PANTRYOS_RESTART_CHECK") == "1"
 
 
 def progress(message):
@@ -85,24 +89,30 @@ async def main():
     unsubscribe_event = None
     entry = None
     try:
-        progress("starting PantryOS config flow")
-        flow_result = await asyncio.wait_for(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": "user"},
-                data={CONF_BASE_URL: BASE_URL, CONF_API_TOKEN: TOKEN},
-            ),
-            timeout=60,
-        )
-        result_type = flow_result.get("type")
-        require(
-            result_type == "create_entry" or getattr(result_type, "value", None) == "create_entry",
-            f"Config flow did not create entry: {flow_result}",
-        )
-        entry = flow_result.get("result")
+        entries = hass.config_entries.async_entries(DOMAIN) if RESTART_CHECK else []
+        entry = entries[0] if entries else None
         if entry is None:
-            entries = hass.config_entries.async_entries(DOMAIN)
-            entry = entries[0] if entries else None
+            progress("starting PantryOS config flow")
+            flow_result = await asyncio.wait_for(
+                hass.config_entries.flow.async_init(
+                    DOMAIN,
+                    context={"source": "user"},
+                    data={CONF_BASE_URL: BASE_URL, CONF_API_TOKEN: TOKEN},
+                ),
+                timeout=60,
+            )
+            result_type = flow_result.get("type")
+            require(
+                result_type == "create_entry" or getattr(result_type, "value", None) == "create_entry",
+                f"Config flow did not create entry: {flow_result}",
+            )
+            entry = flow_result.get("result")
+            if entry is None:
+                entries = hass.config_entries.async_entries(DOMAIN)
+                entry = entries[0] if entries else None
+        else:
+            progress("using persisted PantryOS config entry after HA restart")
+            result_type = "existing_entry"
         require(entry is not None, f"Config flow did not add a {DOMAIN} entry")
         require(entry.domain == DOMAIN, f"Unexpected config entry domain: {entry.domain}")
         require(entry.unique_id is not None, "Config flow did not set a PantryOS unique ID")
@@ -134,6 +144,74 @@ async def main():
         services = hass.services.async_services().get(DOMAIN, {})
         require("add_item" in services, "pantryos.add_item service is missing")
         require("open_item" in services, "pantryos.open_item service is missing")
+
+        if RESTART_CHECK:
+            require(EXPECTED_REVISION > 0, "Restart check requires PANTRYOS_EXPECTED_REVISION")
+            require(
+                revision_before >= EXPECTED_REVISION,
+                f"Restarted HA saw revision {revision_before}, expected at least {EXPECTED_REVISION}",
+            )
+            progress("waiting for HA sensor entities after restart")
+            sensor_ids = await wait_for(
+                lambda: sorted(entity_id for entity_id in hass.states.async_entity_ids("sensor") if "pantryos" in entity_id) or None,
+                timeout=45,
+            )
+            state_revision_entity = next((entity_id for entity_id in sensor_ids if entity_id.endswith("state_revision")), None)
+            total_items_entity = next((entity_id for entity_id in sensor_ids if entity_id.endswith("total_items")), None)
+            require(state_revision_entity, f"State revision sensor is missing after restart; sensor_ids={sensor_ids}")
+            require(total_items_entity, f"Total items sensor is missing after restart; sensor_ids={sensor_ids}")
+
+            final_summary = coordinator.summary()
+            expected_state_revision_state = str(final_summary.get("state_revision") or revision_before)
+            expected_total_items_state = str(final_summary.get("total_items") or "")
+
+            def current_sensor_states():
+                state_revision = hass.states.get(state_revision_entity)
+                total_items = hass.states.get(total_items_entity)
+                return (
+                    state_revision.state if state_revision is not None else None,
+                    total_items.state if total_items is not None else None,
+                )
+
+            def matching_sensor_states():
+                states = current_sensor_states()
+                if states == (expected_state_revision_state, expected_total_items_state):
+                    return states
+                return None
+
+            progress("waiting for restarted HA sensor entity states")
+            state_revision_state, total_items_state = await wait_for(matching_sensor_states, timeout=45)
+
+            progress("unloading restarted PantryOS config entry")
+            unloaded = await asyncio.wait_for(hass.config_entries.async_unload(entry.entry_id), timeout=60)
+            require(unloaded, "Restarted config entry unload returned false")
+            remaining_services = sorted(hass.services.async_services().get(DOMAIN, {}))
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "restart_check": True,
+                        "ha_version": HA_VERSION,
+                        "setup_ok": setup_ok,
+                        "config_flow_result_type": getattr(result_type, "value", result_type),
+                        "entry_unique_id": entry.unique_id,
+                        "unloaded": unloaded,
+                        "remaining_services": remaining_services,
+                        "sensor_count": len(sensor_ids),
+                        "state_revision_entity": state_revision_entity,
+                        "state_revision_state": state_revision_state,
+                        "total_items_entity": total_items_entity,
+                        "total_items_state": total_items_state,
+                        "expected_revision": EXPECTED_REVISION,
+                        "revision_after_restart": revision_before,
+                        "event_count": len(event_payloads),
+                        "event_payloads": event_payloads[-5:],
+                    },
+                    sort_keys=True,
+                )
+            )
+            sys.stdout.flush()
+            os._exit(0)
 
         progress("calling pantryos.add_item service")
         ha_item_name = "Live HA Core Service Oats " + datetime.now(UTC).strftime("%H%M%S%f")
@@ -391,10 +469,21 @@ def cleanup_isolated_core(names: dict[str, str], *, env: dict[str, str]) -> None
 
 
 def run_ha_container(
-    args: argparse.Namespace, *, config_dir: Path, env: dict[str, str], base_url: str, network: str
+    args: argparse.Namespace,
+    *,
+    config_dir: Path,
+    env: dict[str, str],
+    base_url: str,
+    network: str,
+    expected_revision: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     ha_env = env.copy()
     ha_env["PANTRYOS_BASE_URL"] = base_url
+    env_args = ["--env", "PANTRYOS_BASE_URL"]
+    if expected_revision is not None:
+        ha_env["PANTRYOS_EXPECTED_REVISION"] = str(expected_revision)
+        ha_env["PANTRYOS_RESTART_CHECK"] = "1"
+        env_args.extend(["--env", "PANTRYOS_EXPECTED_REVISION", "--env", "PANTRYOS_RESTART_CHECK"])
     return run_command(
         [
             "docker",
@@ -404,8 +493,7 @@ def run_ha_container(
             network,
             "--volume",
             f"{config_dir}:/config",
-            "--env",
-            "PANTRYOS_BASE_URL",
+            *env_args,
             args.image,
             "python",
             "/config/ha_core_live_smoke.py",
@@ -413,6 +501,13 @@ def run_ha_container(
         timeout=args.timeout,
         env=ha_env,
     )
+
+
+def parse_smoke_result(completed: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    try:
+        return json.loads(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise HACoreLiveSmokeFailure(f"Smoke did not return JSON:\n{redact(completed.stdout)}") from exc
 
 
 def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
@@ -425,12 +520,21 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
             config_dir = Path(temp)
             prepare_config(config_dir)
             completed = run_ha_container(args, config_dir=config_dir, env=env, base_url=base_url, network=names["network"])
+            result = parse_smoke_result(completed)
+            expected_revision = int(result["revision_after_core_push"])
+            run_command(["docker", "restart", names["container"]], timeout=args.timeout, env=env)
+            wait_for_healthy_container(names["container"], timeout=args.timeout, env=env)
+            restarted = run_ha_container(
+                args,
+                config_dir=config_dir,
+                env=env,
+                base_url=base_url,
+                network=names["network"],
+                expected_revision=expected_revision,
+            )
+            result["restart_recovery"] = parse_smoke_result(restarted)
     finally:
         cleanup_isolated_core(names, env=env)
-    try:
-        result = json.loads(completed.stdout.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError) as exc:
-        raise HACoreLiveSmokeFailure(f"Smoke did not return JSON:\n{redact(completed.stdout)}") from exc
     result["core_mode"] = "isolated"
     result["base_url"] = base_url
     result["network"] = names["network"]
