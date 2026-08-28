@@ -888,8 +888,15 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
         thread.start()
         try:
             base = f"http://127.0.0.1:{httpd.server_port}"
+            live = request_json(f"{base}/api/v1/health/live")
             ready = request_json(f"{base}/api/v1/health/ready")
             status, unauth = request_error(f"{base}/api/v1/dashboard", request_id="req-test")
+            mutate_status, mutate_unauth = request_error(
+                f"{base}/api/v1/inventory/lots",
+                method="POST",
+                payload={"name": "Unauth Butter", "quantity": "1", "unit": "lb"},
+                request_id="mutate-unauth",
+            )
             dashboard = request_json(f"{base}/api/v1/dashboard", token="test-token")
             created = request_json(
                 f"{base}/api/v1/inventory/lots",
@@ -935,11 +942,15 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
             thread.join(timeout=5)
             httpd.server_close()
 
+    assert live == {"status": "live"}
     assert ready == {"status": "ready"}
     assert status == 401
     assert unauth["code"] == "unauthorized"
     assert unauth["status"] == 401
     assert unauth["request_id"] == "req-test"
+    assert mutate_status == 401
+    assert mutate_unauth["code"] == "unauthorized"
+    assert mutate_unauth["request_id"] == "mutate-unauth"
     assert dashboard["revision"] >= 0
     assert created["item"]["name"] == "Butter"
     assert consumed["allocations"][0]["lot_id"] == created["item"]["id"]
@@ -953,6 +964,35 @@ def test_v1_api_requires_bearer_token_and_uses_problem_shape() -> None:
     assert bad_status == 400
     assert invalid_json["code"] == "invalid_json"
     assert invalid_json["request_id"] == "bad-json"
+
+
+def test_health_live_does_not_depend_on_readiness() -> None:
+    with TemporaryDirectory() as directory, api_token("test-token"):
+        data_path = Path(directory) / "pantryos.sqlite3"
+        httpd = server_module.make_server("127.0.0.1", 0, data_path)
+
+        def fail_integrity_check() -> None:
+            raise RuntimeError("simulated readiness failure")
+
+        httpd.RequestHandlerClass.core.integrity_check = fail_integrity_check
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{httpd.server_port}"
+            live = request_json(f"{base}/api/v1/health/live")
+            ready_status, ready_problem = request_error(
+                f"{base}/api/v1/health/ready",
+                request_id="ready-failed",
+            )
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            httpd.server_close()
+
+    assert live == {"status": "live"}
+    assert ready_status == 503
+    assert ready_problem["code"] == "not_ready"
+    assert ready_problem["request_id"] == "ready-failed"
 
 
 def test_v1_json_requests_enforce_content_type_and_body_size() -> None:

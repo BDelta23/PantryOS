@@ -796,7 +796,16 @@ class PantryRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "live"})
             return
         if parsed.path == "/api/v1/health/ready":
-            self.core.integrity_check()
+            try:
+                self.core.integrity_check()
+            except Exception:
+                self._send_problem(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "PantryOS Core is not ready.",
+                    code="not_ready",
+                    title="Not ready",
+                )
+                return
             self._send_json({"status": "ready"})
             return
         self._serve_static(parsed.path)

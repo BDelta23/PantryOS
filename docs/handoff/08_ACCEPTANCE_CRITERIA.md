@@ -95,16 +95,16 @@ These are release gates, not aspirational notes. Codex should add automated cove
 
 ## I. Security and operations
 
-- [ ] I1. Unauthorized API mutation and event subscription fail.
-- [ ] I2. Browser authentication/session, CSRF, CORS, origin, and cookie policy are explicit and tested.
-- [ ] I3. Request body, upload size, filename/path, MIME/content, and rate limits are enforced.
-- [ ] I4. No secrets appear in source, logs, client errors, diagnostics, fixtures, or generated artifacts.
-- [ ] I5. Container runs as non-root and writes only intended volume paths.
-- [ ] I6. Liveness and readiness have different semantics and tests.
-- [ ] I7. Structured logs include request/correlation IDs without sensitive payloads.
-- [ ] I8. Migration failure leaves the prior database/backup recoverable.
-- [ ] I9. `pantryos doctor`, backup, restore verification, and legacy dry-run are documented and smoke-tested.
-- [ ] I10. Core operation is usable without internet access after dependencies/images are installed.
+- [x] I1. Unauthorized API mutation and event subscription fail.
+- [x] I2. Browser authentication/session, CSRF, CORS, origin, and cookie policy are explicit and tested.
+- [x] I3. Request body, upload size, filename/path, MIME/content, and rate limits are enforced.
+- [x] I4. No secrets appear in source, logs, client errors, diagnostics, fixtures, or generated artifacts.
+- [x] I5. Container runs as non-root and writes only intended volume paths.
+- [x] I6. Liveness and readiness have different semantics and tests.
+- [x] I7. Structured logs include request/correlation IDs without sensitive payloads.
+- [x] I8. Migration failure leaves the prior database/backup recoverable.
+- [x] I9. `pantryos doctor`, backup, restore verification, and legacy dry-run are documented and smoke-tested.
+- [x] I10. Core operation is usable without internet access after dependencies/images are installed.
 
 ## J. Engineering and release
 
