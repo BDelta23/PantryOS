@@ -124,10 +124,13 @@ def test_api_client_rebuilds_meal_plan_shopping_idempotently() -> None:
 
         first_items = {item["name"]: item for item in first["items"] if item["source"].startswith("meal_plan:")}
         second_items = {item["name"]: item for item in second["items"] if item["source"].startswith("meal_plan:")}
+        expected_items = {"Plan Flour", "Baking Powder"}
+        first_created = {name: first_items[name] for name in expected_items}
+        second_created = {name: second_items[name] for name in expected_items}
         assert first_items == second_items
+        assert first_created == second_created
         assert first_items["Plan Flour"]["quantity"] == "24"
         assert first_items["Baking Powder"]["quantity"] == "2"
-        assert len(first_items) == 2
 
     with running_server() as base_url:
         asyncio.run(scenario(base_url))

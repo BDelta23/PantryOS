@@ -60,6 +60,20 @@ def test_server_uses_environment_defaults_for_docker_runtime() -> None:
     with temporary_env("PANTRYOS_LISTEN_PORT", "not-a-number"):
         assert server_module._env_int("PANTRYOS_LISTEN_PORT", 8765) == 8765
 
+    with temporary_env("PANTRYOS_TLS_CERT_FILE", "/data/tls/pantryos.crt"):
+        with temporary_env("PANTRYOS_TLS_KEY_FILE", "/data/tls/pantryos.key"):
+            assert server_module._default_tls_cert_file() == Path("/data/tls/pantryos.crt")
+            assert server_module._default_tls_key_file() == Path("/data/tls/pantryos.key")
+
+    assert server_module._configured_tls_files(None, None) is None
+    assert server_module._configured_tls_files(Path("cert.pem"), Path("key.pem")) == (Path("cert.pem"), Path("key.pem"))
+    try:
+        server_module._configured_tls_files(Path("cert.pem"), None)
+    except ValueError as exc:
+        assert "configured together" in str(exc)
+    else:
+        raise AssertionError("partial TLS configuration should be rejected")
+
 
 def request_json(
     url: str,
@@ -1700,6 +1714,10 @@ def test_static_browser_workflows_are_not_stubbed() -> None:
     assert "supportsBarcodeCamera" in app_js
     assert "PantryOSBarcodeScannerAdapter" in app_js
     assert "nativeBarcodeScannerAdapter" in app_js
+    assert "barcodeCameraStatus" in app_js
+    assert "window.isSecureContext" in app_js
+    assert "Camera scanning requires HTTPS or localhost" in app_js
+    assert "This browser cannot access the camera" in app_js
     assert "BarcodeDetector" in app_js
     assert "navigator.mediaDevices.getUserMedia" in app_js
     assert 'facingMode: { ideal: "environment" }' in app_js

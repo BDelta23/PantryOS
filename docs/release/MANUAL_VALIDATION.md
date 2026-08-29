@@ -35,7 +35,7 @@ The `docs/release/evidence/` directory is intentionally tracked with `.gitkeep` 
 
 Acceptance IDs: `F1`, `F2`, `G5`, `G6`.
 
-Record the physical device, OS, browser, PantryOS app URL, a valid 8-14 digit GTIN known barcode, the known product or lot outcome, a different valid 8-14 digit GTIN unknown barcode, and the manual fallback product or lot outcome. The evidence artifact must mention `physical-barcode-camera` and describe the real device/browser path, not only the automated browser smoke.
+Record the physical device, OS, browser, PantryOS app URL, a valid 8-14 digit GTIN known barcode, the known product or lot outcome, a different valid 8-14 digit GTIN unknown barcode, and the manual fallback product or lot outcome. The evidence artifact must mention `physical-barcode-camera` and describe the real device/browser path, not only the automated browser smoke. A browser message that the camera cannot be used is failing evidence for this check, not a PASS; first retest from a secure origin such as trusted LAN HTTPS because browsers normally block camera access on plain HTTP LAN URLs.
 
 ### real-receipt-ocr
 

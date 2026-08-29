@@ -30,7 +30,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "782ea831255200494157338fcc04308831dfdaf3703100da5fe6d3912f13e9fc"
+          "checksumValue": "4b90464e067a783b3e125f8fc6dc386bf1f0a16f673823c70cca2070e15b26c3"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -42,7 +42,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "6929eaa32ee1bbf7edf1000b6f256e7e04fbc884cda7b394f8ee45368e29b4f3"
+          "checksumValue": "07317867bafcb5f5fc16dfe5d4579e25bec69650844fbb236b9f0067ac3c32a6"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -54,7 +54,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "91ff29ea42ef4b257328d5ea55ec1eb21f0535b2ed522e4654a48a612260aaa9"
+          "checksumValue": "f76d41bd6c3f20f060d7e134d00329c2565b498ed88b4e1975c4a7953f9d8c4b"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -66,7 +66,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "0803c9d468c4265653397354dc9673cddbdd22e6d46636051868aa7ce99eb84c"
+          "checksumValue": "246756bb93ca62fcb35e4bb93a942bcd66705d8408f01797433798b5775e4312"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -138,7 +138,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "d399a97396ed81973e2f735a1814221a0cbbbec1af67f187750bac2a56ee5a12"
+          "checksumValue": "9821fbe0a54ff251a7fcc43ab4208a83681e541b4dd82d1c9db74780b863b374"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -407,6 +407,18 @@
       ],
       "copyrightText": "NOASSERTION",
       "fileName": "scripts/ha_installed_smoke.py",
+      "licenseConcluded": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-File-scripts-healthcheck.py",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "cfc0f003dd416b6d2efa7ac0c0f2656406e9d1b89fc30b0082b6447eb7e41ea9"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "fileName": "scripts/healthcheck.py",
       "licenseConcluded": "NOASSERTION"
     },
     {
@@ -762,7 +774,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "6a51b243bda5a79d55572b8010a08cbfbded9dadd5c59fd9609b87d87ff769d8"
+          "checksumValue": "b8ea861e2e2874e64bc296a39927c367e8db992040af63ee25bd8cc6940592e6"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -774,7 +786,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "100311bb600e4eeecdfbde109b0437650778637e13ef0c3ecee949811da2c966"
+          "checksumValue": "0524c346ed445f89395ca0d04a55dfce5a9a7a4b35e4be98a07c9ba411c7fee0"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -798,7 +810,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "02edc15071ce12cc4ca1eb783b6c7c73a03600f4442406d28c9b3849506250e7"
+          "checksumValue": "28dd7de78606ce3fd74b4768a222f8cf1f9c4a874081d5f730da0fb5da47b924"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -897,7 +909,7 @@
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "a25c77bfcc7d7592c53157cc96b9c44540ee4f75aefd2efef5ed3d6e9383c644"
+          "checksumValue": "8691f6524b039d2713ae77a0f87b785a560fbb1b1456f94b337d64caedd1489d"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -3755,8 +3767,8 @@
     "sbom_path": "docs/release/pantryos-image-sbom.spdx.json",
     "schema_version": 1,
     "signing_policy": "docs/release/SUPPLY_CHAIN.md",
-    "source_file_count": 73,
-    "source_tree_sha256": "a25c77bfcc7d7592c53157cc96b9c44540ee4f75aefd2efef5ed3d6e9383c644"
+    "source_file_count": 74,
+    "source_tree_sha256": "8691f6524b039d2713ae77a0f87b785a560fbb1b1456f94b337d64caedd1489d"
   },
   "relationships": [
     {

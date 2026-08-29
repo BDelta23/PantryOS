@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import os
 import secrets
+import ssl
 import sys
 import tempfile
 import threading
@@ -18,7 +19,7 @@ from decimal import Decimal
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1837,6 +1838,32 @@ def _browser_session_store_path(db_path: Path) -> Path | None:
     return db_path.parent / "browser_sessions.json"
 
 
+def _default_tls_cert_file() -> Path | None:
+    configured = os.environ.get("PANTRYOS_TLS_CERT_FILE") or os.environ.get("PANTRYOS_HTTPS_CERT_FILE")
+    return Path(configured) if configured else None
+
+
+def _default_tls_key_file() -> Path | None:
+    configured = os.environ.get("PANTRYOS_TLS_KEY_FILE") or os.environ.get("PANTRYOS_HTTPS_KEY_FILE")
+    return Path(configured) if configured else None
+
+
+def _configured_tls_files(cert_file: Path | None, key_file: Path | None) -> tuple[Path, Path] | None:
+    if cert_file is None and key_file is None:
+        return None
+    if cert_file is None or key_file is None:
+        raise ValueError("PANTRYOS_TLS_CERT_FILE and PANTRYOS_TLS_KEY_FILE must be configured together")
+    return cert_file, key_file
+
+
+def apply_tls(server: ThreadingHTTPServer, cert_file: Path, key_file: Path) -> None:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=str(cert_file), keyfile=str(key_file))
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    handler_class = cast(type[PantryRequestHandler], server.RequestHandlerClass)
+    handler_class.secure_browser_cookies = True
+
+
 def make_server(host: str, port: int, db_path: Path) -> ThreadingHTTPServer:
     handler: type[PantryRequestHandler] = type("ConfiguredPantryRequestHandler", (PantryRequestHandler,), {})
     handler.core = PantryCore(db_path)
@@ -1880,14 +1907,24 @@ def main() -> None:
     parser.add_argument("--host", default=_default_host())
     parser.add_argument("--port", type=int, default=_env_int("PANTRYOS_LISTEN_PORT", _env_int("PANTRYOS_PORT", 8765)))
     parser.add_argument("--data", type=Path, default=_default_data_path())
+    parser.add_argument("--tls-cert-file", type=Path, default=_default_tls_cert_file())
+    parser.add_argument("--tls-key-file", type=Path, default=_default_tls_key_file())
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     data_path = (
         path_within(args.data, os.environ["PANTRYOS_DATA_DIR"], "Database path") if os.environ.get("PANTRYOS_DATA_DIR") else args.data
     )
+    try:
+        tls_files = _configured_tls_files(args.tls_cert_file, args.tls_key_file)
+    except ValueError as exc:
+        parser.error(str(exc))
     server = make_server(args.host, args.port, data_path)
-    print(f"PantryOS running at http://{args.host}:{args.port}", flush=True)
+    scheme = "http"
+    if tls_files is not None:
+        apply_tls(server, tls_files[0], tls_files[1])
+        scheme = "https"
+    print(f"PantryOS running at {scheme}://{args.host}:{args.port}", flush=True)
     server.serve_forever()
 
 

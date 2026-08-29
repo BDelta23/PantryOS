@@ -630,9 +630,22 @@ async function handleItemSubmit(event) {
 
 const DEFAULT_BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
 
+function barcodeCameraStatus() {
+  if (!window.isSecureContext) {
+    return "Camera scanning requires HTTPS or localhost. Manual barcode entry is available.";
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return "This browser cannot access the camera. Manual barcode entry is available.";
+  }
+  if (!("BarcodeDetector" in window)) {
+    return "This browser does not support barcode detection. Manual barcode entry is available.";
+  }
+  return "Camera scanner ready.";
+}
+
 const nativeBarcodeScannerAdapter = {
   supported() {
-    return "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
+    return barcodeCameraStatus() === "Camera scanner ready.";
   },
   async start() {
     const detector = new BarcodeDetector({ formats: DEFAULT_BARCODE_FORMATS });
@@ -668,17 +681,17 @@ function setupBarcodeScanner() {
   panel.hidden = false;
   if (!supportsBarcodeCamera()) {
     $("#barcodeCameraButton").disabled = true;
-    status.textContent = "Manual barcode entry is available on this browser.";
+    status.textContent = barcodeCameraStatus();
     return;
   }
   $("#barcodeCameraButton").disabled = false;
-  status.textContent = "Camera scanner ready.";
+  status.textContent = barcodeCameraStatus();
 }
 
 async function startBarcodeScanner() {
   const adapter = barcodeScannerAdapter();
   if (!adapter.supported()) {
-    showToast("Camera scanning is unavailable on this browser");
+    showToast(barcodeCameraStatus());
     return;
   }
   const video = $("#barcodeVideo");

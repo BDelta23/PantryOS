@@ -32,7 +32,7 @@ RUN groupadd --system --gid 10001 pantryos \
 EXPOSE 8765
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/v1/health/ready', timeout=3).read()"
+  CMD python scripts/healthcheck.py /api/v1/health/ready
 
 ENTRYPOINT ["python", "scripts/docker_entrypoint.py"]
 CMD ["python", "app/server.py"]
